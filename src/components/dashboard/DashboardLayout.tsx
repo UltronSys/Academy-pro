@@ -145,11 +145,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const [academies, setAcademies] = useState<Academy[]>([]);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [usersExpanded, setUsersExpanded] = useState(location.pathname.startsWith('/users'));
-  const { currentUser, userData, logout } = useAuth();
+  const { currentUser, userData, logout, refreshUserData } = useAuth();
   const { selectedAcademy, setSelectedAcademy, setSelectedOrganization } = useApp();
   const { canRead } = usePermissions();
 
   const organizationId = userData?.roles[0]?.organizationId;
+  
+  // Check if we have navigation state from signup
+  const navigationState = location.state as any;
 
   // Get user's primary role for display
   const getUserRole = () => {
@@ -169,9 +172,100 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     setUsersExpanded(location.pathname.startsWith('/users'));
   }, [location.pathname]);
 
+  // First priority: Use navigation state if available (from signup)
+  useEffect(() => {
+    if (navigationState?.justSignedUp) {
+      console.log('DashboardLayout: Using signup navigation state:', navigationState);
+      
+      // Force refresh user data from AuthContext to sync with the new user
+      if (navigationState.userData) {
+        console.log('DashboardLayout: Forcing AuthContext refresh for new user data');
+        
+        // Immediate refresh
+        refreshUserData().then(() => {
+          console.log('DashboardLayout: AuthContext refreshed successfully');
+        }).catch((error) => {
+          console.error('DashboardLayout: Failed to refresh AuthContext:', error);
+        });
+        
+        // Backup refresh after a short delay to ensure it's loaded
+        setTimeout(() => {
+          console.log('DashboardLayout: Backup AuthContext refresh');
+          refreshUserData().catch((error) => {
+            console.error('DashboardLayout: Backup refresh failed:', error);
+          });
+        }, 1000);
+      }
+      
+      if (navigationState.organization) {
+        setOrganization(navigationState.organization);
+        setSelectedOrganization(navigationState.organization);
+      }
+      
+      if (navigationState.academies && navigationState.academies.length > 0) {
+        setAcademies(navigationState.academies);
+        if (selectedAcademy === undefined) {
+          setSelectedAcademy(null); // Start with "All Academies" selected
+        }
+      }
+      
+      console.log('DashboardLayout: Navigation state data applied:', {
+        organization: navigationState.organization?.name,
+        academiesCount: navigationState.academies?.length,
+        userRole: navigationState.userData?.roles?.[0]?.role
+      });
+      
+      // Clear the navigation state to prevent reuse
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [navigationState, setSelectedOrganization, setSelectedAcademy, selectedAcademy, navigate, location.pathname, refreshUserData]);
+
+  // Second priority: Load data normally if we have organizationId but no data
   useEffect(() => {
     const loadData = async () => {
-      if (organizationId) {
+      // Skip if we just used navigation state or if we already have data
+      if (navigationState?.justSignedUp || !organizationId || (organization && academies.length > 0)) {
+        return;
+      }
+      
+      try {
+        console.log('DashboardLayout: Loading data for organization:', organizationId);
+        
+        const [orgData, academyData] = await Promise.all([
+          getOrganization(organizationId),
+          getAcademiesByOrganization(organizationId)
+        ]);
+        
+        console.log('DashboardLayout: Data loaded:', {
+          organization: orgData?.name,
+          academiesCount: academyData?.length
+        });
+        
+        if (orgData) {
+          setOrganization(orgData);
+          setSelectedOrganization(orgData);
+        }
+        
+        setAcademies(academyData);
+        // Only set the first academy as selected if no academy is currently selected
+        // and we're not explicitly showing "All Academies"
+        if (academyData.length > 0 && selectedAcademy === undefined) {
+          setSelectedAcademy(null); // Start with "All Academies" selected
+        }
+      } catch (error) {
+        console.error('DashboardLayout: Error loading data:', error);
+      }
+    };
+
+    loadData();
+  }, [organizationId, setSelectedOrganization, setSelectedAcademy, organization, academies.length, selectedAcademy, navigationState]);
+
+  // Fallback: Force reload if userData changes and we still don't have data
+  useEffect(() => {
+    if (userData && organizationId && !navigationState?.justSignedUp && (!organization || academies.length === 0)) {
+      console.log('DashboardLayout: Force reloading data after userData change');
+      
+      const forceReload = async () => {
         try {
           const [orgData, academyData] = await Promise.all([
             getOrganization(organizationId),
@@ -183,24 +277,22 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             setSelectedOrganization(orgData);
           }
           
-          setAcademies(academyData);
-          // Only set the first academy as selected if no academy is currently selected
-          // and we're not explicitly showing "All Academies"
-          if (academyData.length > 0 && selectedAcademy === undefined) {
-            setSelectedAcademy(null); // Start with "All Academies" selected
+          if (academyData && academyData.length > 0) {
+            setAcademies(academyData);
+            if (selectedAcademy === undefined) {
+              setSelectedAcademy(null);
+            }
           }
+          
+          console.log('DashboardLayout: Force reload completed');
         } catch (error) {
-          console.error('Error loading data:', error);
+          console.error('DashboardLayout: Force reload failed:', error);
         }
-      } else {
-        // If no organizationId, clear organization-related data
-        setOrganization(null);
-        setAcademies([]);
-      }
-    };
-
-    loadData();
-  }, [organizationId, setSelectedOrganization, setSelectedAcademy]);
+      };
+      
+      forceReload();
+    }
+  }, [userData, organizationId, organization, academies.length, selectedAcademy, setSelectedOrganization, setSelectedAcademy, navigationState]);
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -257,9 +349,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   });
 
   const drawer = (
-    <div className="h-full bg-white">
+    <div className="h-full bg-white flex flex-col">
       {/* Logo */}
-      <div className="flex items-center space-x-3 px-6 py-4 border-b border-secondary-200">
+      <div className="flex items-center space-x-3 px-4 sm:px-6 py-4 border-b border-secondary-200 flex-shrink-0">
         <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg text-white">
           <SchoolIcon />
         </div>
@@ -269,7 +361,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         </div>
       </div>
       
-      <div className="px-4 py-6">
+      <div className="px-3 sm:px-4 py-4 sm:py-6 flex-1 overflow-y-auto">
         {/* Organization Info */}
         {organization && (
           <div className="mb-6 p-3 bg-primary-50 border border-primary-200 rounded-lg">
@@ -296,7 +388,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                       navigate(item.path);
                     }
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-3 text-left rounded-lg transition-all duration-200 ${
+                  className={`w-full flex items-center justify-between px-3 py-3 sm:py-3 text-left rounded-lg transition-all duration-200 min-h-[44px] ${
                     isActive 
                       ? 'bg-primary-600 text-white shadow-sm' 
                       : 'text-secondary-700 hover:bg-primary-50 hover:text-primary-700'
@@ -332,7 +424,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         <button
                           key={subItem.text}
                           onClick={() => navigate(subItem.path)}
-                          className={`w-full flex items-center space-x-2 px-3 py-2 text-left rounded-lg transition-all duration-200 ${
+                          className={`w-full flex items-center space-x-2 px-3 py-2.5 text-left rounded-lg transition-all duration-200 min-h-[40px] ${
                             subIsActive 
                               ? 'bg-primary-600 text-white shadow-sm' 
                               : 'text-secondary-700 hover:bg-primary-50 hover:text-primary-700'
@@ -363,7 +455,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
       {mobileOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="fixed inset-0 bg-black bg-opacity-50" onClick={handleDrawerToggle} />
-          <div className="relative flex w-full max-w-xs flex-col bg-white">
+          <div className="relative flex w-full max-w-xs flex-col bg-white h-full shadow-xl">
             {drawer}
           </div>
         </div>
@@ -382,21 +474,21 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top navigation */}
         <header className="bg-white border-b border-secondary-200 lg:ml-0">
-          <div className="flex items-center justify-between px-4 py-3 lg:px-6">
+          <div className="flex items-center justify-between px-3 py-2 sm:px-4 sm:py-3 lg:px-6">
             {/* Mobile menu button */}
             <button
               onClick={handleDrawerToggle}
-              className="lg:hidden p-2 text-secondary-600 hover:text-secondary-900"
+              className="lg:hidden p-2 text-secondary-600 hover:text-secondary-900 -ml-2"
             >
               <MenuIcon />
             </button>
             
             {/* Left side - Academy selector and search */}
-            <div className="flex items-center space-x-4 flex-1">
+            <div className="flex items-center space-x-2 sm:space-x-4 flex-1 lg:ml-0">
               {/* Academy Selector */}
               {academies.length > 0 && (
-                <div className="flex items-center space-x-2 bg-secondary-50 rounded-lg px-3 py-2 border border-secondary-200">
-                  <span className="text-primary-600">
+                <div className="flex items-center space-x-1 sm:space-x-2 bg-secondary-50 rounded-lg px-2 sm:px-3 py-1.5 sm:py-2 border border-secondary-200">
+                  <span className="text-primary-600 hidden sm:block">
                     <SchoolIcon />
                   </span>
                   <Select
@@ -409,7 +501,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         setSelectedAcademy(academy || null);
                       }
                     }}
-                    wrapperClassName="w-48"
+                    wrapperClassName="w-32 sm:w-40 lg:w-48"
+                    className="text-sm"
                   >
                     <option value="all">All Academies</option>
                     {academies.map((academy) => (
@@ -424,22 +517,23 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             </div>
 
             {/* Right side - Notifications and profile */}
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 sm:space-x-4">
               {/* Notifications */}
-              <button className="relative p-2 text-secondary-600 hover:text-secondary-900 transition-colors duration-200">
+              <button className="relative p-1.5 sm:p-2 text-secondary-600 hover:text-secondary-900 transition-colors duration-200">
                 <BellIcon />
-                <span className="absolute -top-1 -right-1 bg-primary-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-semibold">
+                <span className="absolute -top-1 -right-1 bg-primary-500 text-white text-xs rounded-full h-4 w-4 sm:h-5 sm:w-5 flex items-center justify-center font-semibold">
                   3
                 </span>
               </button>
               
-              {/* Divider */}
-              <div className="w-px h-6 bg-secondary-300" />
+              {/* Divider - hidden on mobile */}
+              <div className="w-px h-6 bg-secondary-300 hidden sm:block" />
               
               {/* Profile */}
               <div className="relative">
-                <div className="flex items-center space-x-3">
-                  <div className="text-right">
+                <div className="flex items-center space-x-2 sm:space-x-3">
+                  {/* Profile text - hidden on mobile */}
+                  <div className="text-right hidden sm:block">
                     <div className="text-sm font-semibold text-secondary-900">
                       {currentUser?.displayName || 'User'}
                     </div>
@@ -453,6 +547,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     <Avatar size="md">
                       {currentUser?.displayName?.charAt(0).toUpperCase() || 'U'}
                     </Avatar>
+                    {/* Dropdown arrow - hidden on mobile */}
+                    <ChevronDownIcon />
                   </button>
                 </div>
                 
@@ -490,7 +586,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         </header>
         
         {/* Main content area */}
-        <main className="flex-1 overflow-auto bg-secondary-50 p-6">
+        <main className="flex-1 overflow-auto bg-secondary-50 p-3 sm:p-4 lg:p-6">
           {children || <Outlet />}
         </main>
       </div>

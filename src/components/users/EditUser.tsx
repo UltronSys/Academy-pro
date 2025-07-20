@@ -414,14 +414,15 @@ const EditUser: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-secondary-900">Edit User</h1>
-          <p className="text-secondary-600 mt-1 font-normal">Editing: {user.name}</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-secondary-900">Edit User</h1>
+          <p className="text-secondary-600 mt-1 font-normal text-sm sm:text-base">Editing: {user.name}</p>
         </div>
         <Button
           variant="outline"
           icon={<ArrowLeftIcon />}
+          className="self-start sm:self-auto"
           onClick={() => navigate('/users')}
         >
           Back to Users

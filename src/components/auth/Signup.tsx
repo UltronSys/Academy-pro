@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { signUp } from '../../services/authService';
 import { createOrganizationOnly } from '../../services/organizationService';
 import { createAcademy } from '../../services/academyService';
-import { updateUser } from '../../services/userService';
+import { updateUser, getUserById } from '../../services/userService';
 import { initializeDefaultRolePermissions } from '../../services/permissionService';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -223,7 +223,7 @@ const Signup: React.FC = () => {
         },
         orgData.imageFile || undefined
       );
-      const orgId = org.id;
+      const orgId: string = org.id;
       console.log('Organization created:', orgId);
 
       // Step 2: Create academies
@@ -275,18 +275,55 @@ const Signup: React.FC = () => {
       });
       console.log('Organization owner updated');
 
-      // Step 7: Refresh user data in AuthContext
-      setLoadingMessage('Loading your data...');
+      // Step 7: Refresh AuthContext and collect all data to pass to dashboard
+      setLoadingMessage('Preparing dashboard data...');
+      
+      // Refresh user data
       await refreshUserData();
-      console.log('User data loaded');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Get fresh user data
+      const currentUserData = await getUserById(userId);
+      
+      // Load organization and academy data
+      setLoadingMessage('Loading organization data...');
+      const { getOrganization } = await import('../../services/organizationService');
+      const { getAcademiesByOrganization } = await import('../../services/academyService');
+      
+      const [organizationData, academyData] = await Promise.all([
+        getOrganization(orgId),
+        getAcademiesByOrganization(orgId)
+      ]);
+      
+      // Prepare navigation state with all the data
+      const navigationState = {
+        justSignedUp: true,
+        userData: currentUserData,
+        organization: organizationData,
+        academies: academyData,
+        organizationId: orgId,
+        userId: userId
+      };
+      
+      console.log('✅ Passing complete data to dashboard:', {
+        userId,
+        organizationId: orgId,
+        organizationName: organizationData?.name,
+        academiesCount: academyData?.length,
+        userRole: currentUserData?.roles[0]?.role
+      });
 
-      // Step 8: Final setup
+      // Final AuthContext refresh
       setLoadingMessage('Finalizing...');
+      await refreshUserData();
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Navigate to dashboard
-      console.log('Navigating to dashboard...');
-      navigate('/dashboard', { replace: true });
+      // Navigate with state containing all the data
+      console.log('🚀 Navigating to dashboard with complete data!');
+      navigate('/dashboard', { 
+        replace: true, 
+        state: navigationState 
+      });
     } catch (error: any) {
       setError(error.message || 'Failed to complete registration. Please try again.');
       console.error('Registration error:', error);

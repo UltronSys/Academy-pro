@@ -457,16 +457,27 @@ const Users: React.FC = () => {
         !['player', 'guardian'].includes(role)
       );
       
+      console.log('User creation debug:', {
+        roles: formData.roles,
+        hasLoginRole,
+        email: formData.email,
+        name: formData.name,
+        organizationId
+      });
+      
       if (hasLoginRole) {
+        console.log('Creating user with login credentials...');
         // Import createUserAsAdmin function
         const { createUserAsAdmin } = await import('../../services/authService');
         
         // Create Firebase Auth account for users who can log in
         // The admin will stay logged in thanks to the secondary app instance
         const { uid } = await createUserAsAdmin(formData.email, formData.password, formData.name);
+        console.log('User created with UID:', uid);
         newUserId = uid;
         
         // Update user document with additional data and roles
+        console.log('Updating user with roles and organization data...');
         await updateUser(newUserId, {
           phone: formData.phone,
           roles: formData.roles.map(role => ({ 
@@ -475,6 +486,7 @@ const Users: React.FC = () => {
             academyId: formData.academyId
           }))
         });
+        console.log('User data updated successfully');
       } else {
         // For users with only player/guardian roles, create Firestore document only
         newUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -514,9 +526,14 @@ const Users: React.FC = () => {
       await loadUsers();
       setOpenDialog(false);
       setActiveStep(0);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating user:', error);
-      setError('Failed to create user');
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+      setError(`Failed to create user: ${error.message || 'Unknown error'}`);
     } finally {
       setSubmitLoading(false);
     }
@@ -614,10 +631,10 @@ const Users: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-secondary-900">Users Management</h1>
-          <p className="text-secondary-600 mt-1 font-normal">
+          <h1 className="text-2xl sm:text-3xl font-bold text-secondary-900">Users Management</h1>
+          <p className="text-secondary-600 mt-1 font-normal text-sm sm:text-base">
             Your Academy: {getUserAcademies(userData?.roles || [])}
           </p>
         </div>
@@ -626,7 +643,7 @@ const Users: React.FC = () => {
             onClick={handleAddUser}
             loading={loading}
             icon={<PlusIcon />}
-            className="bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800"
+            className="bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 w-full sm:w-auto"
           >
             {loading ? 'Loading...' : 'Add User'}
           </Button>
@@ -671,7 +688,8 @@ const Users: React.FC = () => {
 
       {/* Users Table */}
       <Card>
-        <Table>
+        <div className="overflow-x-auto">
+          <Table>
           <TableHeader>
             <TableRow>
               <TableHead>User</TableHead>
@@ -790,6 +808,7 @@ const Users: React.FC = () => {
             )}
           </TableBody>
         </Table>
+        </div>
       </Card>
 
       {/* Delete Confirmation Modal */}
@@ -1444,15 +1463,14 @@ const Users: React.FC = () => {
                                   />
                                   
                                   <Input
-                                    label="Guardian Email"
+                                    label="Guardian Email (Optional)"
                                     type="email"
                                     value={newGuardianData.email}
                                     onChange={(e) => setNewGuardianData({
                                       ...newGuardianData,
                                       email: e.target.value
                                     })}
-                                    required
-                                    placeholder="Enter guardian's email"
+                                    placeholder="Enter guardian's email (optional)"
                                   />
                                   
                                   <Input
@@ -1479,8 +1497,8 @@ const Users: React.FC = () => {
                                     </Button>
                                     <Button
                                       onClick={async () => {
-                                        if (!newGuardianData.name || !newGuardianData.email || !newGuardianData.phone) {
-                                          setError('Please fill in all guardian details');
+                                        if (!newGuardianData.name || !newGuardianData.phone) {
+                                          setError('Guardian name and phone number are required');
                                           return;
                                         }
                                         
@@ -1536,7 +1554,7 @@ const Users: React.FC = () => {
                                         }
                                       }}
                                       loading={guardianCreateLoading}
-                                      disabled={!newGuardianData.name || !newGuardianData.email || !newGuardianData.phone}
+                                      disabled={!newGuardianData.name || !newGuardianData.phone}
                                     >
                                       {guardianCreateLoading ? 'Creating...' : 'Create & Link Guardian'}
                                     </Button>

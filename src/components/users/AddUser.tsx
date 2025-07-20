@@ -101,15 +101,35 @@ const AddUser: React.FC = () => {
   }, [userData]);
 
   useEffect(() => {
-    if (organizationSettings && formData.academyId.length > 0) {
-      const academyId = formData.academyId[0];
-      const categories = getFieldCategoriesForAcademy(organizationSettings, academyId);
-      setFieldCategories((categories || []).sort((a, b) => a.order - b.order));
-    } else if (organizationSettings && organizationSettings.fieldCategories) {
-      setFieldCategories(organizationSettings.fieldCategories.sort((a, b) => a.order - b.order));
+    console.log('===== AddUser useEffect START =====');
+    console.log('AddUser: organizationSettings:', organizationSettings);
+    console.log('AddUser: organizationSettings?.fieldCategories:', organizationSettings?.fieldCategories);
+    console.log('AddUser: formData.academyId:', formData.academyId);
+    
+    if (organizationSettings) {
+      let categories: FieldCategory[] = [];
+      
+      if (formData.academyId.length > 0) {
+        const academyId = formData.academyId[0];
+        console.log('AddUser: Getting academy-specific categories for academy:', academyId);
+        categories = getFieldCategoriesForAcademy(organizationSettings, academyId) || [];
+        console.log('AddUser: Academy-specific categories result:', categories);
+      } else {
+        // Use organization-wide categories when no academy is selected
+        console.log('AddUser: No academy selected, using organization-wide categories');
+        categories = organizationSettings.fieldCategories || [];
+        console.log('AddUser: Organization fieldCategories result:', categories);
+      }
+      
+      console.log('AddUser: Final categories before sort:', categories);
+      const sortedCategories = categories.sort((a, b) => a.order - b.order);
+      console.log('AddUser: Setting fieldCategories to:', sortedCategories);
+      setFieldCategories(sortedCategories);
     } else {
+      console.log('AddUser: No organization settings found, setting empty array');
       setFieldCategories([]);
     }
+    console.log('===== AddUser useEffect END =====');
   }, [organizationSettings, formData.academyId]);
 
   const loadInitialData = async () => {
@@ -117,12 +137,17 @@ const AddUser: React.FC = () => {
       setLoading(true);
       const organizationId = userData?.roles?.[0]?.organizationId;
       
+      console.log('AddUser: loadInitialData - organizationId:', organizationId);
+      
       if (organizationId) {
         const [academyData, userData_list, settings] = await Promise.all([
           getAcademiesByOrganization(organizationId),
           getUsersByOrganization(organizationId),
           getSettingsByOrganization(organizationId)
         ]);
+        
+        console.log('AddUser: loadInitialData - settings loaded:', settings);
+        console.log('AddUser: loadInitialData - settings.fieldCategories:', settings?.fieldCategories);
         
         setAcademies(academyData);
         setUsers(userData_list);
@@ -308,8 +333,9 @@ const AddUser: React.FC = () => {
             helperText={field.description}
           />
         );
+      case 'select':
       case 'dropdown':
-        const dropdownOptions = field.options || ['No options configured'];
+        const selectOptions = field.options || [];
         
         return (
           <Select
@@ -321,12 +347,49 @@ const AddUser: React.FC = () => {
             disabled={!field.options || field.options.length === 0}
             helperText={field.description || (!field.options || field.options.length === 0 ? 'No options configured for this field. Please update in settings.' : '')}
           >
-            {dropdownOptions.map((option) => (
+            <option value="">Select {field.name.toLowerCase()}</option>
+            {selectOptions.map((option) => (
               <option key={option} value={option}>
                 {option.charAt(0).toUpperCase() + option.slice(1)}
               </option>
             ))}
           </Select>
+        );
+      case 'multiselect':
+        // For multiselect, we'll use a simple text input for now or implement proper multiselect
+        return (
+          <Input
+            key={fieldKey}
+            label={`${field.name} (comma-separated)`}
+            value={Array.isArray(currentValue) ? currentValue.join(', ') : currentValue}
+            onChange={(e) => {
+              const values = e.target.value.split(',').map(v => v.trim()).filter(v => v);
+              handleFieldChange(values);
+            }}
+            required={field.required}
+            helperText={field.description ? `${field.description} (Enter multiple values separated by commas)` : 'Enter multiple values separated by commas'}
+          />
+        );
+      case 'boolean':
+        return (
+          <div key={fieldKey} className="space-y-2">
+            <label className="block text-sm font-medium text-gray-700">
+              {field.name}
+              {field.required && <span className="text-red-500 ml-1">*</span>}
+            </label>
+            <Select
+              value={currentValue}
+              onChange={(e) => handleFieldChange(e.target.value === 'true')}
+              required={field.required}
+            >
+              <option value="">Select yes/no</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </Select>
+            {field.description && (
+              <p className="text-sm text-gray-500">{field.description}</p>
+            )}
+          </div>
         );
       default:
         return null;
@@ -407,17 +470,19 @@ const AddUser: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Add New User</h1>
-          <p className="text-gray-600 mt-1">Create a new user account</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Add New User</h1>
+          <p className="text-gray-600 mt-1 text-sm sm:text-base">Create a new user account</p>
         </div>
         <Button
           variant="outline"
           icon={<ArrowLeftIcon />}
           onClick={() => navigate('/users')}
+          className="self-start sm:self-auto"
         >
-          Back to Users
+          <span className="hidden sm:inline">Back to Users</span>
+          <span className="sm:hidden">Back</span>
         </Button>
       </div>
 
@@ -432,10 +497,10 @@ const AddUser: React.FC = () => {
       {effectiveSteps.length > 1 && (
         <Card>
           <CardBody>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between overflow-x-auto pb-2">
               {effectiveSteps.map((step, index) => (
-                <div key={step} className="flex items-center">
-                  <div className={`flex items-center justify-center w-8 h-8 rounded-full border-2 ${
+                <div key={step} className="flex items-center flex-shrink-0">
+                  <div className={`flex items-center justify-center w-6 h-6 sm:w-8 sm:h-8 rounded-full border-2 ${
                     index <= activeStep 
                       ? 'bg-primary-600 border-primary-600 text-white' 
                       : 'border-gray-300 text-gray-400'
@@ -443,20 +508,20 @@ const AddUser: React.FC = () => {
                     {index < activeStep ? (
                       <CheckCircleIcon />
                     ) : (
-                      <span>{index + 1}</span>
+                      <span className="text-xs sm:text-sm">{index + 1}</span>
                     )}
                   </div>
                   {index < effectiveSteps.length - 1 && (
-                    <div className={`w-12 h-0.5 ${
+                    <div className={`w-8 sm:w-12 h-0.5 ${
                       index < activeStep ? 'bg-primary-600' : 'bg-gray-300'
                     }`} />
                   )}
                 </div>
               ))}
             </div>
-            <div className="flex justify-between mt-2">
+            <div className="flex justify-between mt-2 overflow-x-auto">
               {effectiveSteps.map((step, index) => (
-                <span key={step} className={`text-sm ${
+                <span key={step} className={`text-xs sm:text-sm flex-shrink-0 ${
                   index <= activeStep ? 'text-primary-600 font-medium' : 'text-gray-400'
                 }`}>
                   {step}
@@ -673,83 +738,109 @@ const AddUser: React.FC = () => {
           )}
           
           {/* Step 4: Player Details */}
-          {activeStep === 3 && isPlayerRole && (
-            <div className="space-y-6">
-              <h2 className="text-xl font-semibold text-gray-900">Player Details</h2>
-              
-              {/* Required Fields */}
-              <div className="p-4 border-2 border-primary-600 rounded-lg bg-primary-50">
-                <div className="flex items-center gap-2 mb-4">
-                  <CheckCircleIcon />
-                  <h3 className="text-lg font-medium text-primary-900">Required Information</h3>
+          {activeStep === 3 && isPlayerRole && (() => {
+            // Debug logging moved outside JSX
+            console.log('AddUser: Rendering player details, fieldCategories.length:', fieldCategories.length);
+            console.log('AddUser: fieldCategories:', fieldCategories);
+            console.log('AddUser: organizationSettings:', organizationSettings);
+            console.log('AddUser: formData.academyId:', formData.academyId);
+            
+            return (
+              <div className="space-y-6">
+                <h2 className="text-xl font-semibold text-gray-900">Player Details</h2>
+                
+                {/* Required Fields */}
+                <div className="p-4 border-2 border-primary-600 rounded-lg bg-primary-50">
+                  <div className="flex items-center gap-2 mb-4">
+                    <CheckCircleIcon />
+                    <h3 className="text-lg font-medium text-primary-900">Required Information</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input
+                      label="Date of Birth"
+                      type="date"
+                      value={formData.dateOfBirth}
+                      onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
+                      required
+                      helperText="Required for all players"
+                    />
+                    <Select
+                      label="Gender"
+                      value={formData.gender}
+                      onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                      required
+                    >
+                      <option value="">Select gender</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="other">Other</option>
+                    </Select>
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input
-                    label="Date of Birth"
-                    type="date"
-                    value={formData.dateOfBirth}
-                    onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
-                    required
-                    helperText="Required for all players"
-                  />
-                  <Select
-                    label="Gender"
-                    value={formData.gender}
-                    onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
-                    required
-                  >
-                    <option value="">Select gender</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                    <option value="other">Other</option>
-                  </Select>
-                </div>
+                
+                {/* Custom Category Fields */}
+                {fieldCategories.length > 0 ? (
+                  <div className="space-y-6">
+                    <h3 className="text-lg font-medium text-gray-900">Additional Information</h3>
+                    {fieldCategories
+                      .filter(category => {
+                        console.log('AddUser: Filtering category:', category.name, 'type:', category.type);
+                        return category.type === 'parameter' || category.type === 'mixed';
+                      })
+                      .sort((a, b) => a.order - b.order)
+                      .map(category => {
+                        const categoryFields = category.fields || [];
+                        console.log('AddUser: Category:', category.name, 'Fields:', categoryFields);
+                        
+                        return categoryFields.length > 0 ? (
+                          <Card key={category.id}>
+                            <CardBody>
+                              <h4 className="text-base font-medium text-gray-900 mb-2">{category.name}</h4>
+                              {category.description && (
+                                <p className="text-sm text-gray-600 mb-4">{category.description}</p>
+                              )}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {categoryFields
+                                  .sort((a, b) => a.order - b.order)
+                                  .map(field => (
+                                    <div key={field.name}>
+                                      {renderParameterField(field)}
+                                    </div>
+                                  ))}
+                              </div>
+                            </CardBody>
+                          </Card>
+                        ) : null;
+                      })}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-medium text-gray-900">Additional Information</h3>
+                    <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                      <p className="text-gray-600">
+                        DEBUG: No field categories found. 
+                        Organization settings loaded: {organizationSettings ? 'YES' : 'NO'}
+                        {organizationSettings && (
+                          <span> | Categories: {organizationSettings.fieldCategories?.length || 0}</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
-              
-              {/* Custom Category Fields */}
-              {fieldCategories.length > 0 && (
-                <div className="space-y-6">
-                  <h3 className="text-lg font-medium text-gray-900">Additional Information</h3>
-                  {fieldCategories
-                    .filter(category => category.type === 'parameter' || category.type === 'mixed')
-                    .sort((a, b) => a.order - b.order)
-                    .map(category => {
-                      const categoryFields = category.fields || [];
-                      
-                      return categoryFields.length > 0 && (
-                        <Card key={category.id}>
-                          <CardBody>
-                            <h4 className="text-base font-medium text-gray-900 mb-2">{category.name}</h4>
-                            {category.description && (
-                              <p className="text-sm text-gray-600 mb-4">{category.description}</p>
-                            )}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              {categoryFields
-                                .sort((a, b) => a.order - b.order)
-                                .map(field => (
-                                  <div key={field.name}>
-                                    {renderParameterField(field)}
-                                  </div>
-                                ))}
-                            </div>
-                          </CardBody>
-                        </Card>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })()}
           
           {/* Action Buttons */}
-          <div className="flex justify-between pt-6 border-t border-gray-200">
+          <div className="flex flex-col sm:flex-row sm:justify-between pt-6 border-t border-gray-200 gap-3">
             <Button 
               variant="secondary"
               onClick={() => navigate('/users')}
+              className="order-2 sm:order-1"
             >
               Cancel
             </Button>
-            <div className="flex space-x-3">
+            <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 order-1 sm:order-2">
               {activeStep > 0 && (
                 <Button 
                   variant="outline"

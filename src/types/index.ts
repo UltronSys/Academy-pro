@@ -51,14 +51,14 @@ export interface Player {
 
 export interface ParameterField {
   name: string;
-  type: 'text' | 'number' | 'date' | 'dropdown';
+  type: 'text' | 'number' | 'date' | 'dropdown' | 'select' | 'multiselect' | 'boolean';
   unit?: string;
   maximum?: string;
   defaultValue: any;
   required: boolean;
   order: number;
   description?: string;
-  options?: string[]; // For dropdown fields
+  options?: string[]; // For dropdown and select fields
 }
 
 export interface SkillField {

@@ -70,21 +70,21 @@ interface StatsCardProps {
 const StatsCard: React.FC<StatsCardProps> = ({ title, value, icon, subtitle, trend }) => (
   <Card className="hover:shadow-lg transition-all duration-200 hover:-translate-y-1">
     <CardBody>
-      <div className="flex justify-between items-start mb-4">
-        <div className="w-14 h-14 bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl flex items-center justify-center text-white shadow-lg">
+      <div className="flex justify-between items-start mb-3 sm:mb-4">
+        <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl flex items-center justify-center text-white shadow-lg">
           {icon}
         </div>
         {trend && (
-          <div className={`flex items-center gap-1 px-3 py-1 rounded-lg ${
+          <div className={`flex items-center gap-1 px-2 sm:px-3 py-1 rounded-lg ${
             trend.direction === 'up' ? 'bg-primary-50 text-primary-700' : 'bg-error-50 text-error-700'
           }`}>
             <ArrowUpIcon />
-            <span className="text-sm font-semibold">{trend.value}%</span>
+            <span className="text-xs sm:text-sm font-semibold">{trend.value}%</span>
           </div>
         )}
       </div>
       
-      <div className="text-3xl font-bold text-secondary-900 mb-1">
+      <div className="text-2xl sm:text-3xl font-bold text-secondary-900 mb-1">
         {value.toLocaleString()}
       </div>
       
@@ -215,8 +215,8 @@ const Dashboard: React.FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-secondary-900">Dashboard</h1>
-        <p className="text-secondary-600 mt-1 font-normal">
+        <h1 className="text-2xl sm:text-3xl font-bold text-secondary-900">Dashboard</h1>
+        <p className="text-secondary-600 mt-1 font-normal text-sm sm:text-base">
           {selectedAcademy 
             ? `${selectedAcademy.name} - ${selectedOrganization?.name}`
             : `${selectedOrganization?.name} - Organization Overview`

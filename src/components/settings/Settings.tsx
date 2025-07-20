@@ -215,30 +215,62 @@ const Settings: React.FC = () => {
       const organizationId = userData?.roles[0]?.organizationId;
       if (!organizationId) {
         setError('Organization not found');
+        setLoading(false);
         return;
       }
 
+      // Validate required fields
+      if (!academyForm.name?.trim()) {
+        setError('Academy name is required');
+        setLoading(false);
+        return;
+      }
+      if (!academyForm.country?.trim()) {
+        setError('Country is required');
+        setLoading(false);
+        return;
+      }
+      if (!academyForm.city?.trim()) {
+        setError('City is required');
+        setLoading(false);
+        return;
+      }
+
+      console.log('Saving academy:', academyForm);
+
       if (academyDialogMode === 'add') {
-        await createAcademy(
-          organizationId,
-          academyForm as Omit<Academy, 'id' | 'createdAt' | 'updatedAt'>
-        );
+        const academyData = {
+          name: academyForm.name!.trim(),
+          country: academyForm.country!.trim(),
+          city: academyForm.city!.trim(),
+          location: academyForm.location?.trim() || '',
+          imageUrl: academyForm.imageUrl?.trim() || ''
+        };
+        
+        console.log('Creating new academy with data:', academyData);
+        await createAcademy(organizationId, academyData);
         setSuccess('Academy created successfully!');
       } else if (selectedAcademyForEdit) {
-        await updateAcademy(
-          organizationId,
-          selectedAcademyForEdit.id,
-          academyForm as Partial<Academy>
-        );
+        const updateData = {
+          name: academyForm.name!.trim(),
+          country: academyForm.country!.trim(),
+          city: academyForm.city!.trim(),
+          location: academyForm.location?.trim() || '',
+          imageUrl: academyForm.imageUrl?.trim() || ''
+        };
+        
+        console.log('Updating academy with data:', updateData);
+        await updateAcademy(organizationId, selectedAcademyForEdit.id, updateData);
         setSuccess('Academy updated successfully!');
       }
       
       setOpenAcademyDialog(false);
+      setAcademyForm({ name: '', country: '', city: '', location: '', imageUrl: '' });
       await loadAcademies();
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (error) {
+      setTimeout(() => setSuccess(''), 2000);
+    } catch (error: any) {
       console.error('Error saving academy:', error);
-      setError('Failed to save academy');
+      setError(`Failed to save academy: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -269,14 +301,20 @@ const Settings: React.FC = () => {
         fieldCategories: updatedCategories
       };
       
+      console.log('Settings: Saving category, updatedSettings:', updatedSettings);
+      console.log('Settings: Updated field categories:', updatedCategories);
+      
       setSettings(updatedSettings);
       
       // Save to Firebase
       const organizationId = userData?.roles[0]?.organizationId;
       if (organizationId) {
+        console.log('Settings: Updating settings in Firebase for org:', organizationId);
         await updateSettings(organizationId, updatedSettings);
+        console.log('Settings: Settings updated in Firebase, reloading...');
         // Reload settings from Firebase to ensure consistency
         await loadSettings();
+        console.log('Settings: Settings reloaded from Firebase');
       }
       
       setOpenCategoryDialog(false);
@@ -319,6 +357,7 @@ const Settings: React.FC = () => {
         order: fieldForm.order || 1,
         description: fieldForm.description || '',
         unit: fieldForm.unit || '',
+        maximum: fieldForm.maximum || '',
         defaultValue: fieldForm.defaultValue || '',
         options: fieldForm.options || []
       };
@@ -444,7 +483,7 @@ const Settings: React.FC = () => {
     { id: 1, name: 'Notifications', icon: <NotificationsIcon /> },
     { id: 2, name: 'Roles & Permissions', icon: <SecurityIcon /> },
     { id: 3, name: 'Academies', icon: <BusinessIcon /> },
-    { id: 4, name: 'Field Categories', icon: <SportsIcon /> },
+    { id: 4, name: 'Player Parameters', icon: <SportsIcon /> },
   ];
 
   if (loading) {
@@ -456,23 +495,13 @@ const Settings: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-h-screen overflow-y-auto">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-secondary-900">Settings</h1>
-          <p className="text-secondary-600 mt-1 font-normal">Configure your organization settings</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-secondary-900">Settings</h1>
+          <p className="text-secondary-600 mt-1 font-normal text-sm sm:text-base">Configure your organization settings</p>
         </div>
-        {canWrite('settings') && (
-          <Button
-            onClick={handleSaveSettings}
-            loading={loading}
-            icon={<SaveIcon />}
-            className="bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800"
-          >
-            {loading ? 'Saving...' : 'Save Changes'}
-          </Button>
-        )}
       </div>
 
       {/* Error and Success Alerts */}
@@ -511,7 +540,7 @@ const Settings: React.FC = () => {
           </nav>
         </div>
 
-        <CardBody className="p-8 max-h-[calc(100vh-300px)] overflow-y-auto">
+        <CardBody className="p-8">
           {/* General Settings */}
           {activeTab === 0 && (
             <div className="space-y-6">
@@ -525,20 +554,33 @@ const Settings: React.FC = () => {
                   label="Default Language"
                   value={settings.generalSettings?.defaultLanguage || 'en'}
                   disabled={!canWrite('settings')}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const currentGeneralSettings = {
                       defaultLanguage: 'en',
                       timezone: 'UTC',
                       currency: 'USD',
                       ...settings.generalSettings
                     };
-                    setSettings({
+                    const updatedSettings = {
                       ...settings,
                       generalSettings: {
                         ...currentGeneralSettings,
                         defaultLanguage: e.target.value
                       }
-                    });
+                    };
+                    setSettings(updatedSettings);
+                    
+                    // Auto-save to Firebase
+                    try {
+                      const organizationId = userData?.roles[0]?.organizationId;
+                      if (organizationId) {
+                        await updateSettings(organizationId, updatedSettings);
+                        setSuccess('Settings saved automatically!');
+                        setTimeout(() => setSuccess(''), 2000);
+                      }
+                    } catch (error: any) {
+                      setError(`Failed to save settings: ${error.message || 'Unknown error'}`);
+                    }
                   }}
                 >
                   <option value="en">English</option>
@@ -551,20 +593,33 @@ const Settings: React.FC = () => {
                   label="Timezone"
                   value={settings.generalSettings?.timezone || 'UTC'}
                   disabled={!canWrite('settings')}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const currentGeneralSettings = {
                       defaultLanguage: 'en',
                       timezone: 'UTC',
                       currency: 'USD',
                       ...settings.generalSettings
                     };
-                    setSettings({
+                    const updatedSettings = {
                       ...settings,
                       generalSettings: {
                         ...currentGeneralSettings,
                         timezone: e.target.value
                       }
-                    });
+                    };
+                    setSettings(updatedSettings);
+                    
+                    // Auto-save to Firebase
+                    try {
+                      const organizationId = userData?.roles[0]?.organizationId;
+                      if (organizationId) {
+                        await updateSettings(organizationId, updatedSettings);
+                        setSuccess('Settings saved automatically!');
+                        setTimeout(() => setSuccess(''), 2000);
+                      }
+                    } catch (error: any) {
+                      setError(`Failed to save settings: ${error.message || 'Unknown error'}`);
+                    }
                   }}
                 >
                   <option value="UTC">UTC</option>
@@ -578,20 +633,33 @@ const Settings: React.FC = () => {
                   label="Currency"
                   value={settings.generalSettings?.currency || 'USD'}
                   disabled={!canWrite('settings')}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const currentGeneralSettings = {
                       defaultLanguage: 'en',
                       timezone: 'UTC',
                       currency: 'USD',
                       ...settings.generalSettings
                     };
-                    setSettings({
+                    const updatedSettings = {
                       ...settings,
                       generalSettings: {
                         ...currentGeneralSettings,
                         currency: e.target.value
                       }
-                    });
+                    };
+                    setSettings(updatedSettings);
+                    
+                    // Auto-save to Firebase
+                    try {
+                      const organizationId = userData?.roles[0]?.organizationId;
+                      if (organizationId) {
+                        await updateSettings(organizationId, updatedSettings);
+                        setSuccess('Settings saved automatically!');
+                        setTimeout(() => setSuccess(''), 2000);
+                      }
+                    } catch (error: any) {
+                      setError(`Failed to save settings: ${error.message || 'Unknown error'}`);
+                    }
                   }}
                 >
                   <option value="USD">USD ($)</option>
@@ -622,19 +690,32 @@ const Settings: React.FC = () => {
                       type="checkbox"
                       checked={settings.notificationSettings?.emailNotifications || false}
                       disabled={!canWrite('settings')}
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const currentNotificationSettings = {
                           emailNotifications: false,
                           smsNotifications: false,
                           ...settings.notificationSettings
                         };
-                        setSettings({
+                        const updatedSettings = {
                           ...settings,
                           notificationSettings: {
                             ...currentNotificationSettings,
                             emailNotifications: e.target.checked
                           }
-                        });
+                        };
+                        setSettings(updatedSettings);
+                        
+                        // Auto-save to Firebase
+                        try {
+                          const organizationId = userData?.roles[0]?.organizationId;
+                          if (organizationId) {
+                            await updateSettings(organizationId, updatedSettings);
+                            setSuccess('Settings saved automatically!');
+                            setTimeout(() => setSuccess(''), 2000);
+                          }
+                        } catch (error: any) {
+                          setError(`Failed to save settings: ${error.message || 'Unknown error'}`);
+                        }
                       }}
                       className="sr-only peer"
                     />
@@ -652,19 +733,32 @@ const Settings: React.FC = () => {
                       type="checkbox"
                       checked={settings.notificationSettings?.smsNotifications || false}
                       disabled={!canWrite('settings')}
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const currentNotificationSettings = {
                           emailNotifications: false,
                           smsNotifications: false,
                           ...settings.notificationSettings
                         };
-                        setSettings({
+                        const updatedSettings = {
                           ...settings,
                           notificationSettings: {
                             ...currentNotificationSettings,
                             smsNotifications: e.target.checked
                           }
-                        });
+                        };
+                        setSettings(updatedSettings);
+                        
+                        // Auto-save to Firebase
+                        try {
+                          const organizationId = userData?.roles[0]?.organizationId;
+                          if (organizationId) {
+                            await updateSettings(organizationId, updatedSettings);
+                            setSuccess('Settings saved automatically!');
+                            setTimeout(() => setSuccess(''), 2000);
+                          }
+                        } catch (error: any) {
+                          setError(`Failed to save settings: ${error.message || 'Unknown error'}`);
+                        }
                       }}
                       className="sr-only peer"
                     />
@@ -788,7 +882,7 @@ const Settings: React.FC = () => {
             <div className="space-y-6">
               <div className="flex justify-between items-center">
                 <div>
-                  <h3 className="text-lg font-semibold text-secondary-900">Player Categories</h3>
+                  <h3 className="text-lg font-semibold text-secondary-900">Player Parameters</h3>
                   <p className="text-secondary-600 font-normal">Create categories for player information. DOB and Gender are always required.</p>
                 </div>
                 {canWrite('settings') && (
@@ -878,6 +972,8 @@ const Settings: React.FC = () => {
                                 required: false,
                                 order: (category.fields?.length || 0) + 1,
                                 description: '',
+                                unit: '',
+                                maximum: '',
                                 options: []
                               });
                               setOpenFieldDialog(true);
@@ -909,6 +1005,9 @@ const Settings: React.FC = () => {
                                   )}
                                   {field.unit && (
                                     <p className="text-xs text-secondary-500 font-normal">Unit: {field.unit}</p>
+                                  )}
+                                  {field.maximum && (
+                                    <p className="text-xs text-secondary-500 font-normal">Maximum: {field.maximum}</p>
                                   )}
                                 </div>
                                 <div className="flex gap-2">
@@ -1211,6 +1310,14 @@ const Settings: React.FC = () => {
                 value={fieldForm.unit || ''}
                 onChange={(e) => setFieldForm({ ...fieldForm, unit: e.target.value })}
                 placeholder="e.g., kg, cm, years"
+              />
+              
+              <Input
+                label="Maximum Number (optional)"
+                value={fieldForm.maximum || ''}
+                onChange={(e) => setFieldForm({ ...fieldForm, maximum: e.target.value })}
+                placeholder="Enter maximum value for numbers"
+                type="number"
               />
               
               <Input

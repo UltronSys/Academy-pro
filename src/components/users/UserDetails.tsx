@@ -186,12 +186,12 @@ const UserDetails: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-secondary-900">User Details</h1>
-          <p className="text-secondary-600 mt-1 font-normal">Complete profile overview</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-secondary-900">User Details</h1>
+          <p className="text-secondary-600 mt-1 font-normal text-sm sm:text-base">Complete profile overview</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <Button
             variant="outline"
             icon={<ArrowLeftIcon />}
