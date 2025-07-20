@@ -1,0 +1,131 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function getUserRoles() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles;
+    }
+    
+    function hasOrgRole(orgId, role) {
+      return isSignedIn() && 
+        getUserRoles().exists(r => 
+          r.organizationId == orgId && 
+          role in r.role
+        );
+    }
+    
+    function hasAcademyRole(orgId, academyId, role) {
+      return isSignedIn() && 
+        getUserRoles().exists(r => 
+          r.organizationId == orgId && 
+          (academyId in r.academyId || r.academyId.size() == 0) && 
+          role in r.role
+        );
+    }
+    
+    function isOrganizationMember(orgId) {
+      return isSignedIn() && 
+        getUserRoles().exists(r => r.organizationId == orgId);
+    }
+    
+    function isAcademyMember(orgId, academyId) {
+      return isSignedIn() && 
+        getUserRoles().exists(r => 
+          r.organizationId == orgId && 
+          (r.academyId.size() == 0 || academyId in r.academyId)
+        );
+    }
+    
+    function hasAccessToAnyPlayerAcademy(orgId, academyIds) {
+      return isSignedIn() && 
+        getUserRoles().exists(r => 
+          r.organizationId == orgId && 
+          (r.academyId.size() == 0 || 
+           academyIds.exists(a => a in r.academyId))
+        );
+    }
+    
+    function isOrganizationOwner(orgId) {
+      return hasOrgRole(orgId, 'owner');
+    }
+    
+    function isOrganizationAdmin(orgId) {
+      return hasOrgRole(orgId, 'owner') || hasOrgRole(orgId, 'admin');
+    }
+    
+    // Organizations
+    match /organizations/{orgId} {
+      allow read: if isOrganizationMember(orgId);
+      allow create: if isSignedIn();
+      allow update: if isOrganizationOwner(orgId);
+      allow delete: if isOrganizationOwner(orgId);
+      
+      // Academies subcollection
+      match /academies/{academyId} {
+        allow read: if isOrganizationMember(orgId);
+        allow create: if isOrganizationAdmin(orgId);
+        allow update, delete: if isOrganizationAdmin(orgId);
+      }
+    }
+    
+    // Users
+    match /users/{userId} {
+      allow read: if request.auth.uid == userId || 
+                     (isSignedIn() && 
+                      getUserRoles().exists(r1 => 
+                        resource.data.roles.exists(r2 => 
+                          r1.organizationId == r2.organizationId && 
+                          ('owner' in r1.role || 'admin' in r1.role)
+                        )
+                      )
+                     );
+      allow create: if isSignedIn();
+      allow update: if request.auth.uid == userId || 
+                      (isSignedIn() && 
+                       resource.data.roles.exists(r => 
+                         hasOrgRole(r.organizationId, 'owner') || 
+                         hasOrgRole(r.organizationId, 'admin')
+                       )
+                      );
+    }
+    
+    // Players
+    match /players/{playerId} {
+      allow read: if hasAccessToAnyPlayerAcademy(resource.data.organizationId, resource.data.academyId);
+      allow create: if hasAccessToAnyPlayerAcademy(request.resource.data.organizationId, request.resource.data.academyId) &&
+                      (request.resource.data.academyId.exists(a => 
+                        hasAcademyRole(request.resource.data.organizationId, a, 'admin') ||
+                        hasAcademyRole(request.resource.data.organizationId, a, 'coach')) ||
+                       hasOrgRole(request.resource.data.organizationId, 'admin') ||
+                       hasOrgRole(request.resource.data.organizationId, 'owner'));
+      allow update, delete: if hasAccessToAnyPlayerAcademy(resource.data.organizationId, resource.data.academyId) &&
+                              (resource.data.academyId.exists(a => 
+                                hasAcademyRole(resource.data.organizationId, a, 'admin') ||
+                                hasAcademyRole(resource.data.organizationId, a, 'coach')) ||
+                               hasOrgRole(resource.data.organizationId, 'admin') ||
+                               hasOrgRole(resource.data.organizationId, 'owner'));
+    }
+    
+    // Settings (organization-wide)
+    match /settings/{orgId} {
+      allow read: if isOrganizationMember(orgId);
+      allow write: if isOrganizationOwner(orgId) || hasOrgRole(orgId, 'admin');
+    }
+    
+    // Role Permissions
+    match /rolePermissions/{permissionId} {
+      allow read: if isOrganizationMember(resource.data.organizationId);
+      allow create: if isOrganizationOwner(request.resource.data.organizationId) || 
+                      hasOrgRole(request.resource.data.organizationId, 'admin');
+      allow update: if (isOrganizationOwner(resource.data.organizationId) || 
+                       hasOrgRole(resource.data.organizationId, 'admin')) &&
+                      resource.data.organizationId == request.resource.data.organizationId;
+      allow delete: if isOrganizationOwner(resource.data.organizationId) || 
+                      hasOrgRole(resource.data.organizationId, 'admin');
+    }
+  }
+}
