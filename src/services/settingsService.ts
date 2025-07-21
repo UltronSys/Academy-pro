@@ -15,7 +15,15 @@ export const getSettingsByOrganization = async (organizationId: string): Promise
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
-      return docSnap.data() as Settings;
+      const data = docSnap.data() as Settings;
+      // Ensure fieldCategories have proper structure
+      if (data.fieldCategories) {
+        data.fieldCategories = data.fieldCategories.map(category => ({
+          ...category,
+          fields: Array.isArray(category.fields) ? category.fields : []
+        }));
+      }
+      return data;
     }
     
     // Return default settings if none exist

@@ -322,7 +322,9 @@ const Users: React.FC = () => {
         setUsers(fetchedUsers);
         
         const guardianUsers = fetchedUsers.filter(user => 
-          user.roles.some(role => role.role.includes('guardian'))
+          user.roles.some(role => 
+            Array.isArray(role.role) ? role.role.includes('guardian') : role.role === 'guardian'
+          )
         );
         setGuardians(guardianUsers);
       } else {
@@ -462,7 +464,8 @@ const Users: React.FC = () => {
         hasLoginRole,
         email: formData.email,
         name: formData.name,
-        organizationId
+        organizationId,
+        isCoach: formData.roles.includes('coach')
       });
       
       if (hasLoginRole) {
@@ -544,16 +547,28 @@ const Users: React.FC = () => {
     
     switch (activeTab) {
       case 1:
-        filteredByTab = users.filter(user => user.roles?.some(role => role.role.includes('player')));
+        filteredByTab = users.filter(user => user.roles?.some(role => 
+          Array.isArray(role.role) ? role.role.includes('player') : role.role === 'player'
+        ));
         break;
       case 2:
-        filteredByTab = users.filter(user => user.roles?.some(role => role.role.includes('coach')));
+        filteredByTab = users.filter(user => user.roles?.some(role => 
+          Array.isArray(role.role) ? role.role.includes('coach') : role.role === 'coach'
+        ));
+        console.log('Coach tab - Total users:', users.length, 'Coaches found:', filteredByTab.length);
+        console.log('All users roles:', users.map(u => ({ name: u.name, roles: u.roles })));
         break;
       case 3:
-        filteredByTab = users.filter(user => user.roles?.some(role => role.role.includes('guardian')));
+        filteredByTab = users.filter(user => user.roles?.some(role => 
+          Array.isArray(role.role) ? role.role.includes('guardian') : role.role === 'guardian'
+        ));
         break;
       case 4:
-        filteredByTab = users.filter(user => user.roles?.some(role => role.role.includes('admin') || role.role.includes('owner')));
+        filteredByTab = users.filter(user => user.roles?.some(role => 
+          Array.isArray(role.role) 
+            ? role.role.includes('admin') || role.role.includes('owner')
+            : role.role === 'admin' || role.role === 'owner'
+        ));
         break;
       default:
         filteredByTab = users;
@@ -563,7 +578,9 @@ const Users: React.FC = () => {
       const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            user.email.toLowerCase().includes(searchTerm.toLowerCase());
       
-      const matchesRole = roleFilter === 'all' || (user.roles && user.roles.some(role => role.role.includes(roleFilter)));
+      const matchesRole = roleFilter === 'all' || (user.roles && user.roles.some(role => 
+        Array.isArray(role.role) ? role.role.includes(roleFilter) : role.role === roleFilter
+      ));
       
       return matchesSearch && matchesRole;
     });
@@ -1380,7 +1397,9 @@ const Users: React.FC = () => {
                                     // Search for existing guardian by phone
                                     const existingGuardian = users.find(user => 
                                       user.phone === guardianPhone.trim() && 
-                                      user.roles.some(role => role.role.includes('guardian'))
+                                      user.roles.some(role => 
+                                        Array.isArray(role.role) ? role.role.includes('guardian') : role.role === 'guardian'
+                                      )
                                     );
                                     
                                     if (existingGuardian) {

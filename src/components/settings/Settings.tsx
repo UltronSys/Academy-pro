@@ -312,6 +312,8 @@ const Settings: React.FC = () => {
         console.log('Settings: Updating settings in Firebase for org:', organizationId);
         await updateSettings(organizationId, updatedSettings);
         console.log('Settings: Settings updated in Firebase, reloading...');
+        // Add a small delay to ensure Firebase has processed the update
+        await new Promise(resolve => setTimeout(resolve, 500));
         // Reload settings from Firebase to ensure consistency
         await loadSettings();
         console.log('Settings: Settings reloaded from Firebase');
@@ -398,6 +400,8 @@ const Settings: React.FC = () => {
       if (organizationId) {
         try {
           await updateSettings(organizationId, updatedSettings);
+          // Add a small delay to ensure Firebase has processed the update
+          await new Promise(resolve => setTimeout(resolve, 500));
           // Reload settings from Firebase to ensure consistency
           await loadSettings();
           setSuccess(`Field ${fieldDialogMode === 'add' ? 'created' : 'updated'} successfully!`);
