@@ -13,7 +13,9 @@
       "Bash(npm install:*)",
       "Bash(grep:*)",
       "Bash(timeout 30s npm start)",
-      "Bash(timeout 10s npx tsc --noEmit --skipLibCheck)"
+      "Bash(timeout 10s npx tsc --noEmit --skipLibCheck)",
+      "Bash(timeout 10s npm start:*)",
+      "Bash(timeout:*)"
     ],
     "deny": []
   }

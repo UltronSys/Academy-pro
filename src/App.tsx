@@ -12,6 +12,7 @@ import Users from './components/users/Users';
 import EditUser from './components/users/EditUser';
 import UserDetails from './components/users/UserDetails';
 import Settings from './components/settings/Settings';
+import Finance from './components/finance/Finance';
 
 
 function App() {
@@ -76,6 +77,16 @@ function App() {
                 <ProtectedRoute requiredResource="settings" requiredAction="read">
                   <DashboardLayout>
                     <Settings />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/finance" 
+              element={
+                <ProtectedRoute requiredResource="finance" requiredAction="read">
+                  <DashboardLayout>
+                    <Finance />
                   </DashboardLayout>
                 </ProtectedRoute>
               } 

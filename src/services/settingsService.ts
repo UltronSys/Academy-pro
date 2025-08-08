@@ -46,6 +46,7 @@ export const createDefaultSettings = async (organizationId: string): Promise<Set
       emailNotifications: true,
       smsNotifications: false
     },
+    paymentMethods: ['Cash', 'Credit Card', 'Debit Card', 'Bank Transfer'],
     customRoles: [],
     fieldCategories: [],
     academySpecificSettings: {},

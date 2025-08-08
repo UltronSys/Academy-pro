@@ -154,6 +154,7 @@ export function RolePermissions() {
             emailNotifications: false,
             smsNotifications: false
           },
+          paymentMethods: ['Cash', 'Credit Card', 'Debit Card', 'Bank Transfer'],
           customRoles: [],
           fieldCategories: [],
           academySpecificSettings: {},
@@ -165,7 +166,7 @@ export function RolePermissions() {
       }
 
       // Add to custom roles
-      const updatedRoles = [...(currentSettings.customRoles || []), roleName];
+      const updatedRoles = [...(currentSettings?.customRoles || []), roleName];
       await updateSettings(organizationId, { customRoles: updatedRoles });
       
       // Create initial permissions for the role

@@ -14,12 +14,16 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { User, UserRole } from '../types';
+import { calculateUserBalanceFromReceipts, calculateUserOutstandingBalance } from './receiptService';
 
 export const createUser = async (userData: Omit<User, 'createdAt' | 'updatedAt'>) => {
   try {
     const userRef = doc(db, 'users', userData.id);
     await setDoc(userRef, {
       ...userData,
+      balance: 0, // Initialize balance to 0
+      outstandingBalance: {}, // Initialize outstanding balance per organization
+      availableCredits: {}, // Initialize available credits per organization
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
@@ -190,4 +194,158 @@ export const hasOrgWideRole = (user: User, role: string, organizationId: string)
     userRole.role.includes(role) &&
     userRole.academyId.length === 0
   );
+};
+
+// Update user balance in the user document
+export const updateUserBalance = async (userId: string, balance: number): Promise<void> => {
+  try {
+    console.log(`💰 updateUserBalance: Updating balance for user ${userId} to ${balance}`);
+    
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      balance,
+      updatedAt: serverTimestamp()
+    });
+    
+    console.log(`✅ updateUserBalance: Balance updated successfully for user ${userId}`);
+  } catch (error) {
+    console.error('❌ Error updating user balance:', error);
+    throw error;
+  }
+};
+
+// Calculate and update user balance from receipts
+export const recalculateAndUpdateUserBalance = async (userId: string, organizationId?: string): Promise<number> => {
+  try {
+    console.log(`🔄 recalculateAndUpdateUserBalance: Starting for user ${userId}`);
+    
+    // Calculate balance from receipts
+    const calculatedBalance = await calculateUserBalanceFromReceipts(userId, organizationId);
+    
+    console.log(`📊 recalculateAndUpdateUserBalance: Calculated balance: ${calculatedBalance}`);
+    
+    // Update the user document with the calculated balance
+    await updateUserBalance(userId, calculatedBalance);
+    
+    return calculatedBalance;
+  } catch (error) {
+    console.error('❌ Error recalculating and updating user balance:', error);
+    throw error;
+  }
+};
+
+// Get user balance (from user document, not calculated)
+export const getUserStoredBalance = async (userId: string): Promise<number> => {
+  try {
+    const user = await getUserById(userId);
+    return user?.balance || 0;
+  } catch (error) {
+    console.error('❌ Error getting user stored balance:', error);
+    throw error;
+  }
+};
+
+// Update user outstanding balance and available credits for specific organization
+export const updateUserOutstandingAndCredits = async (userId: string, organizationId: string, outstandingDebits: number, availableCredits: number): Promise<void> => {
+  try {
+    console.log(`💰 updateUserOutstandingAndCredits: Updating for user ${userId}, org ${organizationId}`);
+    console.log(`📊 Outstanding: ${outstandingDebits}, Credits: ${availableCredits}`);
+    
+    const userRef = doc(db, 'users', userId);
+    const user = await getUserById(userId);
+    
+    if (!user) {
+      throw new Error(`User ${userId} not found`);
+    }
+    
+    // Update the organization-specific outstanding balance and available credits
+    const updatedOutstandingBalance = {
+      ...user.outstandingBalance,
+      [organizationId]: outstandingDebits
+    };
+    
+    const updatedAvailableCredits = {
+      ...user.availableCredits,
+      [organizationId]: availableCredits
+    };
+    
+    await updateDoc(userRef, {
+      outstandingBalance: updatedOutstandingBalance,
+      availableCredits: updatedAvailableCredits,
+      updatedAt: serverTimestamp()
+    });
+    
+    console.log(`✅ updateUserOutstandingAndCredits: Updated successfully for user ${userId}`);
+  } catch (error) {
+    console.error('❌ Error updating user outstanding balance and credits:', error);
+    throw error;
+  }
+};
+
+// Calculate and update user outstanding balance and available credits from receipts
+export const recalculateAndUpdateUserOutstandingAndCredits = async (userId: string, organizationId: string): Promise<{outstandingDebits: number, availableCredits: number}> => {
+  try {
+    console.log(`🔄 recalculateAndUpdateUserOutstandingAndCredits: Starting for user ${userId}, org ${organizationId}`);
+    
+    // Calculate outstanding balance and available credits from receipts
+    const balanceInfo = await calculateUserOutstandingBalance(userId, organizationId);
+    
+    console.log(`📊 recalculateAndUpdateUserOutstandingAndCredits: Calculated - Outstanding: ${balanceInfo.outstandingDebits}, Credits: ${balanceInfo.availableCredits}`);
+    
+    // Update the user document with the calculated values
+    await updateUserOutstandingAndCredits(userId, organizationId, balanceInfo.outstandingDebits, balanceInfo.availableCredits);
+    
+    return {
+      outstandingDebits: balanceInfo.outstandingDebits,
+      availableCredits: balanceInfo.availableCredits
+    };
+  } catch (error) {
+    console.error('❌ Error recalculating and updating user outstanding balance and credits:', error);
+    throw error;
+  }
+};
+
+// Get user outstanding balance and available credits for organization (from user document)
+export const getUserStoredOutstandingAndCredits = async (userId: string, organizationId: string): Promise<{outstandingDebits: number, availableCredits: number}> => {
+  try {
+    const user = await getUserById(userId);
+    return {
+      outstandingDebits: user?.outstandingBalance?.[organizationId] || 0,
+      availableCredits: user?.availableCredits?.[organizationId] || 0
+    };
+  } catch (error) {
+    console.error('❌ Error getting user stored outstanding balance and credits:', error);
+    return { outstandingDebits: 0, availableCredits: 0 };
+  }
+};
+
+// Bulk update balances for all users in an organization
+export const recalculateAllUserBalances = async (organizationId: string): Promise<void> => {
+  try {
+    console.log(`🔄 recalculateAllUserBalances: Starting for organization ${organizationId}`);
+    
+    const users = await getUsersByOrganization(organizationId);
+    console.log(`👥 recalculateAllUserBalances: Found ${users.length} users to update`);
+    
+    const updatePromises = users.map(async user => {
+      try {
+        // Update regular balance
+        await recalculateAndUpdateUserBalance(user.id, organizationId);
+        // Update outstanding balance and available credits
+        await recalculateAndUpdateUserOutstandingAndCredits(user.id, organizationId);
+        return true;
+      } catch (error) {
+        console.error(`❌ Failed to update balances for user ${user.id}:`, error);
+        return false;
+      }
+    });
+    
+    const results = await Promise.all(updatePromises);
+    const successCount = results.filter(success => success).length;
+    
+    console.log(`✅ recalculateAllUserBalances: Updated ${successCount}/${users.length} user balances`);
+  } catch (error) {
+    console.error('❌ Error recalculating all user balances:', error);
+    throw error;
+  }
 };

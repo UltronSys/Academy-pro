@@ -5,16 +5,11 @@ import {
   Input,
   Card,
   CardBody,
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
   Badge,
   Select,
   Avatar,
-  Alert
+  Alert,
+  DataTable
 } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
@@ -588,6 +583,134 @@ const Users: React.FC = () => {
 
   const filteredUsers = getFilteredUsers();
 
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  // DataTable columns configuration
+  const columns = [
+    {
+      key: 'name',
+      header: 'User',
+      render: (user: User) => (
+        <div 
+          className="flex items-center space-x-3 cursor-pointer"
+          onClick={() => navigate(`/users/${user.id}`)}
+        >
+          <Avatar className="w-10 h-10">
+            {getInitials(user.name)}
+          </Avatar>
+          <div>
+            <div className="font-semibold text-secondary-900">{user.name}</div>
+            <div className="text-secondary-600 text-sm font-normal">{user.phone || 'No phone'}</div>
+          </div>
+        </div>
+      )
+    },
+    {
+      key: 'email',
+      header: 'Email',
+      render: (user: User) => (
+        <div className="text-secondary-900 font-normal">{user.email}</div>
+      )
+    },
+    {
+      key: 'academy',
+      header: 'Academy',
+      render: (user: User) => (
+        <div className="text-secondary-700 font-normal">{getUserAcademies(user.roles)}</div>
+      )
+    },
+    {
+      key: 'roles',
+      header: 'Roles',
+      render: (user: User) => getRoleChips(user.roles)
+    },
+    {
+      key: 'createdAt',
+      header: 'Date Added',
+      render: (user: User) => (
+        <div className="text-secondary-700 font-normal">
+          {user.createdAt?.toDate?.()?.toLocaleDateString() || 'Unknown'}
+        </div>
+      )
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (user: User) => (
+        <div className="flex justify-end space-x-2">
+          {canWrite('users') && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEditUser(user);
+              }}
+              className="p-2 text-secondary-400 hover:text-primary-600 transition-colors duration-200"
+              title="Edit User"
+            >
+              <EditIcon />
+            </button>
+          )}
+          {canDelete('users') && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteUser(user);
+              }}
+              className="p-2 text-secondary-400 hover:text-error-600 transition-colors duration-200"
+              title="Delete User"
+            >
+              <DeleteIcon />
+            </button>
+          )}
+          {user.roles.some(role => role.role.includes('guardian')) && (
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                setSelectedGuardian(user);
+                try {
+                  console.log('🔍 Looking for players linked to guardian:', user.id, user.name);
+                  const players = await getPlayersByGuardianId(user.id);
+                  console.log('📋 Found players:', players.length, players);
+                  const playerUsers = await Promise.all(
+                    players.map(async (player) => {
+                      const userDoc = users.find(u => u.id === player.userId);
+                      console.log('👤 Player user doc:', player.userId, userDoc?.name);
+                      return userDoc;
+                    })
+                  );
+                  const validPlayerUsers = playerUsers.filter(u => u !== undefined) as User[];
+                  console.log('✅ Valid player users:', validPlayerUsers.length, validPlayerUsers.map(p => p.name));
+                  setLinkedPlayers(validPlayerUsers);
+                  setOpenGuardianDialog(true);
+                } catch (error) {
+                  console.error('❌ Error loading linked players:', error);
+                  setError('Failed to load linked players');
+                }
+              }}
+              className="p-2 text-secondary-400 hover:text-primary-600 transition-colors duration-200"
+              title="View Linked Players"
+            >
+              <UserIcon />
+            </button>
+          )}
+          <button
+            className="p-2 text-secondary-400 hover:text-secondary-600 transition-colors duration-200"
+            title="More Options"
+          >
+            <MoreIcon />
+          </button>
+        </div>
+      )
+    }
+  ];
+
   const getRoleChips = (roles: UserRole[]) => {
     if (!roles || roles.length === 0) {
       return <Badge variant="default">No roles</Badge>;
@@ -609,15 +732,6 @@ const Users: React.FC = () => {
         ))}
       </div>
     );
-  };
-
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map(n => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
   };
 
   const getUserAcademies = (userRoles: UserRole[]) => {
@@ -705,127 +819,15 @@ const Users: React.FC = () => {
 
       {/* Users Table */}
       <Card>
-        <div className="overflow-x-auto">
-          <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Academy</TableHead>
-              <TableHead>Roles</TableHead>
-              <TableHead>Joined</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredUsers.map((user) => (
-              <TableRow 
-                key={user.id}
-                className="cursor-pointer hover:bg-secondary-50 transition-colors duration-200"
-                onClick={() => navigate(`/users/${user.id}`)}
-              >
-                <TableCell>
-                  <div className="flex items-center space-x-3">
-                    <Avatar size="md">
-                      {getInitials(user.name)}
-                    </Avatar>
-                    <div>
-                      <div className="font-semibold text-secondary-900">{user.name}</div>
-                      <div className="text-secondary-600 text-sm font-normal">{user.phone || 'No phone'}</div>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="text-secondary-900 font-normal">{user.email}</div>
-                </TableCell>
-                <TableCell>
-                  <div className="text-secondary-700 font-normal">{getUserAcademies(user.roles)}</div>
-                </TableCell>
-                <TableCell>
-                  {getRoleChips(user.roles)}
-                </TableCell>
-                <TableCell>
-                  <div className="text-secondary-700 font-normal">
-                    {user.createdAt?.toDate?.()?.toLocaleDateString() || 'Unknown'}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="flex justify-end space-x-2">
-                    {canWrite('users') && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEditUser(user);
-                        }}
-                        className="p-2 text-secondary-400 hover:text-primary-600 transition-colors duration-200"
-                        title="Edit User"
-                      >
-                        <EditIcon />
-                      </button>
-                    )}
-                    {canDelete('users') && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteUser(user);
-                        }}
-                        className="p-2 text-secondary-400 hover:text-error-600 transition-colors duration-200"
-                        title="Delete User"
-                    >
-                      <DeleteIcon />
-                    </button>
-                    )}
-                    {user.roles.some(role => role.role.includes('guardian')) && (
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          setSelectedGuardian(user);
-                          try {
-                            const players = await getPlayersByGuardianId(user.id);
-                            const playerUsers = await Promise.all(
-                              players.map(async (player) => {
-                                const userDoc = users.find(u => u.id === player.userId);
-                                return userDoc;
-                              })
-                            );
-                            setLinkedPlayers(playerUsers.filter(u => u !== undefined) as User[]);
-                            setOpenGuardianDialog(true);
-                          } catch (error) {
-                            console.error('Error loading linked players:', error);
-                            setError('Failed to load linked players');
-                          }
-                        }}
-                        className="p-2 text-secondary-400 hover:text-primary-600 transition-colors duration-200"
-                        title="View Linked Players"
-                      >
-                        <UserIcon />
-                      </button>
-                    )}
-                    <button
-                      className="p-2 text-secondary-400 hover:text-secondary-600 transition-colors duration-200"
-                      title="More Options"
-                    >
-                      <MoreIcon />
-                    </button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {filteredUsers.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center py-8">
-                  <div className="text-secondary-600 font-normal">
-                    {searchTerm || roleFilter !== 'all'
-                      ? 'No users found matching your criteria'
-                      : 'No users found'
-                    }
-                  </div>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-        </div>
+        <DataTable
+          data={filteredUsers}
+          columns={columns}
+          emptyMessage={searchTerm || roleFilter !== 'all' 
+            ? 'No users found matching your criteria' 
+            : 'No users found'}
+          showPagination={true}
+          itemsPerPage={10}
+        />
       </Card>
 
       {/* Delete Confirmation Modal */}
@@ -876,55 +878,54 @@ const Users: React.FC = () => {
               </button>
             </div>
             <div className="p-6">
-              {linkedPlayers.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-secondary-600 font-normal">
-                    No players are currently linked to this guardian.
-                  </p>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Player Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Academy</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {linkedPlayers.map((player) => (
-                      <TableRow key={player.id}>
-                        <TableCell>
-                          <div className="flex items-center space-x-3">
-                            <Avatar size="sm">
-                              {getInitials(player.name)}
-                            </Avatar>
-                            <div className="text-sm font-normal">{player.name}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm font-normal">{player.email}</div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm text-secondary-700 font-normal">
-                            {getUserAcademies(player.roles)}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => handleEditUser(player)}
-                          >
-                            View Details
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+              <DataTable
+                data={linkedPlayers}
+                columns={[
+                  {
+                    key: 'name',
+                    header: 'Player Name',
+                    render: (player: User) => (
+                      <div className="flex items-center space-x-3">
+                        <Avatar size="sm">
+                          {getInitials(player.name)}
+                        </Avatar>
+                        <div className="text-sm font-normal">{player.name}</div>
+                      </div>
+                    )
+                  },
+                  {
+                    key: 'email',
+                    header: 'Email',
+                    render: (player: User) => (
+                      <div className="text-sm font-normal">{player.email}</div>
+                    )
+                  },
+                  {
+                    key: 'academy',
+                    header: 'Academy',
+                    render: (player: User) => (
+                      <div className="text-sm text-secondary-700 font-normal">
+                        {getUserAcademies(player.roles)}
+                      </div>
+                    )
+                  },
+                  {
+                    key: 'actions',
+                    header: 'Actions',
+                    render: (player: User) => (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => handleEditUser(player)}
+                      >
+                        View Details
+                      </Button>
+                    )
+                  }
+                ]}
+                emptyMessage="No players are currently linked to this guardian."
+                showPagination={false}
+              />
             </div>
             <div className="flex justify-end p-6 border-t border-secondary-200">
               <Button

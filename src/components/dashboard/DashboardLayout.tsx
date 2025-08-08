@@ -21,6 +21,30 @@ const DashboardIcon = () => (
   </svg>
 );
 
+const ProductsIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+  </svg>
+);
+
+const TransactionsIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+  </svg>
+);
+
+const PaymentsIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+  </svg>
+);
+
+const StatsIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+  </svg>
+);
+
 const PeopleIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -145,6 +169,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const [academies, setAcademies] = useState<Academy[]>([]);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [usersExpanded, setUsersExpanded] = useState(location.pathname.startsWith('/users'));
+  const [financeExpanded, setFinanceExpanded] = useState(location.pathname.startsWith('/finance'));
   const { currentUser, userData, logout, refreshUserData } = useAuth();
   const { selectedAcademy, setSelectedAcademy, setSelectedOrganization } = useApp();
   const { canRead } = usePermissions();
@@ -170,6 +195,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
   useEffect(() => {
     setUsersExpanded(location.pathname.startsWith('/users'));
+    setFinanceExpanded(location.pathname.startsWith('/finance'));
   }, [location.pathname]);
 
   // First priority: Use navigation state if available (from signup)
@@ -332,6 +358,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
       ]
     },
     { 
+      text: 'Finance', 
+      icon: <FinanceIcon />, 
+      path: '/finance',
+      description: 'Financial Management',
+      resource: 'finance',
+      hasSubItems: true,
+      subItems: [
+        { text: 'Products', path: '/finance?tab=0', icon: <ProductsIcon /> },
+        { text: 'Transactions', path: '/finance?tab=1', icon: <TransactionsIcon /> },
+        { text: 'Players/Guardians', path: '/finance?tab=2', icon: <PaymentsIcon /> },
+        { text: 'Stats', path: '/finance?tab=3', icon: <StatsIcon /> }
+      ]
+    },
+    { 
       text: 'Settings', 
       icon: <SettingsIcon />, 
       path: '/settings',
@@ -377,6 +417,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
           {menuItems.map((item) => {
             const isActive = location.pathname === item.path;
             const isUsersPage = location.pathname.startsWith('/users');
+            const isFinancePage = location.pathname.startsWith('/finance');
             
             return (
               <div key={item.text}>
@@ -384,6 +425,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                   onClick={() => {
                     if (item.hasSubItems && item.text === 'Users') {
                       setUsersExpanded(!usersExpanded);
+                    } else if (item.hasSubItems && item.text === 'Finance') {
+                      setFinanceExpanded(!financeExpanded);
                     } else {
                       navigate(item.path);
                     }
@@ -409,7 +452,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                   </div>
                   {item.hasSubItems && (
                     <span className={`${isActive ? 'text-white' : 'text-secondary-500'}`}>
-                      {usersExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+                      {(item.text === 'Users' && usersExpanded) || (item.text === 'Finance' && financeExpanded) ? <ChevronUpIcon /> : <ChevronDownIcon />}
                     </span>
                   )}
                 </button>
@@ -420,6 +463,34 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     {item.subItems?.map((subItem) => {
                       const tabValue = subItem.path.split('tab=')[1];
                       const subIsActive = location.pathname === '/users' && location.search.includes(`tab=${tabValue}`);
+                      return (
+                        <button
+                          key={subItem.text}
+                          onClick={() => navigate(subItem.path)}
+                          className={`w-full flex items-center space-x-2 px-3 py-2.5 text-left rounded-lg transition-all duration-200 min-h-[40px] ${
+                            subIsActive 
+                              ? 'bg-primary-600 text-white shadow-sm' 
+                              : 'text-secondary-700 hover:bg-primary-50 hover:text-primary-700'
+                          }`}
+                        >
+                          <span className={`${subIsActive ? 'text-white' : 'text-secondary-500'}`}>
+                            {subItem.icon}
+                          </span>
+                          <span className={`text-sm font-semibold ${subIsActive ? 'text-white' : 'text-secondary-800'}`}>
+                            {subItem.text}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                
+                {/* Sub-items for Finance */}
+                {item.hasSubItems && item.text === 'Finance' && financeExpanded && (
+                  <div className="mt-2 ml-6 space-y-1">
+                    {item.subItems?.map((subItem) => {
+                      const tabValue = subItem.path.split('tab=')[1];
+                      const subIsActive = location.pathname === '/finance' && location.search.includes(`tab=${tabValue}`);
                       return (
                         <button
                           key={subItem.text}

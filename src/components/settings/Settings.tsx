@@ -74,6 +74,12 @@ const SportsIcon = () => (
   </svg>
 );
 
+const PaymentIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+  </svg>
+);
+
 const Settings: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [settings, setSettings] = useState<Partial<SettingsType>>({});
@@ -101,6 +107,9 @@ const Settings: React.FC = () => {
   const [categoryDialogMode, setCategoryDialogMode] = useState<'add' | 'edit'>('add');
   const [selectedCategory, setSelectedCategory] = useState<FieldCategory | null>(null);
   const [categoryForm, setCategoryForm] = useState<Partial<FieldCategory>>({});
+  
+  // Payment methods states
+  const [newPaymentMethod, setNewPaymentMethod] = useState('');
 
   const { userData } = useAuth();
   const { selectedOrganization, selectedAcademy } = useApp();
@@ -141,6 +150,7 @@ const Settings: React.FC = () => {
               emailNotifications: true,
               smsNotifications: false
             },
+            paymentMethods: ['Cash', 'Credit Card', 'Debit Card', 'Bank Transfer'],
             customRoles: [],
             fieldCategories: [],
             academySpecificSettings: {},
@@ -485,9 +495,10 @@ const Settings: React.FC = () => {
   const tabs = [
     { id: 0, name: 'General', icon: <SettingsIcon /> },
     { id: 1, name: 'Notifications', icon: <NotificationsIcon /> },
-    { id: 2, name: 'Roles & Permissions', icon: <SecurityIcon /> },
-    { id: 3, name: 'Academies', icon: <BusinessIcon /> },
-    { id: 4, name: 'Player Parameters', icon: <SportsIcon /> },
+    { id: 2, name: 'Payment Methods', icon: <PaymentIcon /> },
+    { id: 3, name: 'Roles & Permissions', icon: <SecurityIcon /> },
+    { id: 4, name: 'Academies', icon: <BusinessIcon /> },
+    { id: 5, name: 'Player Parameters', icon: <SportsIcon /> },
   ];
 
   if (loading) {
@@ -669,6 +680,7 @@ const Settings: React.FC = () => {
                   <option value="USD">USD ($)</option>
                   <option value="EUR">EUR (€)</option>
                   <option value="GBP">GBP (£)</option>
+                  <option value="KSH">KSH (KSh)</option>
                   <option value="CAD">CAD (C$)</option>
                 </Select>
               </div>
@@ -773,13 +785,97 @@ const Settings: React.FC = () => {
             </div>
           )}
 
-          {/* Roles & Permissions */}
+          {/* Payment Methods */}
           {activeTab === 2 && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold text-secondary-900 mb-2">Payment Methods</h3>
+                <p className="text-secondary-600 font-normal">Configure payment methods available for transactions.</p>
+              </div>
+              
+              <div className="space-y-4">
+                {/* Add Payment Method */}
+                <div className="flex gap-3">
+                  <Input
+                    type="text"
+                    placeholder="Enter payment method (e.g., Mobile Money, PayPal)"
+                    value={newPaymentMethod}
+                    onChange={(e) => setNewPaymentMethod(e.target.value)}
+                    className="flex-1"
+                    disabled={!canWrite('settings')}
+                  />
+                  <Button 
+                    onClick={async () => {
+                      if (newPaymentMethod.trim() && !settings.paymentMethods?.includes(newPaymentMethod.trim())) {
+                        const updatedSettings = {
+                          ...settings,
+                          paymentMethods: [...(settings.paymentMethods || []), newPaymentMethod.trim()]
+                        };
+                        setSettings(updatedSettings);
+                        setNewPaymentMethod('');
+                        const organizationId = userData?.roles[0]?.organizationId;
+                        if (organizationId) {
+                          await updateSettings(organizationId, updatedSettings);
+                        }
+                        setSuccess('Payment method added successfully!');
+                        setTimeout(() => setSuccess(''), 3000);
+                      }
+                    }}
+                    disabled={!canWrite('settings') || !newPaymentMethod.trim()}
+                  >
+                    <AddIcon />
+                    Add
+                  </Button>
+                </div>
+                
+                {/* Payment Methods List */}
+                <div className="space-y-2">
+                  {(settings.paymentMethods || []).map((method, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-secondary-50 rounded-lg">
+                      <span className="font-medium text-secondary-900">{method}</span>
+                      {canDelete('settings') && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={async () => {
+                            const updatedMethods = settings.paymentMethods?.filter((_, i) => i !== index) || [];
+                            const updatedSettings = {
+                              ...settings,
+                              paymentMethods: updatedMethods
+                            };
+                            setSettings(updatedSettings);
+                            const organizationId = userData?.roles[0]?.organizationId;
+                        if (organizationId) {
+                          await updateSettings(organizationId, updatedSettings);
+                        }
+                            setSuccess('Payment method removed successfully!');
+                            setTimeout(() => setSuccess(''), 3000);
+                          }}
+                          className="text-error-600 hover:text-error-700"
+                        >
+                          <DeleteIcon />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  
+                  {(!settings.paymentMethods || settings.paymentMethods.length === 0) && (
+                    <div className="text-center py-8 text-secondary-500">
+                      No payment methods configured. Add some payment methods to use in transactions.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Roles & Permissions */}
+          {activeTab === 3 && (
             <RolePermissions />
           )}
 
           {/* Academies */}
-          {activeTab === 3 && (
+          {activeTab === 4 && (
             <div className="space-y-6">
               <div className="flex justify-between items-center">
                 <div>
@@ -882,7 +978,7 @@ const Settings: React.FC = () => {
           )}
 
           {/* Field Categories */}
-          {activeTab === 4 && (
+          {activeTab === 5 && (
             <div className="space-y-6">
               <div className="flex justify-between items-center">
                 <div>
