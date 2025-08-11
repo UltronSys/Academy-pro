@@ -170,7 +170,10 @@ export const assignProductToPlayer = async (
   playerId: string,
   product: Product,
   organizationId: string,
-  academyId?: string
+  academyId?: string,
+  invoiceDate?: Date,
+  deadlineDate?: Date,
+  invoiceGeneration?: 'immediate' | 'scheduled'
 ): Promise<void> => {
   try {
     console.log('🎯 assignProductToPlayer: Starting with:', { 
@@ -207,6 +210,12 @@ export const assignProductToPlayer = async (
       throw new Error(`Product "${product.name}" is already assigned to this player`);
     }
     
+    // Use provided dates or set defaults
+    const now = new Date();
+    const finalInvoiceDate = invoiceDate || now;
+    const finalDeadlineDate = deadlineDate || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // Default 30 days
+    const finalInvoiceGeneration = invoiceGeneration || 'immediate';
+    
     // Add product to player's assigned products
     const assignedProduct = {
       productId: product.id,
@@ -214,7 +223,9 @@ export const assignProductToPlayer = async (
       price: product.price,
       assignedDate: Timestamp.now(),
       status: 'active' as const,
-      receiptStatus: product.productType === 'one-time' ? 'immediate' as const : 'scheduled' as const
+      invoiceDate: Timestamp.fromDate(finalInvoiceDate),
+      deadlineDate: Timestamp.fromDate(finalDeadlineDate),
+      receiptStatus: finalInvoiceGeneration === 'immediate' ? 'immediate' as const : 'scheduled' as const
     };
     
     const updatedAssignedProducts = player.assignedProducts ? 
@@ -243,10 +254,10 @@ export const assignProductToPlayer = async (
     await batch.commit();
     console.log('✅ assignProductToPlayer: Player update batch committed');
     
-    // Create debit receipt based on product type
-    if (product.productType === 'one-time') {
-      // For one-time products, create receipt immediately
-      console.log('🧾 assignProductToPlayer: Creating immediate debit receipt for one-time product...');
+    // Create debit receipt based on invoice generation preference
+    if (finalInvoiceGeneration === 'immediate') {
+      // Create receipt immediately
+      console.log('🧾 assignProductToPlayer: Creating immediate debit receipt...');
       
       try {
         const receipt = await createDebitReceipt(
@@ -254,78 +265,80 @@ export const assignProductToPlayer = async (
           productRef,
           {
             name: product.name,
-            price: product.price
+            price: product.price,
+            invoiceDate: finalInvoiceDate,
+            deadline: finalDeadlineDate
           },
           organizationId,
           academyId
         );
         
-        console.log('🎉 assignProductToPlayer: One-time product assigned. Receipt created:', receipt.id);
+        console.log('🎉 assignProductToPlayer: Receipt created immediately:', receipt.id);
         console.log('📍 assignProductToPlayer: Receipt location: users/' + player.userId + '/receipts/' + receipt.id);
       } catch (receiptError: any) {
         console.error('❌ assignProductToPlayer: Failed to create debit receipt:', receiptError);
         throw new Error(`Failed to create receipt: ${receiptError?.message || receiptError}`);
       }
-    } else if (product.productType === 'recurring') {
-      // For recurring products, schedule receipt generation for end of period
-      console.log('📅 assignProductToPlayer: Scheduling debit receipt for recurring product at end of period...');
-      console.log('📅 Product recurring duration:', product.recurringDuration);
-      
-      // Calculate the end of the current subscription period
-      const now = new Date();
-      let receiptDueDate: Date;
-      
-      if (product.recurringDuration) {
-        switch (product.recurringDuration.unit) {
-          case 'days':
-            receiptDueDate = new Date(now.getTime() + (product.recurringDuration.value * 24 * 60 * 60 * 1000));
-            break;
-          case 'weeks':
-            receiptDueDate = new Date(now.getTime() + (product.recurringDuration.value * 7 * 24 * 60 * 60 * 1000));
-            break;
-          case 'months':
-            receiptDueDate = new Date(now);
-            receiptDueDate.setMonth(now.getMonth() + product.recurringDuration.value);
-            break;
-          case 'years':
-            receiptDueDate = new Date(now);
-            receiptDueDate.setFullYear(now.getFullYear() + product.recurringDuration.value);
-            break;
-          default:
-            // Default to 1 month if unit is not recognized
-            receiptDueDate = new Date(now);
-            receiptDueDate.setMonth(now.getMonth() + 1);
+    } else if (finalInvoiceGeneration === 'scheduled') {
+      // Schedule receipt creation based on product type
+      if (product.productType === 'one-time') {
+        // For one-time products, schedule on invoice date
+        console.log('📅 assignProductToPlayer: One-time product - receipt will be created on invoice date:', finalInvoiceDate.toLocaleDateString());
+      } else if (product.productType === 'recurring') {
+        // For recurring products, schedule receipt generation for end of period
+        console.log('📅 assignProductToPlayer: Scheduling debit receipt for recurring product at end of period...');
+        console.log('📅 Product recurring duration:', product.recurringDuration);
+        
+        // Calculate the end of the current subscription period
+        const now = new Date();
+        let receiptDueDate: Date;
+        
+        if (product.recurringDuration) {
+          switch (product.recurringDuration.unit) {
+            case 'days':
+              receiptDueDate = new Date(now.getTime() + (product.recurringDuration.value * 24 * 60 * 60 * 1000));
+              break;
+            case 'weeks':
+              receiptDueDate = new Date(now.getTime() + (product.recurringDuration.value * 7 * 24 * 60 * 60 * 1000));
+              break;
+            case 'months':
+              receiptDueDate = new Date(now);
+              receiptDueDate.setMonth(now.getMonth() + product.recurringDuration.value);
+              break;
+            case 'years':
+              receiptDueDate = new Date(now);
+              receiptDueDate.setFullYear(now.getFullYear() + product.recurringDuration.value);
+              break;
+            default:
+              // Default to 1 month if unit is not recognized
+              receiptDueDate = new Date(now);
+              receiptDueDate.setMonth(now.getMonth() + 1);
+          }
+        } else {
+          // Default to 1 month if no duration specified
+          receiptDueDate = new Date(now);
+          receiptDueDate.setMonth(now.getMonth() + 1);
         }
-      } else {
-        // Default to 1 month if no duration specified
-        receiptDueDate = new Date(now);
-        receiptDueDate.setMonth(now.getMonth() + 1);
+        
+        console.log(`📅 Recurring product receipt will be generated on: ${receiptDueDate.toLocaleDateString()}`);
+        
+        // Update the assigned product with receipt schedule info
+        const updatedAssignedProductsWithSchedule = updatedAssignedProducts.map(ap => 
+          ap.productId === product.id ? {
+            ...ap,
+            nextReceiptDate: Timestamp.fromDate(receiptDueDate),
+            receiptStatus: 'scheduled' as const
+          } : ap
+        );
+        
+        // Update player with scheduled receipt info
+        await updateDoc(playerRef, {
+          assignedProducts: updatedAssignedProductsWithSchedule,
+          updatedAt: Timestamp.now()
+        });
+        
+        console.log('✅ assignProductToPlayer: Recurring product assigned. Receipt scheduled for:', receiptDueDate.toLocaleDateString());
       }
-      
-      console.log(`📅 Recurring product receipt will be generated on: ${receiptDueDate.toLocaleDateString()}`);
-      
-      // TODO: In a production system, you would schedule this using:
-      // 1. Cloud Functions with Firestore triggers
-      // 2. Cloud Scheduler with Pub/Sub
-      // 3. Background job processing system
-      // For now, we'll store the scheduled receipt info in the player's assigned products
-      
-      // Update the assigned product with receipt schedule info
-      const updatedAssignedProductsWithSchedule = updatedAssignedProducts.map(ap => 
-        ap.productId === product.id ? {
-          ...ap,
-          nextReceiptDate: Timestamp.fromDate(receiptDueDate),
-          receiptStatus: 'scheduled' as const
-        } : ap
-      );
-      
-      // Update player with scheduled receipt info
-      await updateDoc(playerRef, {
-        assignedProducts: updatedAssignedProductsWithSchedule,
-        updatedAt: Timestamp.now()
-      });
-      
-      console.log('✅ assignProductToPlayer: Recurring product assigned. Receipt scheduled for:', receiptDueDate.toLocaleDateString());
     }
     
   } catch (error) {

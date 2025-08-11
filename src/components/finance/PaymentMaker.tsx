@@ -51,6 +51,10 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
   const [selectedAdditionalPlayerId, setSelectedAdditionalPlayerId] = useState('');
   const [loadingGuardianData, setLoadingGuardianData] = useState(false);
   const [loadingAdditionalPlayer, setLoadingAdditionalPlayer] = useState(false);
+  
+  // Search and filter states
+  const [searchTerm, setSearchTerm] = useState('');
+  const [userTypeFilter, setUserTypeFilter] = useState<'all' | 'players' | 'guardians'>('all');
 
   // Helper function to get balance info - optimized for speed
   const getBalanceInfo = async (userId: string, organizationId: string) => {
@@ -77,6 +81,33 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
   const playersAsUsers = users.filter(user => 
     user.roles.some(role => role.role.includes('player'))
   );
+  
+  // Filter users based on search term and user type filter
+  const filterUsers = (userList: User[], userType: 'guardian' | 'player') => {
+    return userList.filter(user => {
+      // Filter by search term (name or email)
+      const matchesSearch = searchTerm === '' || 
+        user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        user.email.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      // Filter by user type
+      const matchesType = userTypeFilter === 'all' || 
+        (userTypeFilter === 'guardians' && userType === 'guardian') ||
+        (userTypeFilter === 'players' && userType === 'player');
+      
+      return matchesSearch && matchesType;
+    });
+  };
+  
+  const filteredGuardians = filterUsers(guardians, 'guardian');
+  const filteredPlayersAsUsers = filterUsers(playersAsUsers, 'player');
+  const filteredAllUsers = userTypeFilter === 'all' && guardians.length === 0 && playersAsUsers.length === 0 
+    ? users.filter(user => 
+        searchTerm === '' || 
+        user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        user.email.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    : [];
 
 
   useEffect(() => {
@@ -251,6 +282,29 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
       {/* Payment Maker Selection */}
       <div>
         <Label htmlFor="paymentMaker">Who is making the payment?</Label>
+        
+        {/* Search and Filter Controls */}
+        <div className="flex gap-3 mt-2 mb-3">
+          <div className="flex-1">
+            <Input
+              type="text"
+              placeholder="Search by name or email..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full"
+            />
+          </div>
+          <div className="w-40">
+            <Select
+              value={userTypeFilter}
+              onChange={(e) => setUserTypeFilter(e.target.value as 'all' | 'players' | 'guardians')}
+            >
+              <option value="all">All Users</option>
+              <option value="players">Players Only</option>
+              <option value="guardians">Guardians Only</option>
+            </Select>
+          </div>
+        </div>
         <Select
           id="paymentMaker"
           value={selectedPaymentMaker ? `${selectedPaymentMaker.type}:${selectedPaymentMaker.userRef.id}` : ''}
@@ -258,33 +312,43 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
           required
         >
           <option value="">Select payment maker...</option>
-          {/* Show all users if no specific role-based filtering works */}
-          {guardians.length === 0 && playersAsUsers.length === 0 && users.length > 0 && (
+          
+          {/* Show filtered results based on search and filter */}
+          {filteredAllUsers.length > 0 && (
             <optgroup label="All Users">
-              {users.map(user => (
+              {filteredAllUsers.map(user => (
                 <option key={`user:${user.id}`} value={`guardian:${user.id}`}>
-                  {user.name} (User)
+                  {user.name} ({user.email})
                 </option>
               ))}
             </optgroup>
           )}
-          {guardians.length > 0 && (
+          
+          {filteredGuardians.length > 0 && (
             <optgroup label="Guardians">
-              {guardians.map(guardian => (
+              {filteredGuardians.map(guardian => (
                 <option key={`guardian:${guardian.id}`} value={`guardian:${guardian.id}`}>
-                  {guardian.name} (Guardian)
+                  {guardian.name} ({guardian.email})
                 </option>
               ))}
             </optgroup>
           )}
-          {playersAsUsers.length > 0 && (
+          
+          {filteredPlayersAsUsers.length > 0 && (
             <optgroup label="Players">
-              {playersAsUsers.map(player => (
+              {filteredPlayersAsUsers.map(player => (
                 <option key={`player:${player.id}`} value={`player:${player.id}`}>
-                  {player.name} (Player)
+                  {player.name} ({player.email})
                 </option>
               ))}
             </optgroup>
+          )}
+          
+          {/* Show message when no results found */}
+          {searchTerm && filteredGuardians.length === 0 && filteredPlayersAsUsers.length === 0 && filteredAllUsers.length === 0 && (
+            <option value="" disabled>
+              No users found matching "{searchTerm}"
+            </option>
           )}
         </Select>
       </div>
@@ -399,7 +463,7 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
           </div>
 
           <div className="space-y-3">
-            {playerPayments.map((payment, index) => (
+            {playerPayments.map((payment) => (
               <Card key={payment.playerId} className="p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex-1">

@@ -54,6 +54,8 @@ export interface Player {
     price: number;
     assignedDate: Timestamp;
     status: 'active' | 'inactive' | 'cancelled';
+    invoiceDate: Timestamp; // When the invoice/debit receipt will be created
+    deadlineDate: Timestamp; // Payment deadline for the invoice
     nextReceiptDate?: Timestamp; // For recurring products - when next receipt should be generated
     receiptStatus?: 'immediate' | 'scheduled' | 'generated'; // Status of receipt generation
   }[];

@@ -13,6 +13,7 @@ import EditUser from './components/users/EditUser';
 import UserDetails from './components/users/UserDetails';
 import Settings from './components/settings/Settings';
 import Finance from './components/finance/Finance';
+import PlayerDetails from './components/finance/PlayerDetails';
 
 
 function App() {
@@ -87,6 +88,16 @@ function App() {
                 <ProtectedRoute requiredResource="finance" requiredAction="read">
                   <DashboardLayout>
                     <Finance />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/finance/player/:playerId" 
+              element={
+                <ProtectedRoute requiredResource="finance" requiredAction="read">
+                  <DashboardLayout>
+                    <PlayerDetails />
                   </DashboardLayout>
                 </ProtectedRoute>
               } 

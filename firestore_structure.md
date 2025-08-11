@@ -52,7 +52,17 @@ Collection for storing player information across all organizations.
 - `dob` (Date) - Date of birth
 - `gender` (string) - Player's gender
 - `guardianId` (array of strings) - Guardian user IDs
-- `playerParameters` (object) - Dynamic player attributes/parameters
+- `playerParameters` (Record<string, any>) - Dynamic player attributes/parameters (key-value pairs)
+- `assignedProducts` (array of objects, optional) - Products assigned to the player
+  - `productId` (string) - Product's unique identifier
+  - `productName` (string) - Product name (cached for display)
+  - `price` (number) - Product price at time of assignment
+  - `assignedDate` (Timestamp) - Date when product was assigned
+  - `status` (string) - Assignment status: 'active' | 'inactive' | 'cancelled'
+  - `invoiceDate` (Timestamp) - Date when the invoice/debit receipt will be created
+  - `deadlineDate` (Timestamp) - Payment deadline for the invoice
+  - `nextReceiptDate` (Timestamp, optional) - For recurring products - when next receipt should be generated
+  - `receiptStatus` (string, optional) - Status of receipt generation: 'immediate' | 'scheduled' | 'generated'
 - `createdAt` (Timestamp) - Creation timestamp
 - `updatedAt` (Timestamp) - Last update timestamp
 

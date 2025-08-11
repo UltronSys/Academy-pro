@@ -74,10 +74,9 @@ export const createReceipt = async (
 export const createDebitReceipt = async (
   userRef: DocumentReference,
   productRef: DocumentReference,
-  productInfo: { name: string; price: number },
+  productInfo: { name: string; price: number; invoiceDate?: Date; deadline?: Date },
   organizationId: string,
-  academyId?: string,
-  deadline?: Date
+  academyId?: string
 ): Promise<Receipt> => {
   try {
     console.log('🧾 createDebitReceipt: Starting with:', {
@@ -89,9 +88,11 @@ export const createDebitReceipt = async (
       academyId
     });
 
-    const invoiceDate = Timestamp.now();
-    const deadlineTimestamp = deadline 
-      ? Timestamp.fromDate(deadline) 
+    const invoiceDate = productInfo.invoiceDate 
+      ? Timestamp.fromDate(productInfo.invoiceDate)
+      : Timestamp.now();
+    const deadlineTimestamp = productInfo.deadline 
+      ? Timestamp.fromDate(productInfo.deadline) 
       : Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)); // 30 days from now
     
     const userId = userRef.id;

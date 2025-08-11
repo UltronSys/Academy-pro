@@ -49,7 +49,6 @@ const PlayersGuardians: React.FC = () => {
   // Data state
   const [playerFinancials, setPlayerFinancials] = useState<PlayerFinancialSummary[]>([]);
   const [guardianFinancials, setGuardianFinancials] = useState<GuardianFinancialSummary[]>([]);
-  const [selectedPlayer, setSelectedPlayer] = useState<PlayerFinancialSummary | null>(null);
   const [selectedGuardian, setSelectedGuardian] = useState<GuardianFinancialSummary | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   
@@ -459,28 +458,6 @@ const PlayersGuardians: React.FC = () => {
       )
     },
     { 
-      key: 'recentActivity', 
-      header: 'Recent Activity',
-      render: (playerSummary: PlayerFinancialSummary) => (
-        <div className="text-sm">
-          {playerSummary.recentTransactions.length > 0 ? (
-            <>
-              <div>Last Transaction:</div>
-              <div className="text-secondary-600">
-                {playerSummary.recentTransactions[0].date?.toDate().toLocaleDateString() || 
-                 playerSummary.recentTransactions[0].createdAt.toDate().toLocaleDateString()}
-              </div>
-              <div className="text-xs text-secondary-500">
-                {playerSummary.recentTransactions[0].description}
-              </div>
-            </>
-          ) : (
-            <span className="text-secondary-500">No recent activity</span>
-          )}
-        </div>
-      )
-    },
-    { 
       key: 'status', 
       header: 'Status',
       render: (playerSummary: PlayerFinancialSummary) => {
@@ -493,25 +470,6 @@ const PlayersGuardians: React.FC = () => {
       }
     },
     { 
-      key: 'receipts', 
-      header: 'Receipts & Transactions',
-      render: (playerSummary: PlayerFinancialSummary) => (
-        <div className="text-sm">
-          <div className="text-secondary-600">
-            Receipts: {playerSummary.receipts.length}
-          </div>
-          <div className="text-secondary-600">
-            Transactions: {playerSummary.recentTransactions.length}
-          </div>
-          {playerSummary.receipts.some(r => r.type === 'debit' && r.product?.deadline && r.product.deadline.toMillis() < Date.now()) && (
-            <div className="text-error-600 text-xs font-medium">
-              Has Overdue Items
-            </div>
-          )}
-        </div>
-      )
-    },
-    { 
       key: 'actions', 
       header: 'Actions',
       render: (playerSummary: PlayerFinancialSummary) => (
@@ -519,10 +477,7 @@ const PlayersGuardians: React.FC = () => {
           <Button 
             variant="ghost" 
             size="sm"
-            onClick={() => {
-              setSelectedPlayer(playerSummary);
-              setShowDetailsModal(true);
-            }}
+            onClick={() => navigate(`/finance/player/${playerSummary.player.id}`)}
           >
             View Details
           </Button>
@@ -601,55 +556,6 @@ const PlayersGuardians: React.FC = () => {
           Net Balance: {defaultCurrency} {guardianSummary.totalNetBalance.toFixed(2)}
         </div>
       )
-    },
-    { 
-      key: 'receiptsTransactions', 
-      header: 'Receipts & Transactions',
-      render: (guardianSummary: GuardianFinancialSummary) => {
-        return (
-          <div className="font-medium">
-            <div className="text-sm text-secondary-600">
-              Receipts: {guardianSummary.allReceipts.length}
-            </div>
-            <div className="text-sm text-secondary-600">
-              Transactions: {guardianSummary.allTransactions.length}
-            </div>
-            <div className="text-xs text-secondary-500">
-              {guardianSummary.linkedPlayers.length} player{guardianSummary.linkedPlayers.length !== 1 ? 's' : ''}
-            </div>
-          </div>
-        );
-      }
-    },
-    { 
-      key: 'recentActivity', 
-      header: 'Recent Activity',
-      render: (guardianSummary: GuardianFinancialSummary) => {
-        const sortedTransactions = guardianSummary.allTransactions.sort((a, b) => {
-          const dateA = a.date?.toMillis() || a.createdAt.toMillis();
-          const dateB = b.date?.toMillis() || b.createdAt.toMillis();
-          return dateB - dateA;
-        });
-        
-        return (
-          <div className="text-sm">
-            {sortedTransactions.length > 0 ? (
-              <>
-                <div>Last Transaction:</div>
-                <div className="text-secondary-600">
-                  {sortedTransactions[0].date?.toDate().toLocaleDateString() || 
-                   sortedTransactions[0].createdAt.toDate().toLocaleDateString()}
-                </div>
-                <div className="text-xs text-secondary-500">
-                  {sortedTransactions[0].description}
-                </div>
-              </>
-            ) : (
-              <span className="text-secondary-500">No recent activity</span>
-            )}
-          </div>
-        );
-      }
     },
     { 
       key: 'actions', 
@@ -844,8 +750,8 @@ const PlayersGuardians: React.FC = () => {
         </div>
       )}
 
-      {/* Financial Details Modal */}
-      {showDetailsModal && (selectedPlayer || selectedGuardian) && (
+      {/* Guardian Financial Details Modal */}
+      {showDetailsModal && selectedGuardian && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto">
           <div className="flex items-center justify-center min-h-full p-4">
             <div className="w-full max-w-6xl my-8">
@@ -853,22 +759,14 @@ const PlayersGuardians: React.FC = () => {
                 <div className="p-6 border-b bg-white">
                   <div className="flex justify-between items-start">
                     <div>
-                      <h3 className="text-xl font-bold text-secondary-900">Financial Details</h3>
-                      {selectedPlayer && (
-                        <p className="text-sm text-secondary-600 mt-1">
-                          Player: {selectedPlayer.user.name} • {selectedPlayer.user.email}
-                        </p>
-                      )}
-                      {selectedGuardian && (
-                        <p className="text-sm text-secondary-600 mt-1">
-                          Guardian: {selectedGuardian.guardian.name} • {selectedGuardian.guardian.email}
-                        </p>
-                      )}
+                      <h3 className="text-xl font-bold text-secondary-900">Guardian Financial Details</h3>
+                      <p className="text-sm text-secondary-600 mt-1">
+                        Guardian: {selectedGuardian.guardian.name} • {selectedGuardian.guardian.email}
+                      </p>
                     </div>
                     <button
                       onClick={() => {
                         setShowDetailsModal(false);
-                        setSelectedPlayer(null);
                         setSelectedGuardian(null);
                       }}
                       className="text-secondary-400 hover:text-secondary-600"
@@ -886,39 +784,39 @@ const PlayersGuardians: React.FC = () => {
                     <h4 className="text-lg font-semibold text-secondary-900 mb-4">Financial Overview</h4>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <Card className={`p-4 ${
-                        (selectedPlayer?.outstandingDebits || selectedGuardian?.totalOutstanding || 0) > 0 
+                        (selectedGuardian.totalOutstanding || 0) > 0 
                           ? 'bg-gradient-to-br from-red-50 to-orange-100 border-red-200' 
                           : 'bg-gradient-to-br from-green-50 to-emerald-100 border-green-200'
                       }`}>
                         <div className="text-sm text-secondary-600">Outstanding Balance</div>
                         <div className={`text-2xl font-bold ${
-                          (selectedPlayer?.outstandingDebits || selectedGuardian?.totalOutstanding || 0) > 0 
+                          (selectedGuardian.totalOutstanding || 0) > 0 
                             ? 'text-red-700' 
                             : 'text-green-700'
                         }`}>
-                          {defaultCurrency} {(selectedPlayer?.outstandingDebits || selectedGuardian?.totalOutstanding || 0).toFixed(2)}
+                          {defaultCurrency} {(selectedGuardian.totalOutstanding || 0).toFixed(2)}
                         </div>
                       </Card>
                       
                       <Card className="p-4 bg-gradient-to-br from-blue-50 to-indigo-100 border-blue-200">
                         <div className="text-sm text-secondary-600">Available Credits</div>
                         <div className="text-2xl font-bold text-blue-700">
-                          {defaultCurrency} {(selectedPlayer?.availableCredits || selectedGuardian?.totalCredits || 0).toFixed(2)}
+                          {defaultCurrency} {(selectedGuardian.totalCredits || 0).toFixed(2)}
                         </div>
                       </Card>
                       
                       <Card className={`p-4 ${
-                        (selectedPlayer?.netBalance || selectedGuardian?.totalNetBalance || 0) > 0 
+                        (selectedGuardian.totalNetBalance || 0) > 0 
                           ? 'bg-gradient-to-br from-red-50 to-orange-100 border-red-200' 
                           : 'bg-gradient-to-br from-green-50 to-emerald-100 border-green-200'
                       }`}>
                         <div className="text-sm text-secondary-600">Net Amount Due</div>
                         <div className={`text-2xl font-bold ${
-                          (selectedPlayer?.netBalance || selectedGuardian?.totalNetBalance || 0) > 0 
+                          (selectedGuardian.totalNetBalance || 0) > 0 
                             ? 'text-red-700' 
                             : 'text-green-700'
                         }`}>
-                          {defaultCurrency} {(selectedPlayer?.netBalance || selectedGuardian?.totalNetBalance || 0).toFixed(2)}
+                          {defaultCurrency} {(selectedGuardian.totalNetBalance || 0).toFixed(2)}
                         </div>
                       </Card>
                     </div>
@@ -969,7 +867,6 @@ const PlayersGuardians: React.FC = () => {
                     <Button
                       onClick={() => {
                         setShowDetailsModal(false);
-                        setSelectedPlayer(null);
                         setSelectedGuardian(null);
                       }}
                     >

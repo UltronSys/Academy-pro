@@ -189,7 +189,14 @@ export const getProductsByType = async (organizationId: string, productType: 're
   }
 };
 
-export const linkPlayersToProduct = async (productId: string, playerIds: string[], playerNames: string[]): Promise<void> => {
+export const linkPlayersToProduct = async (
+  productId: string, 
+  playerIds: string[], 
+  playerNames: string[],
+  invoiceDate: Date,
+  deadlineDate: Date,
+  invoiceGeneration: 'immediate' | 'scheduled'
+): Promise<void> => {
   try {
     console.log('🚀 linkPlayersToProduct: Starting with:', { productId, playerIds, playerNames });
     
@@ -263,7 +270,10 @@ export const linkPlayersToProduct = async (productId: string, playerIds: string[
           playerId,
           product,
           product.organizationId,
-          product.academyId
+          product.academyId,
+          invoiceDate,
+          deadlineDate,
+          invoiceGeneration
         );
 
         console.log(`✅ Receipt created successfully for player: ${newPlayerNames[i]}`);

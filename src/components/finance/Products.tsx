@@ -43,6 +43,9 @@ const Products: React.FC = () => {
   const [linkingPlayerIds, setLinkingPlayerIds] = useState<string[]>([]);
   const [linkingPlayerNames, setLinkingPlayerNames] = useState<string[]>([]);
   const [linkingSubmitting, setLinkingSubmitting] = useState(false);
+  const [invoiceDate, setInvoiceDate] = useState<string>('');
+  const [deadlineDate, setDeadlineDate] = useState<string>('');
+  const [invoiceGeneration, setInvoiceGeneration] = useState<'immediate' | 'scheduled'>('immediate');
 
   const typeOptions = [
     { value: 'all', label: 'All Types' },
@@ -234,6 +237,16 @@ const Products: React.FC = () => {
     setSelectedProductForLinking(product);
     setLinkingPlayerIds(product.linkedPlayerIds || []);
     setLinkingPlayerNames(product.linkedPlayerNames || []);
+    
+    // Set default dates
+    const today = new Date();
+    const defaultDeadline = new Date();
+    defaultDeadline.setDate(today.getDate() + 30); // Default 30 days for deadline
+    
+    setInvoiceDate(today.toISOString().split('T')[0]);
+    setDeadlineDate(defaultDeadline.toISOString().split('T')[0]);
+    setInvoiceGeneration('immediate');
+    
     setShowLinkPlayersModal(true);
   };
 
@@ -248,10 +261,27 @@ const Products: React.FC = () => {
     setLinkingPlayerIds([]);
     setLinkingPlayerNames([]);
     setLinkingSubmitting(false);
+    setInvoiceDate('');
+    setDeadlineDate('');
+    setInvoiceGeneration('immediate');
   };
 
   const handleSubmitPlayerLinking = async () => {
     if (!selectedProductForLinking) return;
+    
+    // Validate dates
+    if (!invoiceDate || !deadlineDate) {
+      showToast('Please select both invoice date and deadline date', 'error');
+      return;
+    }
+    
+    const invoiceDateObj = new Date(invoiceDate);
+    const deadlineDateObj = new Date(deadlineDate);
+    
+    if (deadlineDateObj <= invoiceDateObj) {
+      showToast('Deadline date must be after invoice date', 'error');
+      return;
+    }
     
     try {
       setLinkingSubmitting(true);
@@ -259,7 +289,10 @@ const Products: React.FC = () => {
       await linkPlayersToProduct(
         selectedProductForLinking.id,
         linkingPlayerIds,
-        linkingPlayerNames
+        linkingPlayerNames,
+        invoiceDateObj,
+        deadlineDateObj,
+        invoiceGeneration
       );
       
       // Update local state
@@ -669,8 +702,73 @@ const Products: React.FC = () => {
                     />
                   </div>
                   
-                  <div className="text-sm text-secondary-600">
-                    Link players who have purchased or are enrolled in this product.
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="invoiceDate">Invoice Date</Label>
+                      <Input
+                        id="invoiceDate"
+                        type="date"
+                        value={invoiceDate}
+                        onChange={(e) => setInvoiceDate(e.target.value)}
+                        required
+                        min={new Date().toISOString().split('T')[0]}
+                      />
+                      <div className="text-xs text-secondary-600 mt-1">
+                        Date when the invoice will be created
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor="deadlineDate">Payment Deadline</Label>
+                      <Input
+                        id="deadlineDate"
+                        type="date"
+                        value={deadlineDate}
+                        onChange={(e) => setDeadlineDate(e.target.value)}
+                        required
+                        min={invoiceDate || new Date().toISOString().split('T')[0]}
+                      />
+                      <div className="text-xs text-secondary-600 mt-1">
+                        Payment must be made by this date
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <Label>Invoice Generation</Label>
+                    <div className="space-y-2 mt-2">
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="radio"
+                          value="immediate"
+                          checked={invoiceGeneration === 'immediate'}
+                          onChange={(e) => setInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
+                          className="form-radio text-primary-600"
+                        />
+                        <span className="text-sm">Create invoice immediately</span>
+                      </label>
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="radio"
+                          value="scheduled"
+                          checked={invoiceGeneration === 'scheduled'}
+                          onChange={(e) => setInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
+                          className="form-radio text-primary-600"
+                        />
+                        <span className="text-sm">
+                          {selectedProductForLinking?.productType === 'recurring' 
+                            ? 'Wait for next billing cycle' 
+                            : 'Wait until invoice date'}
+                        </span>
+                      </label>
+                    </div>
+                    <div className="text-xs text-secondary-600 mt-2">
+                      {invoiceGeneration === 'immediate' 
+                        ? 'A debit receipt will be created immediately for the selected players.'
+                        : selectedProductForLinking?.productType === 'recurring'
+                        ? `Receipt will be created at the end of the billing cycle (${selectedProductForLinking.recurringDuration?.value} ${selectedProductForLinking.recurringDuration?.unit}).`
+                        : 'Receipt will be created on the invoice date specified above.'}
+                    </div>
                   </div>
                 </div>
                 

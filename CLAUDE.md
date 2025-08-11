@@ -120,6 +120,8 @@ if (data.academyId === undefined) {
 - Role permissions are scoped to organization/academy combinations
 
 ## Firebase Collections Structure
+Check file firestore_structure.md
+Always use this file to refernce the structure, if you make any changes to the firestoresture update this file as well
 
 ### Core Collections
 - `users` - User profiles with embedded roles array
