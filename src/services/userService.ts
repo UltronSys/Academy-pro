@@ -15,18 +15,39 @@ import {
 import { db } from '../firebase';
 import { User, UserRole } from '../types';
 import { calculateUserBalanceFromReceipts, calculateUserOutstandingBalance } from './receiptService';
+import { syncUserToAlgolia, deleteUserFromAlgolia, isAlgoliaConfigured } from './algoliaService';
 
 export const createUser = async (userData: Omit<User, 'createdAt' | 'updatedAt'>) => {
   try {
     const userRef = doc(db, 'users', userData.id);
-    await setDoc(userRef, {
+    const timestamp = new Date();
+    const userWithTimestamps = {
       ...userData,
       balance: 0, // Initialize balance to 0
       outstandingBalance: {}, // Initialize outstanding balance per organization
       availableCredits: {}, // Initialize available credits per organization
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    });
+    };
+    
+    await setDoc(userRef, userWithTimestamps);
+    
+    // Sync to Algolia if configured
+    if (isAlgoliaConfigured()) {
+      try {
+        const fullUser: User = {
+          ...userData,
+          createdAt: { toDate: () => timestamp } as any,
+          updatedAt: { toDate: () => timestamp } as any
+        };
+        await syncUserToAlgolia(fullUser);
+        console.log('✅ User synced to Algolia');
+      } catch (algoliaError) {
+        console.error('Warning: Failed to sync user to Algolia:', algoliaError);
+        // Don't fail the user creation if Algolia sync fails
+      }
+    }
+    
     return userData;
   } catch (error) {
     console.error('Error creating user:', error);
@@ -65,6 +86,21 @@ export const updateUser = async (userId: string, data: Partial<User>) => {
     });
     console.log('updateUser: User updated successfully');
     
+    // Sync to Algolia if configured
+    if (isAlgoliaConfigured()) {
+      try {
+        // Get the full updated user data
+        const updatedUser = await getUserById(userId);
+        if (updatedUser) {
+          await syncUserToAlgolia(updatedUser);
+          console.log('✅ User updates synced to Algolia');
+        }
+      } catch (algoliaError) {
+        console.error('Warning: Failed to sync user updates to Algolia:', algoliaError);
+        // Don't fail the update if Algolia sync fails
+      }
+    }
+    
     // Wait a bit for Firestore to propagate the changes
     await new Promise(resolve => setTimeout(resolve, 500));
   } catch (error) {
@@ -77,6 +113,17 @@ export const deleteUser = async (userId: string) => {
   try {
     const userRef = doc(db, 'users', userId);
     await deleteDoc(userRef);
+    
+    // Remove from Algolia if configured
+    if (isAlgoliaConfigured()) {
+      try {
+        await deleteUserFromAlgolia(userId);
+        console.log('✅ User removed from Algolia');
+      } catch (algoliaError) {
+        console.error('Warning: Failed to remove user from Algolia:', algoliaError);
+        // Don't fail the deletion if Algolia sync fails
+      }
+    }
   } catch (error) {
     console.error('Error deleting user:', error);
     throw error;

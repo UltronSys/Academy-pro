@@ -74,6 +74,12 @@ const SportsIcon = () => (
   </svg>
 );
 
+const SystemIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+  </svg>
+);
+
 const PaymentIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
@@ -94,6 +100,11 @@ const Settings: React.FC = () => {
   const [selectedField, setSelectedField] = useState<ParameterField | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [fieldForm, setFieldForm] = useState<Partial<ParameterField>>({});
+  const [newStatusOption, setNewStatusOption] = useState('');
+  
+  // Algolia sync states
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
   
   // Academy dialog states
   const [openAcademyDialog, setOpenAcademyDialog] = useState(false);
@@ -205,7 +216,9 @@ const Settings: React.FC = () => {
           fieldCategories: settings.fieldCategories || []
         };
         
+        console.log('💾 Saving settings with playerStatusOptions:', settingsToSave.playerStatusOptions);
         await updateSettings(organizationId, settingsToSave);
+        console.log('✅ Settings saved successfully');
         setSuccess('Settings saved successfully!');
         setTimeout(() => setSuccess(''), 3000);
       }
@@ -499,6 +512,7 @@ const Settings: React.FC = () => {
     { id: 3, name: 'Roles & Permissions', icon: <SecurityIcon /> },
     { id: 4, name: 'Academies', icon: <BusinessIcon /> },
     { id: 5, name: 'Player Parameters', icon: <SportsIcon /> },
+    { id: 6, name: 'System', icon: <SystemIcon /> },
   ];
 
   if (loading) {
@@ -980,10 +994,163 @@ const Settings: React.FC = () => {
           {/* Field Categories */}
           {activeTab === 5 && (
             <div className="space-y-6">
+              {/* Player Status Options Section */}
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-semibold text-secondary-900">Player Status Options</h3>
+                    <p className="text-secondary-600 font-normal">Configure available status options for players</p>
+                  </div>
+                  <div className="text-sm text-secondary-600">
+                    <span className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-success-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Changes are automatically saved
+                    </span>
+                  </div>
+                </div>
+                
+                <Card>
+                  <CardBody>
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        {(settings.playerStatusOptions || ['Active', 'Inactive', 'Suspended']).map((status, index) => (
+                          <Badge
+                            key={index}
+                            variant="default"
+                            size="lg"
+                            className="flex items-center gap-2"
+                          >
+                            {status}
+                            {canWrite('settings') && (
+                              <button
+                                onClick={async () => {
+                                  const newStatuses = [...(settings.playerStatusOptions || ['Active', 'Inactive', 'Suspended'])];
+                                  newStatuses.splice(index, 1);
+                                  const updatedSettings = {
+                                    ...settings,
+                                    playerStatusOptions: newStatuses
+                                  };
+                                  setSettings(updatedSettings);
+                                  
+                                  // Auto-save to Firebase
+                                  try {
+                                    const organizationId = userData?.roles[0]?.organizationId;
+                                    if (organizationId) {
+                                      console.log('🗑️ Auto-saving after removing status:', status);
+                                      await updateSettings(organizationId, updatedSettings);
+                                      setSuccess(`Status "${status}" removed successfully!`);
+                                      setTimeout(() => setSuccess(''), 2000);
+                                    }
+                                  } catch (error) {
+                                    console.error('Error auto-saving settings:', error);
+                                    setError('Failed to save changes');
+                                  }
+                                }}
+                                className="ml-1 text-secondary-600 hover:text-error-600"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                          </Badge>
+                        ))}
+                      </div>
+                      
+                      {canWrite('settings') && (
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Enter new status option (e.g., Training, Injured, On Leave)"
+                            value={newStatusOption}
+                            onChange={(e) => setNewStatusOption(e.target.value)}
+                            onKeyPress={async (e) => {
+                              if (e.key === 'Enter' && newStatusOption.trim()) {
+                                const currentStatuses = settings.playerStatusOptions || ['Active', 'Inactive', 'Suspended'];
+                                if (!currentStatuses.map(s => s.toLowerCase()).includes(newStatusOption.trim().toLowerCase())) {
+                                  const updatedStatuses = [...currentStatuses, newStatusOption.trim()];
+                                  const updatedSettings = {
+                                    ...settings,
+                                    playerStatusOptions: updatedStatuses
+                                  };
+                                  setSettings(updatedSettings);
+                                  setNewStatusOption('');
+                                  
+                                  // Auto-save to Firebase
+                                  try {
+                                    const organizationId = userData?.roles[0]?.organizationId;
+                                    if (organizationId) {
+                                      console.log('💾 Auto-saving after adding status:', newStatusOption.trim());
+                                      await updateSettings(organizationId, updatedSettings);
+                                      setSuccess(`Status "${newStatusOption.trim()}" added successfully!`);
+                                      setTimeout(() => setSuccess(''), 2000);
+                                    }
+                                  } catch (error) {
+                                    console.error('Error auto-saving settings:', error);
+                                    setError('Failed to save changes');
+                                  }
+                                } else {
+                                  setError('This status option already exists');
+                                  setTimeout(() => setError(''), 3000);
+                                }
+                              }
+                            }}
+                          />
+                          <Button
+                            onClick={async () => {
+                              if (newStatusOption.trim()) {
+                                const currentStatuses = settings.playerStatusOptions || ['Active', 'Inactive', 'Suspended'];
+                                if (!currentStatuses.map(s => s.toLowerCase()).includes(newStatusOption.trim().toLowerCase())) {
+                                  const updatedStatuses = [...currentStatuses, newStatusOption.trim()];
+                                  const updatedSettings = {
+                                    ...settings,
+                                    playerStatusOptions: updatedStatuses
+                                  };
+                                  setSettings(updatedSettings);
+                                  setNewStatusOption('');
+                                  
+                                  // Auto-save to Firebase
+                                  try {
+                                    const organizationId = userData?.roles[0]?.organizationId;
+                                    if (organizationId) {
+                                      console.log('💾 Auto-saving after adding status via button:', newStatusOption.trim());
+                                      await updateSettings(organizationId, updatedSettings);
+                                      setSuccess(`Status "${newStatusOption.trim()}" added successfully!`);
+                                      setTimeout(() => setSuccess(''), 2000);
+                                    }
+                                  } catch (error) {
+                                    console.error('Error auto-saving settings:', error);
+                                    setError('Failed to save changes');
+                                  }
+                                } else {
+                                  setError('This status option already exists');
+                                  setTimeout(() => setError(''), 3000);
+                                }
+                              }
+                            }}
+                            disabled={!newStatusOption.trim()}
+                          >
+                            Add Status
+                          </Button>
+                        </div>
+                      )}
+                      
+                      <div className="text-sm text-secondary-600 font-normal">
+                        <strong>Note:</strong> Status options are automatically saved and will be immediately available when creating or editing players.
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
+              </div>
+
+              <hr className="border-secondary-200" />
+              
+              {/* Field Categories Section */}
               <div className="flex justify-between items-center">
                 <div>
-                  <h3 className="text-lg font-semibold text-secondary-900">Player Parameters</h3>
-                  <p className="text-secondary-600 font-normal">Create categories for player information. DOB and Gender are always required.</p>
+                  <h3 className="text-lg font-semibold text-secondary-900">Custom Player Fields</h3>
+                  <p className="text-secondary-600 font-normal">Create categories for additional player information. DOB and Gender are always required.</p>
                 </div>
                 {canWrite('settings') && (
                   <Button
@@ -1159,6 +1326,99 @@ const Settings: React.FC = () => {
                     </CardBody>
                   </Card>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* System Tab */}
+          {activeTab === 6 && (
+            <div className="space-y-6">
+              {/* Algolia Sync Section */}
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-secondary-900">Algolia Search Sync</h3>
+                  <p className="text-secondary-600 font-normal">Sync your users data to Algolia for fast search</p>
+                </div>
+                
+                <Card>
+                  <CardBody>
+                    <div className="space-y-4">
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <h4 className="font-semibold text-blue-900 mb-2">About Algolia Sync</h4>
+                        <p className="text-sm text-blue-700 font-normal mb-3">
+                          Algolia provides lightning-fast search capabilities. Syncing your users to Algolia enables:
+                        </p>
+                        <ul className="list-disc list-inside text-sm text-blue-700 space-y-1">
+                          <li>Instant search-as-you-type results</li>
+                          <li>Reduced database load and costs</li>
+                          <li>Better performance on mobile devices</li>
+                          <li>Advanced filtering and faceting</li>
+                        </ul>
+                      </div>
+
+                      {syncResult && (
+                        <Alert variant={syncResult.success ? 'success' : 'error'}>
+                          {syncResult.message}
+                        </Alert>
+                      )}
+
+                      <div className="flex items-center justify-between p-4 bg-secondary-50 rounded-lg">
+                        <div>
+                          <p className="font-semibold text-secondary-900">Sync Users to Algolia</p>
+                          <p className="text-sm text-secondary-600 font-normal">
+                            This will sync all users from your organization to Algolia search index
+                          </p>
+                        </div>
+                        <Button
+                          onClick={async () => {
+                            setSyncLoading(true);
+                            setSyncResult(null);
+                            try {
+                              const organizationId = userData?.roles[0]?.organizationId;
+                              if (!organizationId) {
+                                throw new Error('No organization ID found');
+                              }
+                              
+                              // Dynamically import the sync utility
+                              const { syncOrganizationUsersToAlgolia } = await import('../../utils/syncUsersToAlgolia');
+                              const success = await syncOrganizationUsersToAlgolia(organizationId);
+                              
+                              setSyncResult({
+                                success,
+                                message: success 
+                                  ? 'Successfully synced all users to Algolia! Search functionality is now optimized.' 
+                                  : 'Failed to sync users. Please check your Algolia configuration.'
+                              });
+                            } catch (error) {
+                              console.error('Sync error:', error);
+                              setSyncResult({
+                                success: false,
+                                message: `Sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+                              });
+                            } finally {
+                              setSyncLoading(false);
+                            }
+                          }}
+                          loading={syncLoading}
+                          disabled={!canWrite('settings')}
+                          className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
+                        >
+                          {syncLoading ? 'Syncing...' : 'Start Sync'}
+                        </Button>
+                      </div>
+
+                      <div className="text-sm text-secondary-600 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <p className="font-semibold text-yellow-900 mb-1">⚠️ Important Notes:</p>
+                        <ul className="list-disc list-inside text-yellow-700 space-y-1">
+                          <li>First sync may take a few moments depending on user count</li>
+                          <li>New users are automatically synced when created</li>
+                          <li>Updates to existing users are synced in real-time</li>
+                          <li>Only run manual sync if search results seem outdated</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
               </div>
             </div>
           )}

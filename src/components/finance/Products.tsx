@@ -251,6 +251,12 @@ const Products: React.FC = () => {
   };
 
   const handlePlayerLinkingChange = (playerIds: string[], playerNames: string[]) => {
+    console.log('🔗 Products - Player linking change:', {
+      playerIds,
+      playerNames,
+      previousIds: linkingPlayerIds,
+      previousNames: linkingPlayerNames
+    });
     setLinkingPlayerIds(playerIds);
     setLinkingPlayerNames(playerNames);
   };
@@ -269,22 +275,48 @@ const Products: React.FC = () => {
   const handleSubmitPlayerLinking = async () => {
     if (!selectedProductForLinking) return;
     
-    // Validate dates
-    if (!invoiceDate || !deadlineDate) {
-      showToast('Please select both invoice date and deadline date', 'error');
-      return;
+    console.log('🚀 Products - Starting player linking submission:', {
+      productId: selectedProductForLinking.id,
+      productName: selectedProductForLinking.name,
+      linkingPlayerIds,
+      linkingPlayerNames,
+      invoiceGeneration,
+      invoiceDate,
+      deadlineDate
+    });
+    
+    // Validate dates only for scheduled invoices
+    if (invoiceGeneration === 'scheduled') {
+      if (!invoiceDate || !deadlineDate) {
+        showToast('Please select both invoice date and deadline date', 'error');
+        return;
+      }
+      
+      const invoiceDateObj = new Date(invoiceDate);
+      const deadlineDateObj = new Date(deadlineDate);
+      
+      if (deadlineDateObj <= invoiceDateObj) {
+        showToast('Deadline date must be after invoice date', 'error');
+        return;
+      }
     }
     
-    const invoiceDateObj = new Date(invoiceDate);
-    const deadlineDateObj = new Date(deadlineDate);
-    
-    if (deadlineDateObj <= invoiceDateObj) {
-      showToast('Deadline date must be after invoice date', 'error');
+    // Validate that players are selected
+    if (!linkingPlayerIds || linkingPlayerIds.length === 0) {
+      showToast('Please select at least one player to link', 'error');
       return;
     }
     
     try {
       setLinkingSubmitting(true);
+      
+      // For immediate invoices, use current date and default 30-day deadline
+      const invoiceDateObj = invoiceGeneration === 'immediate' 
+        ? new Date() 
+        : new Date(invoiceDate);
+      const deadlineDateObj = invoiceGeneration === 'immediate' 
+        ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
+        : new Date(deadlineDate);
       
       await linkPlayersToProduct(
         selectedProductForLinking.id,
@@ -695,44 +727,45 @@ const Products: React.FC = () => {
                   <div>
                     <Label>Select Players</Label>
                     <PlayerMultiSelect
-                      players={players}
                       selectedPlayerIds={linkingPlayerIds}
                       onSelectionChange={handlePlayerLinkingChange}
                       placeholder="Search and select players for this product..."
                     />
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="invoiceDate">Invoice Date</Label>
-                      <Input
-                        id="invoiceDate"
-                        type="date"
-                        value={invoiceDate}
-                        onChange={(e) => setInvoiceDate(e.target.value)}
-                        required
-                        min={new Date().toISOString().split('T')[0]}
-                      />
-                      <div className="text-xs text-secondary-600 mt-1">
-                        Date when the invoice will be created
+                  {invoiceGeneration === 'scheduled' && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="invoiceDate">Invoice Date</Label>
+                        <Input
+                          id="invoiceDate"
+                          type="date"
+                          value={invoiceDate}
+                          onChange={(e) => setInvoiceDate(e.target.value)}
+                          required
+                          min={new Date().toISOString().split('T')[0]}
+                        />
+                        <div className="text-xs text-secondary-600 mt-1">
+                          Date when the invoice will be created
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <Label htmlFor="deadlineDate">Payment Deadline</Label>
+                        <Input
+                          id="deadlineDate"
+                          type="date"
+                          value={deadlineDate}
+                          onChange={(e) => setDeadlineDate(e.target.value)}
+                          required
+                          min={invoiceDate || new Date().toISOString().split('T')[0]}
+                        />
+                        <div className="text-xs text-secondary-600 mt-1">
+                          Payment must be made by this date
+                        </div>
                       </div>
                     </div>
-                    
-                    <div>
-                      <Label htmlFor="deadlineDate">Payment Deadline</Label>
-                      <Input
-                        id="deadlineDate"
-                        type="date"
-                        value={deadlineDate}
-                        onChange={(e) => setDeadlineDate(e.target.value)}
-                        required
-                        min={invoiceDate || new Date().toISOString().split('T')[0]}
-                      />
-                      <div className="text-xs text-secondary-600 mt-1">
-                        Payment must be made by this date
-                      </div>
-                    </div>
-                  </div>
+                  )}
                   
                   <div>
                     <Label>Invoice Generation</Label>

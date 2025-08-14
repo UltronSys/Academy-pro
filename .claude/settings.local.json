@@ -15,7 +15,9 @@
       "Bash(timeout 30s npm start)",
       "Bash(timeout 10s npx tsc --noEmit --skipLibCheck)",
       "Bash(timeout 10s npm start:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(rm:*)",
+      "Bash(pkill:*)"
     ],
     "deny": []
   }

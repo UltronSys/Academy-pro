@@ -48,6 +48,7 @@ export const createDefaultSettings = async (organizationId: string): Promise<Set
     },
     paymentMethods: ['Cash', 'Credit Card', 'Debit Card', 'Bank Transfer'],
     customRoles: [],
+    playerStatusOptions: ['Active', 'Inactive', 'Suspended'],
     fieldCategories: [],
     academySpecificSettings: {},
     createdAt: Timestamp.now(),

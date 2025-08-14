@@ -52,6 +52,7 @@ Collection for storing player information across all organizations.
 - `dob` (Date) - Date of birth
 - `gender` (string) - Player's gender
 - `guardianId` (array of strings) - Guardian user IDs
+- `status` (string, optional) - Player status (e.g., 'active', 'inactive', 'suspended') - configurable in settings
 - `playerParameters` (Record<string, any>) - Dynamic player attributes/parameters (key-value pairs)
 - `assignedProducts` (array of objects, optional) - Products assigned to the player
   - `productId` (string) - Product's unique identifier
@@ -80,6 +81,7 @@ Collection for storing organization-wide and academy-specific settings.
   - `smsNotifications` (boolean) - SMS notifications enabled
 - `paymentMethods` (array of strings) - Available payment methods for transactions
 - `customRoles` (array of strings) - Custom role names
+- `playerStatusOptions` (array of strings, optional) - Available status options for players (e.g., 'Active', 'Inactive', 'Suspended')
 - `fieldCategories` (array of FieldCategory objects) - Organization-wide field categories
   - `id` (string) - Category identifier
   - `name` (string) - Category name

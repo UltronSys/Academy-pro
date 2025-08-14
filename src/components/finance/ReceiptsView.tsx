@@ -4,8 +4,9 @@ import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { getReceiptsByOrganization, getUserReceiptSummary } from '../../services/receiptService';
 import { getPlayersByOrganization } from '../../services/playerService';
-import { Receipt, Player } from '../../types';
+import { Receipt, Player, Transaction } from '../../types';
 import { getUserById } from '../../services/userService';
+import { getDoc } from 'firebase/firestore';
 
 const ReceiptsView: React.FC = () => {
   const { selectedOrganization } = useApp();
@@ -15,6 +16,7 @@ const ReceiptsView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [playerSummaries, setPlayerSummaries] = useState<Map<string, any>>(new Map());
+  const [transactionInfo, setTransactionInfo] = useState<Map<string, Transaction>>(new Map());
 
   useEffect(() => {
     const loadData = async () => {
@@ -27,6 +29,26 @@ const ReceiptsView: React.FC = () => {
         const receiptsData = await getReceiptsByOrganization(selectedOrganization.id);
         console.log('Loaded receipts:', receiptsData.length);
         setReceipts(receiptsData);
+        
+        // Load transaction information for receipts that have parentTransactionRef
+        const transactionMap = new Map<string, Transaction>();
+        for (const receipt of receiptsData) {
+          if (receipt.parentTransactionRef) {
+            try {
+              const transactionDoc = await getDoc(receipt.parentTransactionRef);
+              if (transactionDoc.exists()) {
+                const transactionData = { 
+                  id: transactionDoc.id, 
+                  ...transactionDoc.data() 
+                } as Transaction;
+                transactionMap.set(receipt.id, transactionData);
+              }
+            } catch (error) {
+              console.error('Error loading transaction for receipt:', receipt.id, error);
+            }
+          }
+        }
+        setTransactionInfo(transactionMap);
         
         // Load players
         const playersData = await getPlayersByOrganization(selectedOrganization.id);
@@ -109,6 +131,26 @@ const ReceiptsView: React.FC = () => {
     return 'UNKNOWN';
   };
 
+  const isOverpayment = (receipt: Receipt): boolean => {
+    if (receipt.type !== 'credit') return false;
+    
+    // Check if this credit receipt has sibling debit receipts
+    if (!receipt.siblingReceiptRefs || receipt.siblingReceiptRefs.length === 0) {
+      // If no linked invoices, this might be an overpayment or prepayment
+      return true;
+    }
+    
+    // Calculate total debit amount from sibling receipts
+    const linkedDebits = receipts.filter(r => 
+      receipt.siblingReceiptRefs.some(ref => ref.id === r.id) && r.type === 'debit'
+    );
+    
+    const totalDebitAmount = linkedDebits.reduce((sum, debit) => sum + debit.amount, 0);
+    
+    // If credit amount is greater than linked debit amounts, it's an overpayment
+    return receipt.amount > totalDebitAmount;
+  };
+
   const getTypeColor = (type: Receipt['type']) => {
     switch (type) {
       case 'credit':
@@ -120,6 +162,14 @@ const ReceiptsView: React.FC = () => {
       default:
         return 'secondary';
     }
+  };
+  
+  const getPaymentTypeColor = (receipt: Receipt) => {
+    if (receipt.type === 'credit') {
+      // Show overpayments in green, regular payments in gray
+      return isOverpayment(receipt) ? 'success' : 'secondary';
+    }
+    return getTypeColor(receipt.type);
   };
 
   const receiptColumns = [
@@ -142,36 +192,87 @@ const ReceiptsView: React.FC = () => {
     { 
       key: 'details', 
       header: 'Details',
-      render: (receipt: Receipt) => (
-        <div>
-          <div className="font-medium text-secondary-900">
-            {receipt.type === 'credit' 
-              ? receipt.description || 'Payment Received'
-              : receipt.product?.name || 'Service'
-            }
-          </div>
-          <div className="text-sm text-secondary-600">
-            Amount: USD {receipt.amount.toFixed(2)}
-          </div>
-          <div className={`text-xs font-medium ${receipt.status === 'active' ? 'text-green-600' : 'text-red-600'}`}>
-            Status: {receipt.status?.toUpperCase() || 'ACTIVE'}
-          </div>
-          {receipt.product && (
-            <div className="text-xs text-secondary-500">
-              Product: {receipt.product.name}
+      render: (receipt: Receipt) => {
+        const transaction = transactionInfo.get(receipt.id);
+        const isInternal = transaction?.type === 'internal';
+        const isOverpay = isOverpayment(receipt);
+        
+        return (
+          <div>
+            <div className="font-medium text-secondary-900">
+              {receipt.type === 'credit' 
+                ? receipt.description || 'Payment Received'
+                : receipt.product?.name || 'Service'
+              }
             </div>
-          )}
-        </div>
-      )
+            <div className="text-sm text-secondary-600">
+              Amount: USD {receipt.amount.toFixed(2)}
+              {receipt.type === 'credit' && isOverpay && (
+                <span className="ml-2 text-green-600 font-medium">(Overpayment)</span>
+              )}
+            </div>
+            <div className={`text-xs font-medium ${receipt.status === 'active' ? 'text-green-600' : 'text-red-600'}`}>
+              Status: {receipt.status?.toUpperCase() || 'ACTIVE'}
+            </div>
+            {receipt.product && (
+              <div className="text-xs text-secondary-500">
+                Product: {receipt.product.name}
+              </div>
+            )}
+            {isInternal && (
+              <div className="text-xs text-blue-600 font-medium">
+                🤖 Internal Transaction
+              </div>
+            )}
+            {transaction && !isInternal && (
+              <div className="text-xs text-secondary-500">
+                Payment Method: {transaction.paymentMethod}
+              </div>
+            )}
+          </div>
+        );
+      }
     },
     { 
       key: 'status', 
-      header: 'Status',
-      render: (receipt: Receipt) => (
-        <Badge variant={getStatusColor(receipt)}>
-          {getReceiptStatus(receipt)}
-        </Badge>
-      )
+      header: 'Payment Status',
+      render: (receipt: Receipt) => {
+        const status = getReceiptStatus(receipt);
+        const statusVariant = getStatusColor(receipt);
+        const paymentVariant = getPaymentTypeColor(receipt);
+        
+        // For invoices, clearly show PAID status
+        if (receipt.type === 'debit') {
+          return (
+            <Badge variant={statusVariant}>
+              {status === 'PAID' ? '✅ PAID' : status}
+            </Badge>
+          );
+        }
+        
+        // For payments, show payment type info
+        if (receipt.type === 'credit') {
+          const isOverpay = isOverpayment(receipt);
+          const transaction = transactionInfo.get(receipt.id);
+          
+          return (
+            <div className="space-y-1">
+              <Badge variant={paymentVariant}>
+                {isOverpay ? '💰 OVERPAYMENT' : '💳 PAYMENT'}
+              </Badge>
+              {transaction?.type === 'internal' && (
+                <div className="text-xs text-blue-600">System Generated</div>
+              )}
+            </div>
+          );
+        }
+        
+        return (
+          <Badge variant={statusVariant}>
+            {status}
+          </Badge>
+        );
+      }
     },
     { 
       key: 'dates', 

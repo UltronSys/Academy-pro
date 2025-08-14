@@ -1,63 +1,94 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Input, Button } from './';
 import { Player } from '../../types';
-import { getDoc, doc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { searchUsers as searchUsersAlgolia } from '../../services/algoliaService';
+import { useAuth } from '../../contexts/AuthContext';
 
-interface PlayerWithName extends Player {
-  userName?: string;
+interface PlayerWithName {
+  id: string;
+  userName: string;
+  email?: string;
 }
 
 interface PlayerMultiSelectProps {
-  players: Player[];
   selectedPlayerIds: string[];
   onSelectionChange: (playerIds: string[], playerNames: string[]) => void;
   placeholder?: string;
+  onReset?: () => void; // Optional callback to reset the component
 }
 
 const PlayerMultiSelect: React.FC<PlayerMultiSelectProps> = ({
-  players,
   selectedPlayerIds,
   onSelectionChange,
-  placeholder = "Search and select players..."
+  placeholder = "Type to search and select players...",
+  onReset
 }) => {
+  const { userData } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [playersWithNames, setPlayersWithNames] = useState<PlayerWithName[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [searchResults, setSearchResults] = useState<PlayerWithName[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [recentlySelected, setRecentlySelected] = useState<string[]>([]);
+  const [selectedPlayers, setSelectedPlayers] = useState<PlayerWithName[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load player names from user documents
+  // Algolia search for players
   useEffect(() => {
-    const loadPlayerNames = async () => {
+    const performSearch = async () => {
+      if (searchTerm.length < 2) {
+        setSearchResults([]);
+        return;
+      }
+
+      const organizationId = userData?.roles[0]?.organizationId;
+      if (!organizationId) return;
+
       setLoading(true);
       try {
-        const playersWithNamesPromises = players.map(async (player) => {
-          try {
-            const userDoc = await getDoc(doc(db, 'users', player.userId));
-            const userName = userDoc.exists() ? userDoc.data().name : `Player ${player.userId}`;
-            return { ...player, userName };
-          } catch (error) {
-            console.error(`Error loading name for player ${player.userId}:`, error);
-            return { ...player, userName: `Player ${player.userId}` };
-          }
+        const results = await searchUsersAlgolia({
+          query: searchTerm,
+          organizationId,
+          filters: {
+            role: 'player'
+          },
+          page: 0,
+          hitsPerPage: 20
         });
 
-        const results = await Promise.all(playersWithNamesPromises);
-        setPlayersWithNames(results);
+        console.log('🔍 PlayerMultiSelect Search Results:', {
+          query: searchTerm,
+          totalResults: results.users.length,
+          selectedPlayerIds,
+          users: results.users.map(u => ({ id: u.objectID, name: u.name }))
+        });
+
+        const playersWithNames: PlayerWithName[] = results.users
+          .filter(record => !selectedPlayerIds.includes(record.objectID))
+          .map(record => ({
+            id: record.objectID,
+            userName: record.name,
+            email: record.email
+          }));
+
+        console.log('🎯 PlayerMultiSelect Filtered Results:', {
+          filteredCount: playersWithNames.length,
+          players: playersWithNames
+        });
+
+        setSearchResults(playersWithNames);
       } catch (error) {
-        console.error('Error loading player names:', error);
+        console.error('Error searching players:', error);
       } finally {
         setLoading(false);
       }
     };
 
-    if (players.length > 0) {
-      loadPlayerNames();
-    } else {
-      setLoading(false);
-    }
-  }, [players]);
+    const searchTimer = setTimeout(() => {
+      performSearch();
+    }, 300); // Debounce search
+
+    return () => clearTimeout(searchTimer);
+  }, [searchTerm, selectedPlayerIds, userData]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -71,67 +102,117 @@ const PlayerMultiSelect: React.FC<PlayerMultiSelectProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const filteredPlayers = playersWithNames.filter(player =>
-    player.userName?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Load selected players names when selectedPlayerIds change
+  useEffect(() => {
+    const loadSelectedPlayers = async () => {
+      if (selectedPlayerIds.length === 0) {
+        setSelectedPlayers([]);
+        return;
+      }
 
-  const selectedPlayers = playersWithNames.filter(player =>
-    selectedPlayerIds.includes(player.id)
-  );
+      const organizationId = userData?.roles[0]?.organizationId;
+      if (!organizationId) return;
+
+      try {
+        const results = await searchUsersAlgolia({
+          query: '',
+          organizationId,
+          filters: {
+            role: 'player'
+          },
+          page: 0,
+          hitsPerPage: 100
+        });
+
+        const selectedPlayersData: PlayerWithName[] = results.users
+          .filter(record => selectedPlayerIds.includes(record.objectID))
+          .map(record => ({
+            id: record.objectID,
+            userName: record.name,
+            email: record.email
+          }));
+
+        setSelectedPlayers(selectedPlayersData);
+      } catch (error) {
+        console.error('Error loading selected players:', error);
+      }
+    };
+
+    loadSelectedPlayers();
+  }, [selectedPlayerIds, userData]);
 
   const updateSelection = (newPlayerIds: string[]) => {
     const selectedNames = newPlayerIds.map(id => {
-      const player = playersWithNames.find(p => p.id === id);
+      const player = [...searchResults, ...selectedPlayers].find(p => p.id === id);
       return player?.userName || `Player ${id}`;
     });
+    
+    console.log('🔄 PlayerMultiSelect Selection Update:', {
+      newPlayerIds,
+      selectedNames,
+      searchResultsCount: searchResults.length,
+      selectedPlayersCount: selectedPlayers.length
+    });
+    
     onSelectionChange(newPlayerIds, selectedNames);
   };
 
   const handlePlayerToggle = (playerId: string) => {
     if (selectedPlayerIds.includes(playerId)) {
       updateSelection(selectedPlayerIds.filter(id => id !== playerId));
+      // Remove from recently selected if unselected
+      const player = [...searchResults, ...selectedPlayers].find(p => p.id === playerId);
+      if (player && player.userName) {
+        setRecentlySelected(prev => prev.filter(name => name !== player.userName));
+      }
     } else {
       updateSelection([...selectedPlayerIds, playerId]);
+      const player = searchResults.find(p => p.id === playerId);
+      if (player && player.userName) {
+        // Add to recently selected list
+        setRecentlySelected(prev => [...prev, player.userName]);
+      }
     }
+    // Clear search after selection
+    setSearchTerm('');
   };
 
   const handleRemovePlayer = (playerId: string) => {
     updateSelection(selectedPlayerIds.filter(id => id !== playerId));
   };
 
-  const handleClearAll = () => {
-    updateSelection([]);
-  };
-
   return (
     <div className="relative" ref={dropdownRef}>
-      {/* Selected Players Display */}
+      {/* Selected Players Count Display - Only show count, not names */}
       {selectedPlayers.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {selectedPlayers.map(player => (
-            <span
-              key={player.id}
-              className="inline-flex items-center px-2 py-1 rounded-md text-sm bg-primary-100 text-primary-800"
-            >
-              {player.userName}
-              <button
-                type="button"
-                onClick={() => handleRemovePlayer(player.id)}
-                className="ml-1 hover:text-primary-600"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+        <div className="mb-2 flex items-center space-x-2 p-2 bg-primary-50 rounded-lg border border-primary-200">
+          <div className="flex items-center justify-center w-7 h-7 bg-primary-600 text-white rounded-full text-sm font-semibold">
+            {selectedPlayers.length}
+          </div>
+          <span className="text-primary-800 font-medium text-sm">
+            {selectedPlayers.length} player{selectedPlayers.length !== 1 ? 's' : ''} linked
+          </span>
+        </div>
+      )}
+
+      {/* Recently Selected Players Display */}
+      {recentlySelected.length > 0 && (
+        <div className="mb-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+          <div className="flex items-center space-x-2 mb-2">
+            <span className="text-green-800 font-medium text-sm">
+              ✓ Recently Added:
             </span>
-          ))}
-          <button
-            type="button"
-            onClick={handleClearAll}
-            className="text-xs text-secondary-500 hover:text-secondary-700 underline"
-          >
-            Clear all
-          </button>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {recentlySelected.map((playerName, index) => (
+              <span
+                key={index}
+                className="inline-block px-2 py-1 bg-green-100 text-green-800 rounded text-sm font-medium"
+              >
+                {playerName}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
@@ -163,17 +244,21 @@ const PlayerMultiSelect: React.FC<PlayerMultiSelectProps> = ({
       {/* Dropdown */}
       {isOpen && (
         <div className="absolute z-10 w-full mt-1 bg-white border border-secondary-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-          {loading ? (
+          {searchTerm.length < 2 ? (
             <div className="p-3 text-center text-secondary-500">
-              Loading players...
+              Type at least 2 characters to search for players...
             </div>
-          ) : filteredPlayers.length === 0 ? (
+          ) : loading ? (
             <div className="p-3 text-center text-secondary-500">
-              {searchTerm ? 'No players found matching your search' : 'No players available'}
+              Searching players...
+            </div>
+          ) : searchResults.length === 0 ? (
+            <div className="p-3 text-center text-secondary-500">
+              No players found matching "{searchTerm}"
             </div>
           ) : (
             <>
-              {filteredPlayers.map(player => (
+              {searchResults.map(player => (
                 <label
                   key={player.id}
                   className="flex items-center space-x-3 p-3 hover:bg-secondary-50 cursor-pointer"

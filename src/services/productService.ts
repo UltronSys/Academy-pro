@@ -245,10 +245,29 @@ export const linkPlayersToProduct = async (
       try {
         console.log(`🔍 Processing NEW player ${i + 1}/${newPlayerIds.length}: ${playerId} (${newPlayerNames[i]})`);
         
-        // Get player details
-        const player = await getPlayerById(playerId);
+        // Get player details - try by player ID first, then by user ID
+        let player = null;
+        try {
+          player = await getPlayerById(playerId);
+        } catch (error) {
+          console.log(`🔍 Player not found by ID ${playerId}, trying by userId...`);
+        }
+        
+        // If not found by player ID, try to find by userId
         if (!player) {
-          console.warn(`⚠️ Player not found: ${playerId}`);
+          try {
+            const { getPlayerByUserId } = await import('./playerService');
+            player = await getPlayerByUserId(playerId);
+            console.log(`✅ Found player by userId: ${playerId}`);
+          } catch (error) {
+            console.warn(`⚠️ Player record not found for user: ${playerId}`);
+            console.log(`🔧 This user might have player role but no player record. Skipping...`);
+            continue;
+          }
+        }
+        
+        if (!player) {
+          console.warn(`⚠️ No player record found for: ${playerId}`);
           continue;
         }
 
@@ -260,14 +279,15 @@ export const linkPlayersToProduct = async (
 
         // Assign product to player (this creates the debit receipt)
         console.log('🎯 About to call assignProductToPlayer with:', {
-          playerId,
+          playerId: player.id, // Use actual player document ID
+          userId: player.userId, // Log the user ID for reference
           productId: product.id,
           organizationId: product.organizationId,
           academyId: product.academyId
         });
 
         await assignProductToPlayer(
-          playerId,
+          player.id, // Use the actual player document ID, not the user ID
           product,
           product.organizationId,
           product.academyId,

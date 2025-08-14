@@ -47,6 +47,7 @@ export interface Player {
   dob: Date;
   gender: string;
   guardianId: string[];
+  status?: string; // Player status (active, inactive, suspended, etc.) - configurable in settings
   playerParameters: Record<string, any>;
   assignedProducts?: {
     productId: string;
@@ -105,6 +106,7 @@ export interface Settings {
   };
   paymentMethods: string[];
   customRoles: string[];
+  playerStatusOptions?: string[]; // Available status options for players
   fieldCategories: FieldCategory[];
   academySpecificSettings: Record<string, {
     fieldCategories: FieldCategory[];

@@ -15,10 +15,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { User, UserRole, Academy, Player, Settings, ParameterField, SkillField, FieldCategory } from '../../types';
-import { getUsersByOrganization, getUsersByAcademy, updateUser, deleteUser, createUser } from '../../services/userService';
+import { updateUser, deleteUser, createUser } from '../../services/userService';
 import { getAcademiesByOrganization } from '../../services/academyService';
-import { createPlayer, getPlayerByUserId, updatePlayer, getPlayersByGuardianId } from '../../services/playerService';
+import { createPlayer, getPlayerByUserId, updatePlayer, getPlayersByGuardianId, getPlayersByOrganization } from '../../services/playerService';
 import { getSettingsByOrganization, getFieldCategoriesForAcademy } from '../../services/settingsService';
+import { searchUsers as searchUsersAlgolia, isAlgoliaConfigured } from '../../services/algoliaService';
 
 // Icons - using simple SVG icons instead of Material UI icons
 const SearchIcon = () => (
@@ -81,6 +82,125 @@ const CheckCircleIcon = () => (
   </svg>
 );
 
+// Helper function to get user initials
+const getInitials = (name: string) => {
+  return name
+    .split(' ')
+    .map(n => n[0])
+    .join('')
+    .toUpperCase()
+    .substring(0, 2);
+};
+
+// Component to load and display guardian details when not available in local state
+const LinkedGuardianLoader: React.FC<{
+  guardianId: string;
+  onUnlink: () => void;
+}> = ({ guardianId, onUnlink }) => {
+  const [guardian, setGuardian] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const { userData } = useAuth();
+
+  useEffect(() => {
+    const loadGuardianDetails = async () => {
+      try {
+        setLoading(true);
+        const organizationId = userData?.roles[0]?.organizationId;
+        if (!organizationId) return;
+
+        // Search for the guardian by ID using Algolia
+        const results = await searchUsersAlgolia({
+          query: '',
+          organizationId,
+          filters: {
+            role: 'guardian'
+          },
+          page: 0,
+          hitsPerPage: 100
+        });
+
+        const foundGuardian = results.users.find(record => record.objectID === guardianId);
+        if (foundGuardian) {
+          const guardianUser: User = {
+            id: foundGuardian.objectID,
+            name: foundGuardian.name,
+            email: foundGuardian.email || '',
+            phone: foundGuardian.phone,
+            roles: foundGuardian.roleDetails || [],
+            createdAt: foundGuardian.createdAt ? 
+              { 
+                toDate: () => new Date(foundGuardian.createdAt!), 
+                seconds: Math.floor((foundGuardian.createdAt || 0) / 1000),
+                nanoseconds: 0,
+                toMillis: () => foundGuardian.createdAt || 0,
+                isEqual: () => false,
+                toJSON: () => ({ seconds: Math.floor((foundGuardian.createdAt || 0) / 1000), nanoseconds: 0 })
+              } as any : undefined,
+            updatedAt: foundGuardian.updatedAt ? 
+              { 
+                toDate: () => new Date(foundGuardian.updatedAt!), 
+                seconds: Math.floor((foundGuardian.updatedAt || 0) / 1000),
+                nanoseconds: 0,
+                toMillis: () => foundGuardian.updatedAt || 0,
+                isEqual: () => false,
+                toJSON: () => ({ seconds: Math.floor((foundGuardian.updatedAt || 0) / 1000), nanoseconds: 0 })
+              } as any : undefined
+          };
+          setGuardian(guardianUser);
+        }
+      } catch (error) {
+        console.error('Error loading guardian details:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadGuardianDetails();
+  }, [guardianId, userData]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-between bg-gray-50 p-3 rounded border">
+        <div className="text-sm text-gray-600">Loading guardian details...</div>
+        <Button size="sm" variant="outline" onClick={onUnlink}>
+          Unlink
+        </Button>
+      </div>
+    );
+  }
+
+  if (!guardian) {
+    return (
+      <div className="flex items-center justify-between bg-gray-50 p-3 rounded border">
+        <div className="text-sm text-gray-600">Guardian ID: {guardianId}</div>
+        <Button size="sm" variant="outline" onClick={onUnlink}>
+          Unlink
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between bg-white p-3 rounded border">
+      <div className="flex items-center space-x-3">
+        <Avatar size="sm">
+          {getInitials(guardian.name)}
+        </Avatar>
+        <div>
+          <div className="text-sm font-medium text-gray-900">{guardian.name}</div>
+          <div className="text-xs text-gray-600">{guardian.email}</div>
+          {guardian.phone && (
+            <div className="text-xs text-gray-600">{guardian.phone}</div>
+          )}
+        </div>
+      </div>
+      <Button size="sm" variant="outline" onClick={onUnlink}>
+        Unlink
+      </Button>
+    </div>
+  );
+};
+
 const Users: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -105,6 +225,19 @@ const Users: React.FC = () => {
   const [guardianPhone, setGuardianPhone] = useState('');
   const [guardianSearchResult, setGuardianSearchResult] = useState<User | null>(null);
   const [showCreateGuardian, setShowCreateGuardian] = useState(false);
+  const [allPlayers, setAllPlayers] = useState<Player[]>([]);
+  const [playerGuardianMap, setPlayerGuardianMap] = useState<Record<string, User[]>>({});
+  const [selectedPlayer, setSelectedPlayer] = useState<User | null>(null);
+  const [playerGuardians, setPlayerGuardians] = useState<User[]>([]);
+  const [openPlayerGuardiansDialog, setOpenPlayerGuardiansDialog] = useState(false);
+  
+  // Algolia search states
+  // Always use Algolia for search
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchDebounceTimer, setSearchDebounceTimer] = useState<NodeJS.Timeout | null>(null);
   const [newGuardianData, setNewGuardianData] = useState({
     name: '',
     email: '',
@@ -112,6 +245,7 @@ const Users: React.FC = () => {
   });
   const [organizationSettings, setOrganizationSettings] = useState<Settings | null>(null);
   const [fieldCategories, setFieldCategories] = useState<FieldCategory[]>([]);
+  const [tableRenderKey, setTableRenderKey] = useState(Date.now());
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -122,6 +256,7 @@ const Users: React.FC = () => {
     dateOfBirth: '',
     gender: '',
     guardianId: [] as string[],
+    status: '',
     dynamicFields: {} as Record<string, any>
   });
   
@@ -133,10 +268,32 @@ const Users: React.FC = () => {
   const { userData } = useAuth();
   const { selectedOrganization, selectedAcademy } = useApp();
 
-  const steps = ['Full Name', 'Role Assignment', 'Contact Information', 'Player Details'];
+  const isRolePreset = formData.roles.length > 0 && dialogMode === 'add' && activeTab !== 0;
   const isPlayerRole = formData.roles.includes('player');
-  const shouldShowPlayerStep = isPlayerRole && dialogMode === 'add';
-  const effectiveSteps = shouldShowPlayerStep ? steps : steps.slice(0, 3);
+  const steps = dialogMode === 'edit' 
+    ? (isPlayerRole ? ['User Information', 'Contact Information', 'Player Details'] : ['User Information', 'Contact Information'])
+    : isRolePreset 
+      ? ['Full Name', 'Contact Information', 'Player Details']
+      : ['Full Name', 'Role Assignment', 'Contact Information', 'Player Details'];
+  const shouldShowPlayerStep = isPlayerRole; // Show player step for both add and edit modes
+  const effectiveSteps = shouldShowPlayerStep 
+    ? steps 
+    : isRolePreset 
+      ? steps.slice(0, 2) 
+      : steps.slice(0, 3);
+
+  // Debug logging for step navigation in edit mode
+  if (dialogMode === 'edit' && openDialog) {
+    console.log('🔍 Step navigation debug:', {
+      dialogMode,
+      activeStep,
+      isPlayerRole,
+      formDataRoles: formData.roles,
+      steps,
+      effectiveSteps,
+      shouldShowPlayerStep
+    });
+  }
 
   const renderParameterField = (field: ParameterField) => {
     const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
@@ -216,7 +373,7 @@ const Users: React.FC = () => {
   const isParameterFieldsValid = () => {
     if (!isPlayerRole) return true;
     
-    if (!formData.dateOfBirth || !formData.gender) {
+    if (!formData.dateOfBirth || !formData.gender || !formData.status) {
       return false;
     }
     
@@ -251,15 +408,35 @@ const Users: React.FC = () => {
     if (newTab !== 0) {
       setRoleFilter('all');
     }
+    
+    // Clear search term when switching to guardians tab
+    if (newTab === 3) {
+      setSearchTerm('');
+    }
   }, [location.search]);
 
   useEffect(() => {
     if (userData) {
-      loadUsers();
+      // For guardian tab, only search if there's a search term of at least 2 characters
+      if (activeTab === 3) {
+        if (searchTerm && searchTerm.trim().length >= 2) {
+          performAlgoliaSearch(searchTerm, 0);
+        } else {
+          // Clear results for guardian tab when no valid search term
+          setUsers([]);
+          setTotalUsers(0);
+          setCurrentPage(0);
+          setTotalPages(0);
+        }
+      } else {
+        // For other tabs, search normally
+        performAlgoliaSearch(searchTerm, 0);
+      }
+      
       loadAcademies();
       loadSettings();
     }
-  }, [userData, selectedAcademy]);
+  }, [userData, selectedAcademy, activeTab, searchTerm, roleFilter]);
 
   useEffect(() => {
     if (userData) {
@@ -272,10 +449,166 @@ const Users: React.FC = () => {
       const organizationId = userData?.roles[0]?.organizationId;
       if (organizationId) {
         const settings = await getSettingsByOrganization(organizationId);
+        console.log('🔧 Loaded settings with playerStatusOptions:', settings?.playerStatusOptions);
         setOrganizationSettings(settings);
       }
     } catch (error) {
       console.error('Error loading settings:', error);
+    }
+  };
+  
+  // Algolia search function
+  const performAlgoliaSearch = async (query: string = searchTerm, page: number = 0) => {
+    const organizationId = userData?.roles[0]?.organizationId;
+    if (!organizationId) return;
+    
+    setSearchLoading(true);
+    try {
+      // Determine role filter based on active tab and dropdown selection
+      let roleFilterValue = 'all';
+      if (activeTab === 1) roleFilterValue = 'player';
+      else if (activeTab === 2) roleFilterValue = 'coach';
+      else if (activeTab === 3) roleFilterValue = 'guardian';
+      else if (activeTab === 0) {
+        // For "All Users" tab, use the dropdown filter value
+        roleFilterValue = roleFilter;
+      }
+      
+      console.log('🔍 Search Filter Debug:', {
+        activeTab,
+        dropdownRoleFilter: roleFilter,
+        finalRoleFilterValue: roleFilterValue,
+        selectedAcademyId: selectedAcademy?.id,
+        selectedAcademyName: selectedAcademy?.name,
+        query,
+        page
+      });
+      
+      let results;
+      
+      if (activeTab === 4) {
+        // For admin tab, we need to search for both admin and owner roles
+        // Since Algolia can only filter by one role at a time, we'll do two searches and combine results
+        console.log('🔍 Admin Tab Search - Academy Filter:', selectedAcademy?.id);
+        
+        const [adminResults, ownerResults] = await Promise.all([
+          searchUsersAlgolia({
+            query,
+            organizationId,
+            filters: {
+              role: 'admin',
+              academyId: selectedAcademy?.id
+            },
+            page,
+            hitsPerPage: 10
+          }),
+          searchUsersAlgolia({
+            query,
+            organizationId,
+            filters: {
+              role: 'owner',
+              academyId: selectedAcademy?.id
+            },
+            page,
+            hitsPerPage: 10
+          })
+        ]);
+        
+        console.log('🔍 Admin Search Results:', {
+          adminCount: adminResults.totalUsers,
+          ownerCount: ownerResults.totalUsers,
+          adminUsers: adminResults.users.map(u => ({ name: u.name, academies: u.academies })),
+          ownerUsers: ownerResults.users.map(u => ({ name: u.name, academies: u.academies }))
+        });
+        
+        // Combine results and remove duplicates
+        const combinedUsers = [...adminResults.users, ...ownerResults.users];
+        const uniqueUsers = combinedUsers.filter((user, index, self) => 
+          index === self.findIndex(u => u.objectID === user.objectID)
+        );
+        
+        results = {
+          users: uniqueUsers,
+          totalUsers: adminResults.totalUsers + ownerResults.totalUsers,
+          currentPage: page,
+          totalPages: Math.ceil((adminResults.totalUsers + ownerResults.totalUsers) / 10),
+          processingTimeMS: Math.max(adminResults.processingTimeMS, ownerResults.processingTimeMS)
+        };
+      } else {
+        const searchFilters = {
+          role: roleFilterValue !== 'all' ? roleFilterValue : undefined,
+          academyId: selectedAcademy?.id
+        };
+        console.log('🔍 Algolia Search Filters:', searchFilters);
+        
+        results = await searchUsersAlgolia({
+          query,
+          organizationId,
+          filters: searchFilters,
+          page,
+          hitsPerPage: 10
+        });
+        
+        console.log('🔍 Algolia Search Results:', {
+          totalUsers: results.totalUsers,
+          returnedUsers: results.users.length,
+          userAcademies: results.users.map(u => ({ 
+            id: u.objectID, 
+            name: u.name, 
+            academies: u.academies,
+            roles: u.roles 
+          }))
+        });
+      }
+      
+      // Convert Algolia records back to User format
+      const algoliaUsers: User[] = results.users.map(record => ({
+        id: record.objectID,
+        name: record.name,
+        email: record.email || '',
+        phone: record.phone,
+        roles: record.roleDetails || [],
+        createdAt: record.createdAt ? 
+          { 
+            toDate: () => new Date(record.createdAt!), 
+            seconds: Math.floor((record.createdAt || 0) / 1000),
+            nanoseconds: 0,
+            toMillis: () => record.createdAt || 0,
+            isEqual: () => false,
+            toJSON: () => ({ seconds: Math.floor((record.createdAt || 0) / 1000), nanoseconds: 0 })
+          } as any : undefined,
+        updatedAt: record.updatedAt ? 
+          { 
+            toDate: () => new Date(record.updatedAt!), 
+            seconds: Math.floor((record.updatedAt || 0) / 1000),
+            nanoseconds: 0,
+            toMillis: () => record.updatedAt || 0,
+            isEqual: () => false,
+            toJSON: () => ({ seconds: Math.floor((record.updatedAt || 0) / 1000), nanoseconds: 0 })
+          } as any : undefined,
+        // Add other required User properties with defaults
+        balance: 0,
+        outstandingBalance: {},
+        availableCredits: {}
+      }));
+      
+      setUsers(algoliaUsers);
+      setCurrentPage(results.currentPage);
+      setTotalPages(results.totalPages);
+      setTotalUsers(results.totalUsers);
+      
+      // Load guardian mapping after setting users
+      if (algoliaUsers.length > 0) {
+        await loadGuardianMapping(algoliaUsers);
+      }
+      
+      console.log(`🔍 Algolia search completed: ${results.totalUsers} users found in ${results.processingTimeMS}ms`);
+    } catch (error) {
+      console.error('Algolia search error:', error);
+      setError('Search failed. Please check Algolia configuration.');
+    } finally {
+      setSearchLoading(false);
+      setLoading(false); // Make sure to turn off the main loading spinner
     }
   };
   
@@ -291,47 +624,133 @@ const Users: React.FC = () => {
     }
   }, [organizationSettings, formData.academyId]);
 
-  // Load settings when dialog opens
+  // Load settings when dialog opens - force refresh to get latest settings
   useEffect(() => {
-    if (openDialog && dialogMode === 'add') {
+    if (openDialog) {
+      console.log(`🔄 User dialog opened (${dialogMode}), refreshing settings...`);
       loadSettings();
     }
   }, [openDialog, dialogMode]);
 
-  const loadUsers = async () => {
+  // Load guardian mapping from Algolia results
+  const loadGuardianMapping = async (algoliaUsers: User[]) => {
     try {
-      setLoading(true);
       const organizationId = userData?.roles[0]?.organizationId;
-      
       if (organizationId) {
-        let fetchedUsers: User[];
+        const players = await getPlayersByOrganization(organizationId);
+        console.log('🔍 Loading guardian mapping:', {
+          totalPlayers: players.length,
+          playersWithGuardians: players.filter(p => p.guardianId && p.guardianId.length > 0).length
+        });
         
-        if (selectedAcademy) {
-          // Filter users by selected academy
-          fetchedUsers = await getUsersByAcademy(organizationId, selectedAcademy.id);
-        } else {
-          // Show all organization users when no academy is selected
-          fetchedUsers = await getUsersByOrganization(organizationId);
+        setAllPlayers(players);
+        
+        // Build a map of player userId to guardian Users
+        const guardianMap: Record<string, User[]> = {};
+        
+        // Collect all unique guardian IDs that we need to find
+        const allGuardianIds = new Set<string>();
+        for (const player of players) {
+          if (player.guardianId && player.guardianId.length > 0) {
+            player.guardianId.forEach(gId => allGuardianIds.add(gId));
+          }
         }
         
-        setUsers(fetchedUsers);
+        // First, try to find all guardians in Algolia results
+        const foundGuardians = new Map<string, User>();
+        for (const guardian of algoliaUsers.filter(u => 
+          u.roles.some(role => 
+            Array.isArray(role.role) ? role.role.includes('guardian') : role.role === 'guardian'
+          )
+        )) {
+          if (allGuardianIds.has(guardian.id)) {
+            foundGuardians.set(guardian.id, guardian);
+          }
+        }
         
-        const guardianUsers = fetchedUsers.filter(user => 
+        // For missing guardians, search them individually using Algolia
+        const missingGuardianIds = Array.from(allGuardianIds).filter(id => !foundGuardians.has(id));
+        console.log(`🔍 Found ${foundGuardians.size} guardians in Algolia, ${missingGuardianIds.length} missing`);
+        
+        if (missingGuardianIds.length > 0) {
+          try {
+            // Search for missing guardians using Algolia
+            const missingGuardiansResults = await searchUsersAlgolia({
+              query: '',
+              organizationId,
+              filters: {
+                role: 'guardian'
+              },
+              page: 0,
+              hitsPerPage: 100
+            });
+            
+            // Add found guardians to our collection
+            for (const record of missingGuardiansResults.users) {
+              if (missingGuardianIds.includes(record.objectID)) {
+                const guardianUser: User = {
+                  id: record.objectID,
+                  name: record.name,
+                  email: record.email || '',
+                  phone: record.phone,
+                  roles: record.roleDetails || [],
+                  createdAt: record.createdAt ? 
+                    { 
+                      toDate: () => new Date(record.createdAt!), 
+                      seconds: Math.floor((record.createdAt || 0) / 1000),
+                      nanoseconds: 0,
+                      toMillis: () => record.createdAt || 0,
+                      isEqual: () => false,
+                      toJSON: () => ({ seconds: Math.floor((record.createdAt || 0) / 1000), nanoseconds: 0 })
+                    } as any : undefined,
+                  updatedAt: record.updatedAt ? 
+                    { 
+                      toDate: () => new Date(record.updatedAt!), 
+                      seconds: Math.floor((record.updatedAt || 0) / 1000),
+                      nanoseconds: 0,
+                      toMillis: () => record.updatedAt || 0,
+                      isEqual: () => false,
+                      toJSON: () => ({ seconds: Math.floor((record.updatedAt || 0) / 1000), nanoseconds: 0 })
+                    } as any : undefined
+                };
+                foundGuardians.set(record.objectID, guardianUser);
+                console.log(`✅ Found missing guardian ${record.objectID} (${record.name}) via additional search`);
+              }
+            }
+          } catch (error) {
+            console.error('Error searching for missing guardians:', error);
+          }
+        }
+        
+        // Now build the guardian map
+        for (const player of players) {
+          if (player.guardianId && player.guardianId.length > 0) {
+            console.log(`👥 Player ${player.userId} has guardians:`, player.guardianId);
+            const playerGuardians = player.guardianId
+              .map(gId => {
+                const guardian = foundGuardians.get(gId);
+                if (!guardian) {
+                  console.warn(`⚠️ Guardian ${gId} still not found after additional search`);
+                }
+                return guardian;
+              })
+              .filter(g => g !== undefined) as User[];
+            guardianMap[player.userId] = playerGuardians;
+            console.log(`✅ Mapped ${playerGuardians.length} guardians to player ${player.userId}`);
+          }
+        }
+        setPlayerGuardianMap(guardianMap);
+        console.log('🗺️ Guardian map built:', Object.keys(guardianMap).length, 'players with guardians');
+        
+        const guardianUsers = algoliaUsers.filter(user => 
           user.roles.some(role => 
             Array.isArray(role.role) ? role.role.includes('guardian') : role.role === 'guardian'
           )
         );
         setGuardians(guardianUsers);
-      } else {
-        // If no organizationId, show empty state
-        setUsers([]);
-        setGuardians([]);
       }
     } catch (error) {
-      console.error('Error loading users:', error);
-      setError('Failed to load users');
-    } finally {
-      setLoading(false);
+      console.error('Error loading guardian mapping:', error);
     }
   };
 
@@ -356,7 +775,7 @@ const Users: React.FC = () => {
     }
   };
 
-  const handleAddUser = async () => {
+  const handleAddUser = async (presetRole?: string) => {
     setSelectedUser(null);
     setDialogMode('add');
     setActiveStep(0);
@@ -365,11 +784,12 @@ const Users: React.FC = () => {
       email: '',
       phone: '',
       password: '',
-      roles: [],
+      roles: presetRole ? [presetRole] : [],
       academyId: [],
       dateOfBirth: '',
       gender: '',
       guardianId: [],
+      status: '',
       dynamicFields: {}
     });
     
@@ -377,8 +797,69 @@ const Users: React.FC = () => {
     setOpenDialog(true);
   };
 
-  const handleEditUser = (user: User) => {
-    navigate(`/users/edit/${user.id}`);
+  const handleEditUser = async (user: User) => {
+    console.log('🔧 Opening edit modal for user:', user);
+    setSelectedUser(user);
+    setDialogMode('edit');
+    setActiveStep(0);
+    
+    // Load user data into form
+    const isPlayer = user.roles.some(role => 
+      Array.isArray(role.role) ? role.role.includes('player') : role.role === 'player'
+    );
+    
+    // Get player data if user is a player
+    let playerData = null;
+    if (isPlayer) {
+      try {
+        playerData = await getPlayerByUserId(user.id);
+        console.log('📋 Loaded player data:', playerData);
+      } catch (error) {
+        console.error('Error loading player data:', error);
+      }
+    }
+    
+    // Set form data with existing user information
+    try {
+      setFormData({
+        name: user.name || '',
+        email: user.email || '',
+        phone: user.phone || '',
+        password: '', // Don't pre-fill password for security
+        roles: user.roles?.flatMap(role => 
+          Array.isArray(role.role) ? role.role : [role.role]
+        ) || [],
+        academyId: user.roles?.[0]?.academyId || [],
+        dateOfBirth: (() => {
+          if (!playerData?.dob) return '';
+          try {
+            const date = new Date(playerData.dob);
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+              console.warn('Invalid date in player data:', playerData.dob);
+              return '';
+            }
+            return date.toISOString().split('T')[0];
+          } catch (error) {
+            console.error('Error converting date:', error, playerData.dob);
+            return '';
+          }
+        })(),
+        gender: playerData?.gender || '',
+        guardianId: playerData?.guardianId || [],
+        status: playerData?.status || '',
+        dynamicFields: playerData?.playerParameters || {}
+      });
+      
+      console.log('✅ Form data loaded successfully');
+    } catch (error) {
+      console.error('Error setting form data:', error);
+      setError('Failed to load user data for editing');
+      return;
+    }
+    
+    await loadSettings();
+    setOpenDialog(true);
   };
 
   const handleDeleteUser = (user: User) => {
@@ -392,7 +873,7 @@ const Users: React.FC = () => {
     try {
       setDeleteLoading(true);
       await deleteUser(userToDelete.id);
-      await loadUsers();
+      await performAlgoliaSearch(searchTerm, 0);
       setOpenDeleteDialog(false);
       setUserToDelete(null);
     } catch (error) {
@@ -411,12 +892,12 @@ const Users: React.FC = () => {
         setError('Please enter the full name');
         return;
       }
-    } else if (activeStep === 1) {
+    } else if (activeStep === 1 && !isRolePreset) {
       if (formData.roles.length === 0) {
         setError('Please select at least one role');
         return;
       }
-    } else if (activeStep === 2) {
+    } else if ((activeStep === 1 && isRolePreset) || (activeStep === 2 && !isRolePreset)) {
       const isPlayerRole = formData.roles.includes('player');
       const isOnlyGuardian = formData.roles.every(role => role === 'guardian');
       
@@ -442,10 +923,198 @@ const Users: React.FC = () => {
     setActiveStep((prevStep) => prevStep - 1);
   };
 
+  const handleUserUpdate = async () => {
+    if (!selectedUser) return;
+    
+    try {
+      console.log('🔄 Updating user data...');
+      
+      // Update user document
+      const updatedUserData = {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        roles: formData.roles.map(role => ({ 
+          role: [role],
+          organizationId: userData?.roles?.[0]?.organizationId || '',
+          academyId: formData.academyId
+        }))
+      };
+      
+      await updateUser(selectedUser.id, updatedUserData);
+      
+      // Sync updated user to Algolia
+      try {
+        console.log('🔄 Syncing updated user to Algolia...', {
+          userId: selectedUser.id,
+          oldName: selectedUser.name,
+          newName: formData.name,
+          updatedUserData
+        });
+        const { syncUserToAlgolia } = await import('../../services/algoliaService');
+        const updatedUser = {
+          ...selectedUser,
+          ...updatedUserData,
+          updatedAt: { toDate: () => new Date() } as any
+        };
+        console.log('📋 Final user object being synced to Algolia:', {
+          id: updatedUser.id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          roles: updatedUser.roles
+        });
+        await syncUserToAlgolia(updatedUser);
+        console.log('✅ User synced to Algolia successfully');
+        
+        // Wait a moment for Algolia to process the update
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (algoliaError) {
+        console.warn('⚠️ Failed to sync user to Algolia:', algoliaError);
+        // Don't fail the entire update if Algolia sync fails
+      }
+      
+      // If user is a player, update player record
+      const isPlayer = formData.roles.includes('player');
+      if (isPlayer) {
+        console.log('🔄 Updating player data...');
+        try {
+          const existingPlayer = await getPlayerByUserId(selectedUser.id);
+          if (existingPlayer) {
+            // Validate date before updating
+            let dobDate;
+            try {
+              if (formData.dateOfBirth) {
+                dobDate = new Date(formData.dateOfBirth);
+                if (isNaN(dobDate.getTime())) {
+                  throw new Error('Invalid date format');
+                }
+              } else {
+                dobDate = existingPlayer.dob; // Keep existing date if no new date provided
+              }
+            } catch (error) {
+              console.error('Invalid date format:', formData.dateOfBirth);
+              dobDate = existingPlayer.dob; // Fallback to existing date
+            }
+            
+            await updatePlayer(existingPlayer.id, {
+              dob: dobDate,
+              gender: formData.gender,
+              guardianId: formData.guardianId,
+              status: formData.status || 'active',
+              playerParameters: formData.dynamicFields
+            });
+            console.log('✅ Player data updated successfully');
+          }
+        } catch (error) {
+          console.error('Error updating player data:', error);
+        }
+      }
+      
+      // Reload users and close dialog
+      await performAlgoliaSearch(searchTerm, 0);
+      setOpenDialog(false);
+      setActiveStep(0);
+      setFormData({
+        name: '',
+        email: '',
+        phone: '',
+        password: '',
+        roles: [],
+        academyId: [],
+        dateOfBirth: '',
+        gender: '',
+        guardianId: [],
+        status: '',
+        dynamicFields: {}
+      });
+      
+      // Update local state immediately for instant UI feedback
+      console.log('🔄 BEFORE UPDATE - Current users state:', {
+        selectedUserId: selectedUser.id,
+        selectedUserName: selectedUser.name,
+        newName: formData.name,
+        usersArrayLength: users.length,
+        userInArray: users.find(u => u.id === selectedUser.id)?.name,
+        allUserNames: users.map(u => ({ id: u.id, name: u.name }))
+      });
+      
+      setUsers(prevUsers => {
+        console.log('🔄 INSIDE setUsers - prevUsers:', prevUsers.map(u => ({ id: u.id, name: u.name })));
+        
+        const updatedUsers = prevUsers.map(user => {
+          if (user.id === selectedUser.id) {
+            const updatedUser = { 
+              ...user, 
+              name: formData.name, 
+              email: formData.email, 
+              phone: formData.phone 
+            };
+            console.log('✅ INSIDE MAP - Updating user:', {
+              userId: user.id,
+              oldName: user.name,
+              newName: updatedUser.name,
+              formDataName: formData.name
+            });
+            return updatedUser;
+          }
+          return user;
+        });
+        
+        console.log('📋 INSIDE setUsers - updatedUsers:', updatedUsers.map(u => ({ id: u.id, name: u.name })));
+        console.log('📋 INSIDE setUsers - Updated user check:', updatedUsers.find(u => u.id === selectedUser.id)?.name);
+        return updatedUsers;
+      });
+      
+      // Force table re-render
+      setTableRenderKey(Date.now());
+      
+      // Check state immediately after setting (this might not show the updated state due to async nature)
+      setTimeout(() => {
+        console.log('🔍 AFTER UPDATE - Users state check:', {
+          usersLength: users.length,
+          updatedUserInState: users.find(u => u.id === selectedUser.id)?.name,
+          allUserNames: users.map(u => ({ id: u.id, name: u.name }))
+        });
+      }, 100);
+      
+      // Refresh the search results to show updated data in the table
+      // TEMPORARILY COMMENTED OUT TO TEST IF THIS IS OVERRIDING LOCAL STATE
+      console.log('🔄 SKIPPING search refresh to test local state update...', {
+        searchTerm,
+        currentPage,
+        activeTab,
+        userId: selectedUser.id
+      });
+      // await performAlgoliaSearch(searchTerm, currentPage);
+      // console.log('✅ Search results refreshed');
+      
+      console.log('✅ User update completed successfully');
+    } catch (error: any) {
+      console.error('Error updating user:', error);
+      setError(`Failed to update user: ${error.message || 'Unknown error'}`);
+    }
+  };
+
   const handleSubmit = async () => {
     try {
       setSubmitLoading(true);
       const organizationId = userData?.roles?.[0]?.organizationId || '';
+      
+      console.log(`📝 ${dialogMode === 'edit' ? 'Updating' : 'Creating'} user:`, {
+        dialogMode,
+        selectedUser: selectedUser?.id,
+        formData: {
+          name: formData.name,
+          roles: formData.roles,
+          guardianId: formData.guardianId
+        }
+      });
+      
+      if (dialogMode === 'edit' && selectedUser) {
+        // Handle user update
+        await handleUserUpdate();
+        return;
+      }
       
       let newUserId: string;
       
@@ -487,7 +1156,7 @@ const Users: React.FC = () => {
         console.log('User data updated successfully');
       } else {
         // For users with only player/guardian roles, create Firestore document only
-        newUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        newUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
         await createUser({
           id: newUserId,
           name: formData.name,
@@ -503,10 +1172,17 @@ const Users: React.FC = () => {
       
       // If creating a player, also create player record
       if (formData.roles.includes('player')) {
-        const playerId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const playerId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
         
         const dobValue = formData.dateOfBirth;
         const genderValue = formData.gender;
+        
+        console.log('📝 Creating player with guardian data:', {
+          playerId,
+          userId: newUserId,
+          guardianId: formData.guardianId,
+          guardianCount: formData.guardianId.length
+        });
         
         await createPlayer({
           id: playerId,
@@ -516,14 +1192,30 @@ const Users: React.FC = () => {
           dob: new Date(dobValue),
           gender: genderValue,
           guardianId: formData.guardianId,
+          status: formData.status || 'active',
           playerParameters: formData.dynamicFields
         });
+        
+        console.log('✅ Player created successfully with guardians');
       }
       
       // Reload users and close dialog
-      await loadUsers();
+      await performAlgoliaSearch(searchTerm, 0);
       setOpenDialog(false);
       setActiveStep(0);
+      setFormData({
+        name: '',
+        email: '',
+        phone: '',
+        password: '',
+        roles: [],
+        academyId: [],
+        dateOfBirth: '',
+        gender: '',
+        guardianId: [],
+        status: '',
+        dynamicFields: {}
+      });
     } catch (error: any) {
       console.error('Error creating user:', error);
       console.error('Error details:', {
@@ -583,17 +1275,8 @@ const Users: React.FC = () => {
 
   const filteredUsers = getFilteredUsers();
 
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map(n => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
-  // DataTable columns configuration
-  const columns = [
+  // DataTable columns configuration - conditionally add guardians column for players
+  const baseColumns = [
     {
       key: 'name',
       header: 'User',
@@ -606,7 +1289,12 @@ const Users: React.FC = () => {
             {getInitials(user.name)}
           </Avatar>
           <div>
-            <div className="font-semibold text-secondary-900">{user.name}</div>
+            <div className="font-semibold text-secondary-900">
+              {(() => {
+                console.log('🎯 TABLE RENDER - User name:', { id: user.id, name: user.name, timestamp: Date.now() });
+                return user.name;
+              })()}
+            </div>
             <div className="text-secondary-600 text-sm font-normal">{user.phone || 'No phone'}</div>
           </div>
         </div>
@@ -700,6 +1388,30 @@ const Users: React.FC = () => {
               <UserIcon />
             </button>
           )}
+          {user.roles.some(role => role.role.includes('player')) && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const guardians = playerGuardianMap[user.id] || [];
+                console.log('🔍 Viewing guardians for player:', {
+                  playerId: user.id,
+                  playerName: user.name,
+                  guardians: guardians,
+                  guardianCount: guardians.length,
+                  playerGuardianMapKeys: Object.keys(playerGuardianMap)
+                });
+                setSelectedPlayer(user);
+                setPlayerGuardians(guardians);
+                setOpenPlayerGuardiansDialog(true);
+              }}
+              className="p-2 text-secondary-400 hover:text-primary-600 transition-colors duration-200"
+              title="View Guardians"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+            </button>
+          )}
           <button
             className="p-2 text-secondary-400 hover:text-secondary-600 transition-colors duration-200"
             title="More Options"
@@ -710,6 +1422,8 @@ const Users: React.FC = () => {
       )
     }
   ];
+  
+  const columns = baseColumns;
 
   const getRoleChips = (roles: UserRole[]) => {
     if (!roles || roles.length === 0) {
@@ -771,12 +1485,38 @@ const Users: React.FC = () => {
         </div>
         {canWrite('users') && (
           <Button
-            onClick={handleAddUser}
+            onClick={() => {
+              // Determine preset role based on active tab
+              let presetRole: string | undefined;
+              switch (activeTab) {
+                case 1:
+                  presetRole = 'player';
+                  break;
+                case 2:
+                  presetRole = 'coach';
+                  break;
+                case 3:
+                  presetRole = 'guardian';
+                  break;
+                case 4:
+                  presetRole = 'admin';
+                  break;
+                default:
+                  presetRole = undefined;
+              }
+              handleAddUser(presetRole);
+            }}
             loading={loading}
             icon={<PlusIcon />}
             className="bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 w-full sm:w-auto"
           >
-            {loading ? 'Loading...' : 'Add User'}
+            {loading ? 'Loading...' : (
+              activeTab === 1 ? 'Add Player' :
+              activeTab === 2 ? 'Add Coach' :
+              activeTab === 3 ? 'Add Guardian' :
+              activeTab === 4 ? 'Add Admin' :
+              'Add User'
+            )}
           </Button>
         )}
       </div>
@@ -795,8 +1535,40 @@ const Users: React.FC = () => {
             <Input
               placeholder="Search users..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              icon={<SearchIcon />}
+              onChange={(e) => {
+                const query = e.target.value;
+                setSearchTerm(query);
+                
+                // Debounce the Algolia search
+                if (searchDebounceTimer) {
+                  clearTimeout(searchDebounceTimer);
+                }
+                
+                const timer = setTimeout(() => {
+                  // For guardian tab, only search if there's a valid search term
+                  if (activeTab === 3) {
+                    if (query && query.trim().length >= 2) {
+                      performAlgoliaSearch(query, 0);
+                    } else {
+                      // Clear results for guardian tab when no valid search term
+                      setUsers([]);
+                      setTotalUsers(0);
+                      setCurrentPage(0);
+                      setTotalPages(0);
+                    }
+                  } else {
+                    // For other tabs, search normally
+                    performAlgoliaSearch(query, 0);
+                  }
+                }, 300); // 300ms debounce
+                
+                setSearchDebounceTimer(timer);
+              }}
+              icon={searchLoading ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
+              ) : (
+                <SearchIcon />
+              )}
               label="Search Users"
             />
             {activeTab === 0 && (
@@ -811,24 +1583,106 @@ const Users: React.FC = () => {
                 <option value="coach">Coach</option>
                 <option value="player">Player</option>
                 <option value="guardian">Guardian</option>
+                {organizationSettings?.customRoles?.map(role => (
+                  <option key={role} value={role}>{role}</option>
+                ))}
               </Select>
             )}
           </div>
+          
+          {/* Results Summary */}
+          {!loading && (
+            <div className="flex items-center justify-between text-sm text-secondary-600 bg-secondary-50 px-4 py-2 rounded-lg mt-4">
+              <span>
+                {totalUsers} users found
+                {searchTerm && ` matching "${searchTerm}"`}
+                {roleFilter !== 'all' && ` with role "${roleFilter}"`}
+              </span>
+              <span className="text-xs flex items-center gap-2">
+                <span className="text-success-600 font-semibold">⚡ Algolia Search</span>
+                📄 Showing 10 per page
+              </span>
+            </div>
+          )}
         </CardBody>
       </Card>
 
       {/* Users Table */}
       <Card>
-        <DataTable
-          data={filteredUsers}
-          columns={columns}
-          emptyMessage={searchTerm || roleFilter !== 'all' 
-            ? 'No users found matching your criteria' 
-            : 'No users found'}
-          showPagination={true}
-          itemsPerPage={10}
-        />
+        {loading ? (
+          <div className="flex justify-center items-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+            <span className="ml-3 text-secondary-600">Loading users...</span>
+          </div>
+        ) : (
+          <DataTable
+            key={`users-table-${tableRenderKey}`}
+            data={users}
+            columns={columns}
+            emptyMessage={
+              activeTab === 3 && (!searchTerm || searchTerm.trim().length < 2)
+                ? 'Type at least 2 characters in the search box above to find guardians.'
+                : searchTerm || roleFilter !== 'all' 
+                ? `No users found matching your criteria.`
+                : users.length === 0 
+                  ? 'No users found. Start by adding your first user.'
+                  : 'No users found'
+            }
+            showPagination={false}
+            itemsPerPage={10}
+          />
+        )}
       </Card>
+
+      {/* Algolia Pagination */}
+      {!loading && totalPages > 1 && (
+        <Card>
+          <CardBody>
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-secondary-600">
+                Page {currentPage + 1} of {totalPages} • {totalUsers} total users
+              </div>
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  onClick={() => performAlgoliaSearch(searchTerm, currentPage - 1)}
+                  disabled={currentPage === 0 || searchLoading}
+                  className="px-3 py-1 text-sm"
+                >
+                  Previous
+                </Button>
+                
+                {/* Page numbers */}
+                <div className="flex items-center space-x-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    const pageIndex = Math.max(0, Math.min(totalPages - 5, currentPage - 2)) + i;
+                    return (
+                      <Button
+                        key={pageIndex}
+                        variant={pageIndex === currentPage ? "primary" : "outline"}
+                        onClick={() => performAlgoliaSearch(searchTerm, pageIndex)}
+                        disabled={searchLoading}
+                        className="px-3 py-1 text-sm w-10"
+                      >
+                        {pageIndex + 1}
+                      </Button>
+                    );
+                  })}
+                </div>
+
+                <Button
+                  variant="outline"
+                  onClick={() => performAlgoliaSearch(searchTerm, currentPage + 1)}
+                  disabled={currentPage >= totalPages - 1 || searchLoading}
+                  className="px-3 py-1 text-sm"
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </CardBody>
+        </Card>
+      )}
 
       {/* Delete Confirmation Modal */}
       {openDeleteDialog && (
@@ -854,6 +1708,98 @@ const Users: React.FC = () => {
                 onClick={confirmDeleteUser}
               >
                 {deleteLoading ? 'Deleting...' : 'Delete'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Player's Guardians Modal */}
+      {openPlayerGuardiansDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden">
+            <div className="flex justify-between items-center p-6 border-b border-secondary-200">
+              <h3 className="text-lg font-semibold text-secondary-900">
+                Guardians for {selectedPlayer?.name}
+              </h3>
+              <button
+                onClick={() => setOpenPlayerGuardiansDialog(false)}
+                className="text-secondary-400 hover:text-secondary-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6">
+              {playerGuardians.length > 0 ? (
+                <DataTable
+                  data={playerGuardians}
+                  columns={[
+                    {
+                      key: 'name',
+                      header: 'Guardian Name',
+                      render: (guardian: User) => (
+                        <div className="flex items-center space-x-3">
+                          <Avatar size="sm">
+                            {getInitials(guardian.name)}
+                          </Avatar>
+                          <div className="text-sm font-normal">{guardian.name}</div>
+                        </div>
+                      )
+                    },
+                    {
+                      key: 'email',
+                      header: 'Email',
+                      render: (guardian: User) => (
+                        <div className="text-sm font-normal">{guardian.email || 'No email'}</div>
+                      )
+                    },
+                    {
+                      key: 'phone',
+                      header: 'Phone',
+                      render: (guardian: User) => (
+                        <div className="text-sm font-normal">{guardian.phone || 'No phone'}</div>
+                      )
+                    },
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      render: (guardian: User) => (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setOpenPlayerGuardiansDialog(false);
+                            navigate(`/users/${guardian.id}`);
+                          }}
+                        >
+                          View Details
+                        </Button>
+                      )
+                    }
+                  ]}
+                  emptyMessage="No guardians are currently linked to this player."
+                  showPagination={false}
+                />
+              ) : (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 bg-secondary-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-secondary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                  </div>
+                  <p className="text-secondary-700 font-medium mb-2">No Guardians Linked</p>
+                  <p className="text-secondary-600 text-sm">This player doesn't have any guardians assigned yet.</p>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end p-6 border-t border-secondary-200">
+              <Button
+                variant="secondary"
+                onClick={() => setOpenPlayerGuardiansDialog(false)}
+              >
+                Close
               </Button>
             </div>
           </div>
@@ -939,8 +1885,8 @@ const Users: React.FC = () => {
         </div>
       )}
 
-      {/* Add User Modal */}
-      {openDialog && dialogMode === 'add' && (
+      {/* Add/Edit User Modal */}
+      {openDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden shadow-2xl border border-secondary-200">
             {/* Modal Header */}
@@ -953,8 +1899,32 @@ const Users: React.FC = () => {
                     </svg>
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-secondary-900">Add New User</h3>
-                    <p className="text-secondary-600 text-sm font-normal">Create a new member account</p>
+                    <h3 className="text-xl font-bold text-secondary-900">
+                      {dialogMode === 'edit' ? (
+                        formData.roles.includes('player') ? 'Edit Player' :
+                        formData.roles.includes('coach') ? 'Edit Coach' :
+                        formData.roles.includes('guardian') ? 'Edit Guardian' :
+                        formData.roles.includes('admin') ? 'Edit Admin' :
+                        'Edit User'
+                      ) : (
+                        isRolePreset && formData.roles[0] === 'player' ? 'Add New Player' :
+                        isRolePreset && formData.roles[0] === 'coach' ? 'Add New Coach' :
+                        isRolePreset && formData.roles[0] === 'guardian' ? 'Add New Guardian' :
+                        isRolePreset && formData.roles[0] === 'admin' ? 'Add New Admin' :
+                        'Add New User'
+                      )}
+                    </h3>
+                    <p className="text-secondary-600 text-sm font-normal">
+                      {dialogMode === 'edit' ? (
+                        'Update user information and settings'
+                      ) : (
+                        isRolePreset && formData.roles[0] === 'player' ? 'Create a new player account' :
+                        isRolePreset && formData.roles[0] === 'coach' ? 'Create a new coach account' :
+                        isRolePreset && formData.roles[0] === 'guardian' ? 'Create a new guardian account' :
+                        isRolePreset && formData.roles[0] === 'admin' ? 'Create a new admin account' :
+                        'Create a new member account'
+                      )}
+                    </p>
                   </div>
                 </div>
                 <button
@@ -1044,8 +2014,8 @@ const Users: React.FC = () => {
                   </div>
                 )}
                 
-                {/* Step 2: Role Assignment */}
-                {activeStep === 1 && (
+                {/* Step 2: Role Assignment - Skip if role is preset or edit mode */}
+                {activeStep === 1 && !isRolePreset && dialogMode === 'add' && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="text-center mb-8">
                       <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -1175,8 +2145,8 @@ const Users: React.FC = () => {
                   </div>
                 )}
                 
-                {/* Step 3: Contact Information */}
-                {activeStep === 2 && (
+                {/* Step 2 or 3: Contact Information (depending on if role is preset or edit mode) */}
+                {((activeStep === 1 && (isRolePreset || dialogMode === 'edit')) || (activeStep === 2 && !isRolePreset && dialogMode === 'add')) && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="text-center mb-8">
                       <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -1236,8 +2206,8 @@ const Users: React.FC = () => {
                           />
                         </div>
                         
-                        {/* Password field for non-player roles */}
-                        {!formData.roles.includes('player') && !formData.roles.every(role => role === 'guardian') && (
+                        {/* Password field for non-player roles - only show in add mode */}
+                        {dialogMode === 'add' && !formData.roles.includes('player') && !formData.roles.every(role => role === 'guardian') && (
                           <Input
                             label="Password"
                             type="password"
@@ -1252,8 +2222,14 @@ const Users: React.FC = () => {
                   </div>
                 )}
                 
-                {/* Step 4: Player Details */}
-                {activeStep === 3 && isPlayerRole && (
+                {/* Step 3 or 4: Player Details (depending on if role is preset or edit mode) */}
+                {(() => {
+                  const shouldShowStep = (activeStep === 2 && (isRolePreset || dialogMode === 'edit') && isPlayerRole) || (activeStep === 3 && !isRolePreset && dialogMode === 'add' && isPlayerRole);
+                  if (shouldShowStep && dialogMode === 'edit') {
+                    console.log('✅ Player Details step is showing in edit mode with guardian search');
+                  }
+                  return shouldShowStep;
+                })() && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="text-center mb-8">
                       <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -1304,296 +2280,230 @@ const Users: React.FC = () => {
                           </Select>
                         </div>
                       </div>
+                      
+                      <div className="mt-6">
+                        <Select
+                          label="Player Status"
+                          value={formData.status}
+                          onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                          required
+                          helperText={organizationSettings?.playerStatusOptions && organizationSettings.playerStatusOptions.length > 0 
+                            ? "Select the current status of the player" 
+                            : "No status options configured. Please add them in Settings > Player Parameters."}
+                        >
+                          <option value="">Select status</option>
+                          {(() => {
+                            // Use custom options if they exist, otherwise use defaults
+                            const statusOptions = organizationSettings?.playerStatusOptions && organizationSettings.playerStatusOptions.length > 0 
+                              ? organizationSettings.playerStatusOptions 
+                              : ['Active', 'Inactive', 'Suspended'];
+                            
+                            console.log('🎯 Rendering status dropdown with options:', statusOptions);
+                            console.log('🎯 Organization settings:', organizationSettings);
+                            
+                            return statusOptions.map((status) => (
+                              <option key={status} value={status.toLowerCase()}>
+                                {status}
+                              </option>
+                            ));
+                          })()}
+                        </Select>
+                      </div>
                     </div>
                     
-                    {/* Guardian Selection */}
+                    {/* Guardian Search */}
                     <div className="bg-gradient-to-br from-secondary-50 to-secondary-100 rounded-xl p-6 border border-secondary-200">
                       <div className="flex items-center gap-3 mb-6">
                         <div className="w-10 h-10 bg-secondary-600 rounded-xl flex items-center justify-center">
                           <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                           </svg>
                         </div>
                         <div>
-                          <h3 className="text-lg font-bold text-secondary-900">Guardian Assignment</h3>
-                          <p className="text-sm text-secondary-700 font-normal">Link this player to their guardian(s)</p>
+                          <h3 className="text-lg font-bold text-secondary-900">Search Guardian</h3>
+                          <p className="text-sm text-secondary-700 font-normal">Search for guardians in the system</p>
                         </div>
                       </div>
                       
                       <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="block text-sm font-medium text-secondary-700">
-                            Select Guardian(s) <span className="text-secondary-500">(Optional)</span>
-                          </label>
-                          <div className="space-y-2 max-h-48 overflow-y-auto">
-                            {guardians.length > 0 ? (
-                              guardians.map((guardian) => (
-                                <div key={guardian.id} className="flex items-center space-x-3 p-3 bg-white rounded-lg border border-secondary-200 hover:border-primary-300 transition-colors">
-                                  <input
-                                    type="checkbox"
-                                    id={`guardian-${guardian.id}`}
-                                    checked={formData.guardianId.includes(guardian.id)}
-                                    onChange={(e) => {
-                                      if (e.target.checked) {
-                                        setFormData({
-                                          ...formData,
-                                          guardianId: [...formData.guardianId, guardian.id]
-                                        });
-                                      } else {
-                                        setFormData({
-                                          ...formData,
-                                          guardianId: formData.guardianId.filter(id => id !== guardian.id)
-                                        });
-                                      }
-                                    }}
-                                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded"
-                                  />
-                                  <Avatar size="sm">
-                                    {getInitials(guardian.name)}
-                                  </Avatar>
-                                  <div className="flex-1">
-                                    <div className="text-sm font-medium text-secondary-900">{guardian.name}</div>
-                                    <div className="text-xs text-secondary-600">{guardian.email}</div>
-                                    {guardian.phone && (
-                                      <div className="text-xs text-secondary-600">{guardian.phone}</div>
-                                    )}
-                                  </div>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="text-center py-6 text-secondary-600">
-                                <p className="text-sm font-normal">No guardians available.</p>
-                                <p className="text-xs text-secondary-500 mt-1">Create guardian users first to link them to players.</p>
-                              </div>
-                            )}
-                          </div>
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Enter guardian's phone number or name"
+                            value={guardianPhone}
+                            onChange={(e) => setGuardianPhone(e.target.value)}
+                            className="flex-1"
+                          />
+                          <Button
+                            variant="outline"
+                            onClick={async () => {
+                              if (!guardianPhone.trim() || guardianPhone.trim().length < 2) {
+                                setError('Please enter at least 2 characters to search');
+                                return;
+                              }
+                              
+                              try {
+                                // Search for existing guardian using Algolia
+                                const organizationId = userData?.roles[0]?.organizationId;
+                                if (!organizationId) return;
+                                
+                                const results = await searchUsersAlgolia({
+                                  query: guardianPhone.trim(),
+                                  organizationId,
+                                  filters: {
+                                    role: 'guardian'
+                                  },
+                                  page: 0,
+                                  hitsPerPage: 10
+                                });
+                                
+                                if (results.users.length > 0) {
+                                  // Convert first result to User format for display
+                                  const foundGuardian = results.users[0];
+                                  const guardianUser: User = {
+                                    id: foundGuardian.objectID,
+                                    name: foundGuardian.name,
+                                    email: foundGuardian.email || '',
+                                    phone: foundGuardian.phone,
+                                    roles: foundGuardian.roleDetails || [],
+                                    createdAt: foundGuardian.createdAt ? 
+                                      { 
+                                        toDate: () => new Date(foundGuardian.createdAt!), 
+                                        seconds: Math.floor((foundGuardian.createdAt || 0) / 1000),
+                                        nanoseconds: 0,
+                                        toMillis: () => foundGuardian.createdAt || 0,
+                                        isEqual: () => false,
+                                        toJSON: () => ({ seconds: Math.floor((foundGuardian.createdAt || 0) / 1000), nanoseconds: 0 })
+                                      } as any : undefined,
+                                    updatedAt: foundGuardian.updatedAt ? 
+                                      { 
+                                        toDate: () => new Date(foundGuardian.updatedAt!), 
+                                        seconds: Math.floor((foundGuardian.updatedAt || 0) / 1000),
+                                        nanoseconds: 0,
+                                        toMillis: () => foundGuardian.updatedAt || 0,
+                                        isEqual: () => false,
+                                        toJSON: () => ({ seconds: Math.floor((foundGuardian.updatedAt || 0) / 1000), nanoseconds: 0 })
+                                      } as any : undefined
+                                  };
+                                  setGuardianSearchResult(guardianUser);
+                                } else {
+                                  setGuardianSearchResult(null);
+                                }
+                              } catch (error) {
+                                console.error('Error searching guardian:', error);
+                                setError('Failed to search for guardian');
+                              }
+                            }}
+                            disabled={!guardianPhone.trim() || guardianPhone.trim().length < 2}
+                          >
+                            Search
+                          </Button>
                         </div>
                         
-                        {/* Guardian Search and Creation */}
-                        <div className="border-t border-secondary-200 pt-4">
-                          <div className="flex items-center gap-2 mb-3">
-                            <svg className="w-5 h-5 text-secondary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
-                            <span className="text-sm font-medium text-secondary-700">Search or Create Guardian</span>
-                          </div>
-                          
-                          <div className="space-y-3">
-                            <div className="flex gap-2">
-                              <Input
-                                placeholder="Enter guardian's phone number"
-                                value={guardianPhone}
-                                onChange={(e) => setGuardianPhone(e.target.value)}
-                                className="flex-1"
-                              />
+                        {/* Search Result */}
+                        {guardianSearchResult && (
+                          <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-3">
+                                <Avatar size="md">
+                                  {getInitials(guardianSearchResult.name)}
+                                </Avatar>
+                                <div className="flex-1">
+                                  <div className="text-lg font-medium text-green-900">{guardianSearchResult.name}</div>
+                                  <div className="text-sm text-green-700">{guardianSearchResult.email}</div>
+                                  {guardianSearchResult.phone && (
+                                    <div className="text-sm text-green-700">{guardianSearchResult.phone}</div>
+                                  )}
+                                </div>
+                              </div>
                               <Button
-                                variant="outline"
-                                onClick={async () => {
-                                  if (!guardianPhone.trim()) {
-                                    setError('Please enter a phone number');
-                                    return;
+                                size="sm"
+                                onClick={() => {
+                                  if (!formData.guardianId.includes(guardianSearchResult.id)) {
+                                    setFormData({
+                                      ...formData,
+                                      guardianId: [...formData.guardianId, guardianSearchResult.id]
+                                    });
                                   }
-                                  
-                                  try {
-                                    // Search for existing guardian by phone
-                                    const existingGuardian = users.find(user => 
-                                      user.phone === guardianPhone.trim() && 
-                                      user.roles.some(role => 
-                                        Array.isArray(role.role) ? role.role.includes('guardian') : role.role === 'guardian'
-                                      )
-                                    );
-                                    
-                                    if (existingGuardian) {
-                                      setGuardianSearchResult(existingGuardian);
-                                      setShowCreateGuardian(false);
-                                    } else {
-                                      setGuardianSearchResult(null);
-                                      setShowCreateGuardian(true);
-                                      setNewGuardianData({
-                                        name: '',
-                                        email: '',
-                                        phone: guardianPhone.trim()
-                                      });
-                                    }
-                                  } catch (error) {
-                                    console.error('Error searching guardian:', error);
-                                    setError('Failed to search for guardian');
-                                  }
+                                  setGuardianSearchResult(null);
+                                  setGuardianPhone('');
                                 }}
-                                disabled={!guardianPhone.trim()}
+                                disabled={formData.guardianId.includes(guardianSearchResult.id)}
                               >
-                                Search
+                                {formData.guardianId.includes(guardianSearchResult.id) ? 'Already Linked' : 'Link Guardian'}
                               </Button>
                             </div>
-                            
-                            {/* Search Result - Existing Guardian */}
-                            {guardianSearchResult && (
-                              <div className="p-3 bg-green-50 rounded-lg border border-green-200">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center space-x-3">
-                                    <Avatar size="sm">
-                                      {getInitials(guardianSearchResult.name)}
-                                    </Avatar>
-                                    <div>
-                                      <div className="text-sm font-medium text-green-900">{guardianSearchResult.name}</div>
-                                      <div className="text-xs text-green-700">{guardianSearchResult.email}</div>
-                                      <div className="text-xs text-green-700">{guardianSearchResult.phone}</div>
-                                    </div>
-                                  </div>
-                                  <Button
-                                    size="sm"
-                                    onClick={() => {
-                                      if (!formData.guardianId.includes(guardianSearchResult.id)) {
-                                        setFormData({
-                                          ...formData,
-                                          guardianId: [...formData.guardianId, guardianSearchResult.id]
-                                        });
-                                      }
-                                      setGuardianSearchResult(null);
-                                      setGuardianPhone('');
-                                    }}
-                                    disabled={formData.guardianId.includes(guardianSearchResult.id)}
-                                  >
-                                    {formData.guardianId.includes(guardianSearchResult.id) ? 'Already Linked' : 'Link Guardian'}
-                                  </Button>
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Create New Guardian */}
-                            {showCreateGuardian && (
-                              <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-                                <div className="flex items-center gap-2 mb-3">
-                                  <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                                  </svg>
-                                  <span className="text-sm font-medium text-blue-900">Create New Guardian</span>
-                                </div>
-                                
-                                <div className="space-y-3">
-                                  <Input
-                                    label="Guardian Name"
-                                    value={newGuardianData.name}
-                                    onChange={(e) => setNewGuardianData({
-                                      ...newGuardianData,
-                                      name: e.target.value
-                                    })}
-                                    required
-                                    placeholder="Enter guardian's full name"
-                                  />
-                                  
-                                  <Input
-                                    label="Guardian Email (Optional)"
-                                    type="email"
-                                    value={newGuardianData.email}
-                                    onChange={(e) => setNewGuardianData({
-                                      ...newGuardianData,
-                                      email: e.target.value
-                                    })}
-                                    placeholder="Enter guardian's email (optional)"
-                                  />
-                                  
-                                  <Input
-                                    label="Guardian Phone"
-                                    value={newGuardianData.phone}
-                                    onChange={(e) => setNewGuardianData({
-                                      ...newGuardianData,
-                                      phone: e.target.value
-                                    })}
-                                    required
-                                    placeholder="Guardian's phone number"
-                                  />
-                                  
-                                  <div className="flex gap-2">
-                                    <Button
-                                      variant="outline"
-                                      onClick={() => {
-                                        setShowCreateGuardian(false);
-                                        setNewGuardianData({ name: '', email: '', phone: '' });
-                                        setGuardianPhone('');
-                                      }}
-                                    >
-                                      Cancel
-                                    </Button>
-                                    <Button
-                                      onClick={async () => {
-                                        if (!newGuardianData.name || !newGuardianData.phone) {
-                                          setError('Guardian name and phone number are required');
-                                          return;
-                                        }
-                                        
-                                        try {
-                                          setGuardianCreateLoading(true);
-                                          
-                                          // Create guardian user
-                                          const organizationId = userData?.roles[0]?.organizationId;
-                                          if (!organizationId) {
-                                            setError('Organization not found');
-                                            return;
-                                          }
-                                          
-                                          // Generate unique ID for the new guardian
-                                          const guardianId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-                                          
-                                          const newGuardian = await createUser({
-                                            id: guardianId,
-                                            email: newGuardianData.email,
-                                            name: newGuardianData.name,
-                                            phone: newGuardianData.phone,
-                                            roles: [{
-                                              role: ['guardian'],
-                                              organizationId: organizationId,
-                                              academyId: []
-                                            }]
-                                          });
-                                          
-                                          // Add to guardians list with proper typing
-                                          const guardianWithTimestamps: User = {
-                                            ...newGuardian,
-                                            createdAt: new Date() as any,
-                                            updatedAt: new Date() as any
-                                          };
-                                          setGuardians(prev => [...prev, guardianWithTimestamps]);
-                                          
-                                          // Link to current player
-                                          setFormData({
-                                            ...formData,
-                                            guardianId: [...formData.guardianId, newGuardian.id]
-                                          });
-                                          
-                                          // Reset form
-                                          setShowCreateGuardian(false);
-                                          setNewGuardianData({ name: '', email: '', phone: '' });
-                                          setGuardianPhone('');
-                                          
-                                        } catch (error) {
-                                          console.error('Error creating guardian:', error);
-                                          setError('Failed to create guardian');
-                                        } finally {
-                                          setGuardianCreateLoading(false);
-                                        }
-                                      }}
-                                      loading={guardianCreateLoading}
-                                      disabled={!newGuardianData.name || !newGuardianData.phone}
-                                    >
-                                      {guardianCreateLoading ? 'Creating...' : 'Create & Link Guardian'}
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
                           </div>
-                        </div>
+                        )}
                         
+                        {guardianPhone.trim().length >= 2 && !guardianSearchResult && (
+                          <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                            <div className="text-sm text-yellow-800">
+                              No guardian found matching "{guardianPhone}"
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Linked Guardians Display */}
                         {formData.guardianId.length > 0 && (
-                          <div className="mt-4 p-3 bg-primary-50 rounded-lg border border-primary-200">
-                            <div className="flex items-center gap-2 text-sm text-primary-700">
+                          <div className="mt-4 p-4 bg-primary-50 rounded-lg border border-primary-200">
+                            <div className="flex items-center gap-2 text-sm text-primary-700 mb-3">
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                               </svg>
                               <span className="font-medium">
-                                {formData.guardianId.length} guardian(s) selected
+                                {formData.guardianId.length} guardian(s) linked to this player
                               </span>
+                            </div>
+                            <div className="space-y-2">
+                              {formData.guardianId.map((guardianId) => {
+                                // First check if guardian is in local guardians state
+                                let guardian = guardians.find(g => g.id === guardianId);
+                                
+                                // If not found, check if it's the recently searched guardian
+                                if (!guardian && guardianSearchResult && guardianSearchResult.id === guardianId) {
+                                  guardian = guardianSearchResult;
+                                }
+                                
+                                return guardian ? (
+                                  <div key={guardianId} className="flex items-center justify-between bg-white p-3 rounded border">
+                                    <div className="flex items-center space-x-3">
+                                      <Avatar size="sm">
+                                        {getInitials(guardian.name)}
+                                      </Avatar>
+                                      <div>
+                                        <div className="text-sm font-medium text-gray-900">{guardian.name}</div>
+                                        <div className="text-xs text-gray-600">{guardian.email}</div>
+                                        {guardian.phone && (
+                                          <div className="text-xs text-gray-600">{guardian.phone}</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setFormData({
+                                          ...formData,
+                                          guardianId: formData.guardianId.filter(id => id !== guardianId)
+                                        });
+                                      }}
+                                    >
+                                      Unlink
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <LinkedGuardianLoader
+                                    key={guardianId}
+                                    guardianId={guardianId}
+                                    onUnlink={() => {
+                                      setFormData({
+                                        ...formData,
+                                        guardianId: formData.guardianId.filter(id => id !== guardianId)
+                                      });
+                                    }}
+                                  />
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -1682,8 +2592,8 @@ const Users: React.FC = () => {
                       onClick={handleNext}
                       disabled={
                         activeStep === 0 ? !formData.name : 
-                        activeStep === 1 ? formData.roles.length === 0 :
-                        activeStep === 2 ? (
+                        (activeStep === 1 && !isRolePreset) ? formData.roles.length === 0 :
+                        ((activeStep === 1 && isRolePreset) || (activeStep === 2 && !isRolePreset)) ? (
                           formData.roles.includes('player') ? false :
                           formData.roles.every(role => role === 'guardian') ? 
                             (!formData.email || !formData.phone) :
@@ -1705,12 +2615,15 @@ const Users: React.FC = () => {
                         formData.roles.length === 0 || 
                         (!formData.roles.includes('player') && !formData.roles.every(role => role === 'guardian') && (!formData.email || !formData.phone || !formData.password)) ||
                         (!formData.roles.includes('player') && formData.roles.every(role => role === 'guardian') && (!formData.email || !formData.phone)) ||
-                        (isPlayerRole && activeStep === 3 && !isParameterFieldsValid())
+                        (isPlayerRole && ((activeStep === 2 && isRolePreset) || (activeStep === 3 && !isRolePreset)) && !isParameterFieldsValid())
                       }
                       icon={<SaveIcon />}
                       className="bg-gradient-to-r from-success-600 to-success-700 hover:from-success-700 hover:to-success-800 px-8 py-3 shadow-lg"
                     >
-                      {submitLoading ? 'Creating User...' : 'Create User'}
+                      {submitLoading ? 
+                        (dialogMode === 'edit' ? 'Updating User...' : 'Creating User...') : 
+                        (dialogMode === 'edit' ? 'Update User' : 'Create User')
+                      }
                     </Button>
                   )}
                 </div>
