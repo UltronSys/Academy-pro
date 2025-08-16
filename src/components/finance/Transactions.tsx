@@ -18,12 +18,18 @@ import {
   getTransactionSummary 
 } from '../../services/transactionService';
 import { calculateUserOutstandingBalance } from '../../services/receiptService';
+import { createGuardianPaymentTransaction } from '../../services/guardianFinanceService';
 import { Transaction, Player, Settings, User, Receipt } from '../../types';
+import { 
+  searchTransactions, 
+  syncTransactionToAlgolia, 
+  deleteTransactionFromAlgolia,
+  isAlgoliaTransactionConfigured 
+} from '../../services/algoliaTransactionService';
+import { searchUsers } from '../../services/algoliaService';
 import { doc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { getPlayersByOrganization } from '../../services/playerService';
 import { getSettingsByOrganization } from '../../services/settingsService';
-import { getUserById, getUsersByOrganization } from '../../services/userService';
 import { getPendingDebitReceipts } from '../../services/receiptService';
 
 
@@ -43,6 +49,10 @@ const Transactions: React.FC = () => {
   const [defaultCurrency, setDefaultCurrency] = useState<string>('USD');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [algoliaSearching, setAlgoliaSearching] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalTransactions, setTotalTransactions] = useState(0);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ 
     isOpen: boolean; 
@@ -80,10 +90,14 @@ const Transactions: React.FC = () => {
     playerId: string;
     playerName: string;
     amount: number;
-    outstandingBalance: number; // Net outstanding amount (debits - credits)
+    outstandingBalance: number; // Raw outstanding debits
     availableCredits: number; // Available credit balance
+    netBalance: number; // Net amount (positive = owes, negative = credit balance, zero = balanced)
     userRef: any;
   }[]>([]);
+
+  // Guardian payment state  
+  const [guardianGeneralPaymentAmount, setGuardianGeneralPaymentAmount] = useState<string>('');
 
   const handlePlayerSelectionChange = async (playerIds: string[], playerNames: string[]) => {
     setSelectedPlayerIds(playerIds);
@@ -116,23 +130,99 @@ const Transactions: React.FC = () => {
       try {
         setLoading(true);
         
-        // Load transactions
-        let transactionsData: Transaction[];
-        if (selectedAcademy?.id) {
-          transactionsData = await getTransactionsByAcademy(selectedOrganization.id, selectedAcademy.id);
-        } else {
-          transactionsData = await getTransactionsByOrganization(selectedOrganization.id);
-        }
-        setTransactions(transactionsData);
+        // Always use Algolia for transactions
+        console.log('📊 Using Algolia for transaction management');
+        await performAlgoliaSearch();
         
-        // Load players for the transaction form
-        const playersData = await getPlayersByOrganization(selectedOrganization.id);
+        // Sync existing transactions to Algolia in background
+        const transactionsData = selectedAcademy?.id 
+          ? await getTransactionsByAcademy(selectedOrganization.id, selectedAcademy.id)
+          : await getTransactionsByOrganization(selectedOrganization.id);
+        
+        console.log(`🔄 Syncing ${transactionsData.length} transactions to Algolia`);
+        transactionsData.forEach(transaction => {
+          syncTransactionToAlgolia(transaction).catch(console.error);
+        });
+        
+        // Load players and users from Algolia
+        console.log('📊 Loading players and users from Algolia');
+        
+        // Load players (users with player role)
+        console.log('🔍 Searching for players in organization:', selectedOrganization.id);
+        const playersSearchResult = await searchUsers({
+          organizationId: selectedOrganization.id,
+          filters: { role: 'player' },
+          hitsPerPage: 1000 // Get all players
+        });
+        console.log('🔍 Algolia players search result:', {
+          totalFound: playersSearchResult.totalUsers,
+          players: playersSearchResult.users.map(u => ({ id: u.objectID, name: u.name, roles: u.roles }))
+        });
+        
+        // Convert Algolia user records to Player format
+        const playersData = playersSearchResult.users.map(user => ({
+          id: user.objectID,
+          name: user.name,
+          email: user.email || '',
+          phone: user.phone || '',
+          userId: user.objectID,
+          organizationId: selectedOrganization.id,
+          academyId: user.academies || (selectedAcademy?.id ? [selectedAcademy.id] : []),
+          status: user.status || 'active',
+          dob: new Date(), // Default date - not stored in Algolia user index
+          gender: '', // Default empty - not stored in Algolia user index
+          guardianId: [], // Default empty array - not stored in Algolia user index
+          playerParameters: {}, // Default empty parameters
+          createdAt: user.createdAt ? { toDate: () => new Date(user.createdAt!) } : { toDate: () => new Date() },
+          updatedAt: user.updatedAt ? { toDate: () => new Date(user.updatedAt!) } : undefined
+        } as unknown as Player));
         setPlayers(playersData);
         
-        // Load users for the payment maker
-        const usersData = await getUsersByOrganization(selectedOrganization.id);
-        console.log('Transactions: Loaded users for PaymentMaker:', usersData.length, usersData);
+        // Load all users (players, guardians, coaches, etc.)
+        console.log('🔍 Searching for all users in organization:', selectedOrganization.id);
+        const usersSearchResult = await searchUsers({
+          organizationId: selectedOrganization.id,
+          hitsPerPage: 1000 // Get all users
+        });
+        console.log('🔍 Algolia all users search result:', {
+          totalFound: usersSearchResult.totalUsers,
+          users: usersSearchResult.users.map(u => ({ 
+            id: u.objectID, 
+            name: u.name, 
+            roles: u.roles,
+            roleDetails: u.roleDetails?.map(r => r.role).flat() 
+          }))
+        });
+        
+        // Convert Algolia user records to User format
+        const usersData = usersSearchResult.users.map(user => ({
+          id: user.objectID,
+          name: user.name,
+          email: user.email || '',
+          phone: user.phone || '',
+          roles: user.roleDetails || [],
+          createdAt: user.createdAt ? { toDate: () => new Date(user.createdAt!) } : { toDate: () => new Date() },
+          updatedAt: user.updatedAt ? { toDate: () => new Date(user.updatedAt!) } : undefined
+        } as unknown as User));
+        
+        console.log('Transactions: Loaded from Algolia:', {
+          players: playersData.length,
+          users: usersData.length
+        });
         setUsers(usersData);
+        
+        // Debug: Also check if we can find players from all users (fallback)
+        const allUsersWithPlayerRole = usersData.filter(user => 
+          user.roles?.some(role => 
+            Array.isArray(role.role) ? role.role.includes('player') : role.role === 'player'
+          )
+        );
+        
+        console.log('🔍 Players found via different methods:', {
+          viaRoleFilter: playersData.length,
+          viaAllUsersFilter: allUsersWithPlayerRole.length,
+          totalUsersLoaded: usersData.length
+        });
         
         // Load payment methods and currency from settings
         const settingsData = await getSettingsByOrganization(selectedOrganization.id);
@@ -161,6 +251,76 @@ const Transactions: React.FC = () => {
 
     loadData();
   }, [selectedOrganization?.id, selectedAcademy?.id]);
+  
+  // Perform Algolia search
+  const performAlgoliaSearch = async () => {
+    if (!selectedOrganization?.id) return;
+    
+    try {
+      setAlgoliaSearching(true);
+      
+      const searchResults = await searchTransactions({
+        query: searchTerm,
+        organizationId: selectedOrganization.id,
+        academyId: selectedAcademy?.id,
+        filters: {
+          type: filterType as any,
+          status: filterStatus as any,
+          dateRange: dateRange as any
+        },
+        page: currentPage,
+        hitsPerPage: 10
+      });
+      
+      // Convert Algolia records back to Transaction format
+      const transactionsData = searchResults.transactions.map(record => ({
+        id: record.objectID,
+        description: record.description,
+        amount: record.amount,
+        type: record.type,
+        status: record.status,
+        paymentMethod: record.paymentMethod,
+        organizationId: selectedOrganization.id,
+        academyId: record.academyId,
+        transactionOwner: record.transactionOwner ? {
+          name: record.transactionOwner.name,
+          userRef: record.transactionOwner.userId ? doc(db, 'users', record.transactionOwner.userId) : undefined
+        } : undefined,
+        handler: record.handler ? {
+          name: record.handler.name,
+          userRef: record.handler.userId ? doc(db, 'users', record.handler.userId) : undefined
+        } : undefined,
+        paymentMaker: record.paymentMaker,
+        playerPayments: record.playerPayments,
+        date: record.date ? { toDate: () => new Date(record.date) } : undefined,
+        createdAt: { toDate: () => new Date(record.createdAt) },
+        updatedAt: record.updatedAt ? { toDate: () => new Date(record.updatedAt!) } : undefined
+      } as Transaction));
+      
+      setTransactions(transactionsData);
+      setTotalTransactions(searchResults.totalTransactions);
+      setTotalPages(searchResults.totalPages);
+      
+      console.log(`🔍 Algolia search completed: ${searchResults.totalTransactions} results in ${searchResults.processingTimeMS}ms`);
+    } catch (error) {
+      console.error('Algolia search error:', error);
+      showToast('Search error. Please check your Algolia configuration.', 'error');
+      setTransactions([]);
+    } finally {
+      setAlgoliaSearching(false);
+    }
+  };
+  
+  // Trigger Algolia search when filters change
+  useEffect(() => {
+    if (selectedOrganization?.id) {
+      const debounceTimer = setTimeout(() => {
+        performAlgoliaSearch();
+      }, 300); // Debounce search
+      
+      return () => clearTimeout(debounceTimer);
+    }
+  }, [searchTerm, filterStatus, filterType, dateRange, currentPage, selectedAcademy?.id]);
   
   // Load deleted transactions
   const loadDeletedTransactions = async () => {
@@ -198,6 +358,7 @@ const Transactions: React.FC = () => {
     setSelectedPaymentMaker(null);
     setPlayerPayments([]);
     setPlayerBalances({});
+    setGuardianGeneralPaymentAmount('');
   };
 
   const handleViewTransaction = async (transaction: Transaction) => {
@@ -252,8 +413,27 @@ const Transactions: React.FC = () => {
     { value: 'year', label: 'This Year' },
   ];
 
-  const getStatusColor = (status: Transaction['status']) => {
-    switch (status) {
+  const getStatusColor = (transaction: Transaction) => {
+    // For completed income transactions, differentiate between payments and available credits
+    if (transaction.status === 'completed' && transaction.type === 'income') {
+      const description = transaction.description?.toLowerCase() || '';
+      
+      // Check if this creates available credit (excess payment)
+      if (description.includes('excess') || description.includes('credit')) {
+        return 'primary'; // Blue for available credit
+      }
+      
+      // Check if this was applied to existing invoices
+      if (description.includes('applied to') || description.includes('payment by')) {
+        return 'success'; // Green for payments applied to invoices
+      }
+      
+      // Default for completed income
+      return 'success';
+    }
+    
+    // Standard status colors for other cases
+    switch (transaction.status) {
       case 'completed':
         return 'success';
       case 'pending':
@@ -264,6 +444,39 @@ const Transactions: React.FC = () => {
         return 'secondary';
       default:
         return 'secondary';
+    }
+  };
+
+  const getStatusDisplayText = (transaction: Transaction) => {
+    if (transaction.status === 'completed' && transaction.type === 'income') {
+      const description = transaction.description?.toLowerCase() || '';
+      
+      // Check if this creates available credit
+      if (description.includes('excess') || description.includes('credit')) {
+        return 'Available Credit';
+      }
+      
+      // Check if this was applied to existing invoices
+      if (description.includes('applied to')) {
+        return 'Payment Applied';
+      }
+      
+      // General payment completed
+      return 'Payment Completed';
+    }
+    
+    // Standard status text for other cases
+    switch (transaction.status) {
+      case 'completed':
+        return 'Completed';
+      case 'pending':
+        return 'Pending';
+      case 'failed':
+        return 'Failed';
+      case 'cancelled':
+        return 'Cancelled';
+      default:
+        return transaction.status;
     }
   };
 
@@ -301,12 +514,27 @@ const Transactions: React.FC = () => {
       return;
     }
 
-    // Amount validation - different for PaymentMaker vs manual input
-    if (type === 'income' && selectedPaymentMaker && playerPayments.length > 0) {
+    // Amount validation - different for PaymentMaker vs guardian payment vs manual input
+    if (type === 'income' && selectedPaymentMaker) {
       // For PaymentMaker transactions, validate that we have valid payments
       const totalAmount = playerPayments.reduce((sum, p) => sum + p.amount, 0);
-      if (totalAmount <= 0) {
-        showToast('Please enter payment amounts for at least one player', 'error');
+      const guardianAmount = selectedPaymentMaker.type === 'guardian' && guardianGeneralPaymentAmount 
+        ? parseFloat(guardianGeneralPaymentAmount) || 0 
+        : 0;
+      
+      if (totalAmount <= 0 && guardianAmount <= 0) {
+        showToast('Please enter payment amounts for at least one player or use general payment', 'error');
+        return;
+      }
+    } else if (type === 'income' && selectedPaymentMaker?.type === 'guardian' && guardianGeneralPaymentAmount) {
+      // For guardian payment transactions, validate guardian selection and amount
+      if (!selectedPaymentMaker.userRef) {
+        showToast('Please select a guardian', 'error');
+        return;
+      }
+      const guardianAmount = parseFloat(guardianGeneralPaymentAmount);
+      if (isNaN(guardianAmount) || guardianAmount <= 0) {
+        showToast('Please enter a valid payment amount for the guardian', 'error');
         return;
       }
     } else {
@@ -341,32 +569,64 @@ const Transactions: React.FC = () => {
       let newTransaction: Transaction;
 
       if (type === 'income') {
-        // Income transactions now require using PaymentMaker
-        if (!selectedPaymentMaker) {
-          showToast('Please select who is making the payment', 'error');
+        if (selectedPaymentMaker?.type === 'guardian' && guardianGeneralPaymentAmount && parseFloat(guardianGeneralPaymentAmount) > 0) {
+          // Guardian general payment
+          const guardianAmount = parseFloat(guardianGeneralPaymentAmount);
+          const guardianPaymentResult = await createGuardianPaymentTransaction(
+            selectedPaymentMaker.userRef.id,
+            guardianAmount,
+            paymentMethod,
+            handler,
+            description.trim(),
+            selectedOrganization.id,
+            selectedAcademy?.id
+          );
+          
+          newTransaction = guardianPaymentResult.transaction;
+          
+          // Show payment distribution summary
+          const { paymentResult } = guardianPaymentResult;
+          let distributionSummary = `Payment distributed: ${paymentResult.distributedAmount.toFixed(2)} across ${paymentResult.distributions.length} players, ${paymentResult.playersFullyPaid} fully paid`;
+          if (paymentResult.excessAmount > 0) {
+            distributionSummary += `, ${paymentResult.excessAmount.toFixed(2)} as guardian credit`;
+          }
+          showToast(distributionSummary, 'success');
+          
+        } else if (selectedPaymentMaker && playerPayments.length > 0) {
+          // PaymentMaker transactions
+          if (!selectedPaymentMaker) {
+            showToast('Please select who is making the payment', 'error');
+            return;
+          }
+          
+          if (playerPayments.length === 0) {
+            showToast('Please add at least one player payment', 'error');
+            return;
+          }
+          
+          const validPayments = playerPayments.filter(p => p.amount > 0);
+          const guardianAmount = selectedPaymentMaker.type === 'guardian' && guardianGeneralPaymentAmount 
+            ? parseFloat(guardianGeneralPaymentAmount) || 0 
+            : 0;
+          
+          if (validPayments.length === 0 && guardianAmount <= 0) {
+            showToast('Please enter payment amounts for at least one player or use general payment', 'error');
+            return;
+          }
+          
+          newTransaction = await createMultiPlayerPaymentTransaction(
+            selectedPaymentMaker,
+            validPayments,
+            paymentMethod,
+            handler,
+            selectedOrganization.id,
+            selectedAcademy?.id,
+            true // linkToPendingDebitReceipt
+          );
+        } else {
+          showToast('Please select a payment method (individual payments or guardian general payment)', 'error');
           return;
         }
-        
-        if (playerPayments.length === 0) {
-          showToast('Please add at least one player payment', 'error');
-          return;
-        }
-        
-        const validPayments = playerPayments.filter(p => p.amount > 0);
-        if (validPayments.length === 0) {
-          showToast('Please enter payment amounts for at least one player', 'error');
-          return;
-        }
-        
-        newTransaction = await createMultiPlayerPaymentTransaction(
-          selectedPaymentMaker,
-          validPayments,
-          paymentMethod,
-          handler,
-          selectedOrganization.id,
-          selectedAcademy?.id,
-          true // linkToPendingDebitReceipt
-        );
       } else if (type === 'expense') {
         // For expense, we need a vendor
         const vendorName = vendor || 'Unknown Vendor';
@@ -389,6 +649,9 @@ const Transactions: React.FC = () => {
         return;
       }
       setTransactions(prev => [newTransaction, ...prev]);
+      
+      // Sync new transaction to Algolia
+      syncTransactionToAlgolia(newTransaction).catch(console.error);
       
       // Summary refresh removed for cleaner UI
       // const summaryData = await getTransactionSummary(selectedOrganization.id);
@@ -468,6 +731,9 @@ const Transactions: React.FC = () => {
       await softDeleteTransaction(transactionId, deletedBy);
       setTransactions(prev => prev.filter(transaction => transaction.id !== transactionId));
       
+      // Remove from Algolia
+      deleteTransactionFromAlgolia(transactionId).catch(console.error);
+      
       showToast('Transaction deleted successfully. You can restore it from the deleted transactions view.', 'success');
       setConfirmModal(null);
     } catch (error) {
@@ -507,6 +773,12 @@ const Transactions: React.FC = () => {
           transactionsData = await getTransactionsByOrganization(selectedOrganization.id);
         }
         setTransactions(transactionsData);
+        
+        // Re-sync restored transaction to Algolia
+        const restoredTransaction = transactionsData.find(t => t.id === transactionId);
+        if (restoredTransaction) {
+          syncTransactionToAlgolia(restoredTransaction).catch(console.error);
+        }
       }
       
       showToast('Transaction restored successfully', 'success');
@@ -519,44 +791,8 @@ const Transactions: React.FC = () => {
     }
   };
 
-  const filteredTransactions = transactions.filter(transaction => {
-    const matchesSearch = 
-      (transaction.description?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
-      (transaction.transactionOwner?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
-      (transaction.handler?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
-      // Support old format
-      ((transaction as any).title?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false);
-    
-    const matchesStatus = filterStatus === 'all' || transaction.status === filterStatus;
-    const matchesType = filterType === 'all' || transaction.type === filterType;
-    const matchesAcademy = !selectedAcademy || transaction.academyId === selectedAcademy.id || !transaction.academyId;
-    
-    // Simple date filtering
-    let matchesDate = true;
-    if (dateRange !== 'all') {
-      const today = new Date();
-      const transactionDate = transaction.createdAt.toDate();
-      
-      switch (dateRange) {
-        case 'today':
-          matchesDate = transactionDate.toDateString() === today.toDateString();
-          break;
-        case 'week':
-          const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-          matchesDate = transactionDate >= weekAgo;
-          break;
-        case 'month':
-          matchesDate = transactionDate.getMonth() === today.getMonth() && 
-                       transactionDate.getFullYear() === today.getFullYear();
-          break;
-        case 'year':
-          matchesDate = transactionDate.getFullYear() === today.getFullYear();
-          break;
-      }
-    }
-    
-    return matchesSearch && matchesStatus && matchesType && matchesAcademy && matchesDate;
-  });
+  // Algolia handles all filtering - no client-side filtering needed
+  const filteredTransactions = transactions;
 
   const columns = [
     { 
@@ -574,6 +810,21 @@ const Transactions: React.FC = () => {
           <div className="font-medium text-secondary-900">
             {transaction.description || (transaction as any).title || 'No description'}
           </div>
+          {/* Add context for income transactions */}
+          {transaction.type === 'income' && (
+            <div className="text-xs text-secondary-500 mt-1">
+              {(() => {
+                const description = transaction.description?.toLowerCase() || '';
+                if (description.includes('excess') || description.includes('credit')) {
+                  return '💳 Creates available credit for future use';
+                } else if (description.includes('applied to')) {
+                  return '✅ Applied to existing invoices';
+                } else {
+                  return '💰 Payment received';
+                }
+              })()}
+            </div>
+          )}
           <div className="text-sm text-secondary-600">
             {transaction.handler?.name ? `by ${transaction.handler.name}` : ''}
           </div>
@@ -626,6 +877,15 @@ const Transactions: React.FC = () => {
       render: (transaction: Transaction) => (
         <Badge variant={getTypeColor(transaction.type)}>
           {transaction.type}
+        </Badge>
+      )
+    },
+    { 
+      key: 'status', 
+      header: 'Status',
+      render: (transaction: Transaction) => (
+        <Badge variant={getStatusColor(transaction)}>
+          {getStatusDisplayText(transaction)}
         </Badge>
       )
     },
@@ -770,6 +1030,9 @@ const Transactions: React.FC = () => {
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-secondary-900">
           {showDeletedTransactions ? 'Deleted Transactions' : 'Transactions'}
+          <span className="ml-2 text-sm font-normal text-primary-600">
+            (Powered by Algolia)
+          </span>
         </h2>
         <div className="flex items-center space-x-3">
           <Button 
@@ -823,8 +1086,17 @@ const Transactions: React.FC = () => {
       </div>
       )}
 
+      {/* Search Stats */}
+      {totalTransactions > 0 && !showDeletedTransactions && (
+        <div className="text-sm text-secondary-600">
+          Found {totalTransactions} transactions
+          {searchTerm && ` matching "${searchTerm}"`}
+        </div>
+      )}
+
+
       {/* Transactions Table */}
-      {loading ? (
+      {loading || algoliaSearching ? (
         <div className="flex justify-center items-center min-h-96">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
         </div>
@@ -834,10 +1106,35 @@ const Transactions: React.FC = () => {
             data={showDeletedTransactions ? deletedTransactions : filteredTransactions}
             columns={showDeletedTransactions ? deletedColumns : columns}
             emptyMessage={showDeletedTransactions ? "No deleted transactions found" : "No transactions found"}
-            showPagination={true}
+            showPagination={false}
             itemsPerPage={10}
           />
         </Card>
+      )}
+
+      {/* Algolia Pagination */}
+      {totalPages > 1 && !showDeletedTransactions && (
+        <div className="flex justify-center items-center space-x-2 mt-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+            disabled={currentPage === 0}
+          >
+            Previous
+          </Button>
+          <span className="text-sm text-secondary-600">
+            Page {currentPage + 1} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
+            disabled={currentPage >= totalPages - 1}
+          >
+            Next
+          </Button>
+        </div>
       )}
 
       {/* Export Button */}
@@ -885,8 +1182,8 @@ const Transactions: React.FC = () => {
                     <div>
                       <Label className="text-sm font-medium text-secondary-700">Status</Label>
                       <div className="mt-1">
-                        <Badge variant={getStatusColor(viewTransaction.status)}>
-                          {viewTransaction.status}
+                        <Badge variant={getStatusColor(viewTransaction)}>
+                          {getStatusDisplayText(viewTransaction)}
                         </Badge>
                       </div>
                     </div>
@@ -1087,8 +1384,11 @@ const Transactions: React.FC = () => {
                       selectedPaymentMaker={selectedPaymentMaker}
                       playerPayments={playerPayments}
                       currency={defaultCurrency}
+                      onGuardianGeneralPaymentChange={setGuardianGeneralPaymentAmount}
+                      guardianGeneralPaymentAmount={guardianGeneralPaymentAmount}
                     />
                   )}
+
                   
                   
                   {/* Vendor field - show for expense transactions */}

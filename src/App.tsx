@@ -14,6 +14,7 @@ import UserDetails from './components/users/UserDetails';
 import Settings from './components/settings/Settings';
 import Finance from './components/finance/Finance';
 import PlayerDetails from './components/finance/PlayerDetails';
+import GuardianDetails from './components/finance/GuardianDetails';
 
 
 function App() {
@@ -98,6 +99,16 @@ function App() {
                 <ProtectedRoute requiredResource="finance" requiredAction="read">
                   <DashboardLayout>
                     <PlayerDetails />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/finance/guardian/:guardianId" 
+              element={
+                <ProtectedRoute requiredResource="finance" requiredAction="read">
+                  <DashboardLayout>
+                    <GuardianDetails />
                   </DashboardLayout>
                 </ProtectedRoute>
               } 

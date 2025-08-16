@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button, Label, Select, Input, Card } from '../ui';
 import { User, Player } from '../../types';
-import { getPlayersByGuardianId } from '../../services/playerService';
 import { calculateUserOutstandingBalance } from '../../services/receiptService';
 import { getUserStoredOutstandingAndCredits, recalculateAndUpdateUserOutstandingAndCredits } from '../../services/userService';
+import { searchUsers } from '../../services/algoliaService';
 import { useApp } from '../../contexts/AppContext';
 import { doc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -12,8 +12,9 @@ interface PlayerPayment {
   playerId: string;
   playerName: string;
   amount: number;
-  outstandingBalance: number; // Net outstanding amount (debits - credits)
+  outstandingBalance: number; // Raw outstanding debits
   availableCredits: number; // Available credit balance
+  netBalance: number; // Net amount (positive = owes, negative = credit balance, zero = balanced)
   userRef: any;
 }
 
@@ -33,6 +34,9 @@ interface PaymentMakerProps {
   } | null;
   playerPayments: PlayerPayment[];
   currency?: string;
+  // Guardian general payment props
+  onGuardianGeneralPaymentChange?: (amount: string) => void;
+  guardianGeneralPaymentAmount?: string;
 }
 
 const PaymentMaker: React.FC<PaymentMakerProps> = ({
@@ -42,7 +46,9 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
   onPlayerPaymentsChange,
   selectedPaymentMaker,
   playerPayments,
-  currency = 'USD'
+  currency = 'USD',
+  onGuardianGeneralPaymentChange,
+  guardianGeneralPaymentAmount = ''
 }) => {
   const { selectedOrganization } = useApp();
   const [guardianPlayers, setGuardianPlayers] = useState<Player[]>([]);
@@ -51,10 +57,18 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
   const [selectedAdditionalPlayerId, setSelectedAdditionalPlayerId] = useState('');
   const [loadingGuardianData, setLoadingGuardianData] = useState(false);
   const [loadingAdditionalPlayer, setLoadingAdditionalPlayer] = useState(false);
+  const [guardianBalance, setGuardianBalance] = useState<{
+    outstandingDebits: number;
+    availableCredits: number;
+    netBalance: number;
+  } | null>(null);
   
   // Search and filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [userTypeFilter, setUserTypeFilter] = useState<'all' | 'players' | 'guardians'>('all');
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [selectedSearchUser, setSelectedSearchUser] = useState<User | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
 
   // Helper function to get balance info - optimized for speed
   const getBalanceInfo = async (userId: string, organizationId: string) => {
@@ -110,10 +124,25 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
     : [];
 
 
+  // Handle click outside to close search results
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setShowSearchResults(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
   useEffect(() => {
     const loadGuardianPlayersAndBalances = async () => {
       if (!selectedPaymentMaker || selectedPaymentMaker.type !== 'guardian') {
         setGuardianPlayers([]);
+        setGuardianBalance(null);
         // Don't clear playerPayments here if it's a player type - it's handled in handlePaymentMakerChange
         if (selectedPaymentMaker?.type !== 'player') {
           onPlayerPaymentsChange([]);
@@ -125,22 +154,74 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
       try {
         setLoadingGuardianData(true);
         
-        // Get players linked to this guardian
-        const linkedPlayers = await getPlayersByGuardianId(selectedPaymentMaker.userRef.id);
+        // Load complete player data from Firestore to get guardian relationships
+        // The players prop from Transactions may not have complete guardian data
+        console.log('📊 Loading complete player data to find guardian relationships for:', selectedPaymentMaker.userRef.id);
+        console.log('📊 Available players in props:', players.length);
+        console.log('📊 Sample player guardianId data from props:', players.slice(0, 3).map(p => ({
+          id: p.id,
+          userId: p.userId,
+          guardianId: p.guardianId
+        })));
+        
+        // Import and load full player data
+        const { getPlayersByOrganization } = await import('../../services/playerService');
+        const fullPlayersData = await getPlayersByOrganization(selectedOrganization!.id);
+        console.log('📊 Full player data loaded from Firestore:', fullPlayersData.length);
+        console.log('📊 Sample full player guardianId data:', fullPlayersData.slice(0, 3).map(p => ({
+          id: p.id,
+          userId: p.userId,
+          guardianId: p.guardianId
+        })));
+        
+        // Filter players that have this guardian ID
+        const linkedPlayers = fullPlayersData.filter(player => {
+          // Filter players that have this guardian ID - ensure guardianId exists and is array
+          if (!player.guardianId || !Array.isArray(player.guardianId)) {
+            console.log(`❌ Player ${player.id} has no valid guardianId array:`, player.guardianId);
+            return false;
+          }
+          const hasGuardian = player.guardianId.includes(selectedPaymentMaker.userRef.id);
+          console.log(`🔍 Player ${player.id} guardianId:`, player.guardianId, 'includes', selectedPaymentMaker.userRef.id, ':', hasGuardian);
+          return hasGuardian;
+        });
+        
+        console.log(`📊 Found ${linkedPlayers.length} players linked to guardian`);
         setGuardianPlayers(linkedPlayers);
+
+        // Load guardian's own balance (excess payments/credits)
+        if (selectedOrganization?.id) {
+          try {
+            const guardianBalanceInfo = await getBalanceInfo(selectedPaymentMaker.userRef.id, selectedOrganization.id);
+            setGuardianBalance({
+              outstandingDebits: guardianBalanceInfo.outstandingDebits,
+              availableCredits: guardianBalanceInfo.availableCredits,
+              netBalance: guardianBalanceInfo.netBalance
+            });
+            console.log(`💰 Guardian balance loaded:`, guardianBalanceInfo);
+          } catch (error) {
+            console.error('❌ Error loading guardian balance:', error);
+            setGuardianBalance(null);
+          }
+        }
 
         // Fetch all player balances in parallel for faster loading
         const balancePromises = linkedPlayers.map(async (player) => {
+          console.log(`💰 Loading balance for player ${player.id} (userId: ${player.userId})`);
           const balanceInfo = selectedOrganization?.id 
             ? await getBalanceInfo(player.userId, selectedOrganization.id)
             : { outstandingDebits: 0, availableCredits: 0, netBalance: 0, pendingDebitReceipts: [], creditReceipts: [] };
           
+          const playerUser = users.find(u => u.id === player.userId);
+          console.log(`💰 Player ${player.id} user found:`, playerUser ? playerUser.name : 'NOT FOUND');
+          
           return {
             playerId: player.id,
-            playerName: users.find(u => u.id === player.userId)?.name || 'Unknown Player',
+            playerName: playerUser?.name || 'Unknown Player',
             amount: 0,
             outstandingBalance: balanceInfo.outstandingDebits,
             availableCredits: balanceInfo.availableCredits,
+            netBalance: balanceInfo.netBalance,
             userRef: doc(db, 'users', player.userId)
           };
         });
@@ -156,7 +237,7 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
     };
 
     loadGuardianPlayersAndBalances();
-  }, [selectedPaymentMaker, users]);
+  }, [selectedPaymentMaker, users, players, selectedOrganization]);
 
   useEffect(() => {
     // Set available players for additional selection (excluding already included ones)
@@ -170,6 +251,52 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
     });
     setAvailablePlayersForSelection(available);
   }, [players, playerPayments]);
+
+  const handleSearchUserSelect = async (user: User, type: 'player' | 'guardian') => {
+    setSelectedSearchUser(user);
+    setSearchTerm(user.name);
+    setShowSearchResults(false);
+
+    const paymentMaker = {
+      name: user.name,
+      userRef: doc(db, 'users', user.id),
+      type: type
+    };
+
+    onPaymentMakerChange(paymentMaker);
+
+    // If it's a player making payment, add them to the payment list
+    if (type === 'player') {
+      // Clear previous payments first to show loading state
+      onPlayerPaymentsChange([]);
+      setLoadingGuardianData(true); // Reuse loading state for player as well
+      
+      try {
+        const player = players.find(p => p.userId === user.id);
+        if (player) {
+          // Get detailed balance info including outstanding debits and credits
+          const balanceInfo = selectedOrganization?.id 
+            ? await getBalanceInfo(user.id, selectedOrganization.id)
+            : { outstandingDebits: 0, availableCredits: 0, netBalance: 0, pendingDebitReceipts: [], creditReceipts: [] };
+          
+          onPlayerPaymentsChange([{
+            playerId: player.id,
+            playerName: user.name,
+            amount: 0,
+            outstandingBalance: balanceInfo.outstandingDebits,
+            availableCredits: balanceInfo.availableCredits,
+            netBalance: balanceInfo.netBalance,
+            userRef: doc(db, 'users', user.id)
+          }]);
+        }
+      } catch (error) {
+        console.error('Error loading player balance:', error);
+        onPlayerPaymentsChange([]); // Clear on error
+      } finally {
+        setLoadingGuardianData(false);
+      }
+    }
+  };
 
   const handlePaymentMakerChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
@@ -210,6 +337,7 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
             amount: 0,
             outstandingBalance: balanceInfo.outstandingDebits,
             availableCredits: balanceInfo.availableCredits,
+            netBalance: balanceInfo.netBalance,
             userRef: doc(db, 'users', userId)
           }]);
         }
@@ -255,6 +383,7 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
         amount: 0,
         outstandingBalance: balanceInfo.outstandingDebits,
         availableCredits: balanceInfo.availableCredits,
+        netBalance: balanceInfo.netBalance,
         userRef: doc(db, 'users', player.userId)
       };
 
@@ -274,7 +403,11 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
   };
 
   const getTotalAmount = () => {
-    return playerPayments.reduce((total, payment) => total + payment.amount, 0);
+    const playerTotal = playerPayments.reduce((total, payment) => total + payment.amount, 0);
+    const guardianAmount = selectedPaymentMaker?.type === 'guardian' && guardianGeneralPaymentAmount 
+      ? parseFloat(guardianGeneralPaymentAmount) || 0 
+      : 0;
+    return playerTotal + guardianAmount;
   };
 
   return (
@@ -283,74 +416,160 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
       <div>
         <Label htmlFor="paymentMaker">Who is making the payment?</Label>
         
-        {/* Search and Filter Controls */}
-        <div className="flex gap-3 mt-2 mb-3">
-          <div className="flex-1">
-            <Input
-              type="text"
-              placeholder="Search by name or email..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full"
-            />
-          </div>
-          <div className="w-40">
-            <Select
-              value={userTypeFilter}
-              onChange={(e) => setUserTypeFilter(e.target.value as 'all' | 'players' | 'guardians')}
-            >
-              <option value="all">All Users</option>
-              <option value="players">Players Only</option>
-              <option value="guardians">Guardians Only</option>
-            </Select>
-          </div>
+        {/* Search Input */}
+        <div className="relative mt-2" ref={searchContainerRef}>
+          <Input
+            type="text"
+            placeholder="Type player or guardian name to search..."
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setShowSearchResults(e.target.value.length > 0);
+              if (e.target.value.length === 0) {
+                setSelectedSearchUser(null);
+                onPaymentMakerChange(null);
+              }
+            }}
+            onFocus={() => setShowSearchResults(searchTerm.length > 0)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setShowSearchResults(false);
+              }
+            }}
+            className="w-full"
+          />
+          
+          {/* Search Results Dropdown */}
+          {showSearchResults && searchTerm.length > 0 && (
+            <div className="absolute z-50 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto mt-1">
+              {/* Filter Tabs */}
+              <div className="flex border-b border-gray-200">
+                <button
+                  type="button"
+                  className={`flex-1 px-3 py-2 text-xs font-medium ${
+                    userTypeFilter === 'players' 
+                      ? 'bg-primary-50 text-primary-700 border-b-2 border-primary-500' 
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  onClick={() => setUserTypeFilter('players')}
+                >
+                  Players
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 px-3 py-2 text-xs font-medium ${
+                    userTypeFilter === 'guardians' 
+                      ? 'bg-primary-50 text-primary-700 border-b-2 border-primary-500' 
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  onClick={() => setUserTypeFilter('guardians')}
+                >
+                  Guardians
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 px-3 py-2 text-xs font-medium ${
+                    userTypeFilter === 'all' 
+                      ? 'bg-primary-50 text-primary-700 border-b-2 border-primary-500' 
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  onClick={() => setUserTypeFilter('all')}
+                >
+                  All
+                </button>
+              </div>
+
+              {/* Search Results */}
+              <div className="max-h-48 overflow-y-auto">
+                {/* Players */}
+                {(userTypeFilter === 'all' || userTypeFilter === 'players') && filteredPlayersAsUsers.length > 0 && (
+                  <div>
+                    {userTypeFilter === 'all' && <div className="px-3 py-1 text-xs font-medium text-gray-500 bg-gray-50">Players</div>}
+                    {filteredPlayersAsUsers.map(player => (
+                      <button
+                        key={`player:${player.id}`}
+                        type="button"
+                        className="w-full px-3 py-2 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
+                        onClick={() => handleSearchUserSelect(player, 'player')}
+                      >
+                        <div className="font-medium text-gray-900">{player.name}</div>
+                        <div className="text-sm text-gray-500">{player.email}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Guardians */}
+                {(userTypeFilter === 'all' || userTypeFilter === 'guardians') && filteredGuardians.length > 0 && (
+                  <div>
+                    {userTypeFilter === 'all' && <div className="px-3 py-1 text-xs font-medium text-gray-500 bg-gray-50">Guardians</div>}
+                    {filteredGuardians.map(guardian => (
+                      <button
+                        key={`guardian:${guardian.id}`}
+                        type="button"
+                        className="w-full px-3 py-2 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
+                        onClick={() => handleSearchUserSelect(guardian, 'guardian')}
+                      >
+                        <div className="font-medium text-gray-900">{guardian.name}</div>
+                        <div className="text-sm text-gray-500">{guardian.email}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* All Users (when no specific roles found) */}
+                {userTypeFilter === 'all' && filteredGuardians.length === 0 && filteredPlayersAsUsers.length === 0 && filteredAllUsers.length > 0 && (
+                  <div>
+                    <div className="px-3 py-1 text-xs font-medium text-gray-500 bg-gray-50">All Users</div>
+                    {filteredAllUsers.map(user => (
+                      <button
+                        key={`user:${user.id}`}
+                        type="button"
+                        className="w-full px-3 py-2 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
+                        onClick={() => handleSearchUserSelect(user, 'guardian')}
+                      >
+                        <div className="font-medium text-gray-900">{user.name}</div>
+                        <div className="text-sm text-gray-500">{user.email}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* No Results */}
+                {filteredGuardians.length === 0 && filteredPlayersAsUsers.length === 0 && filteredAllUsers.length === 0 && (
+                  <div className="px-3 py-4 text-center text-sm text-gray-500">
+                    No users found matching "{searchTerm}"
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
-        <Select
-          id="paymentMaker"
-          value={selectedPaymentMaker ? `${selectedPaymentMaker.type}:${selectedPaymentMaker.userRef.id}` : ''}
-          onChange={handlePaymentMakerChange}
-          required
-        >
-          <option value="">Select payment maker...</option>
-          
-          {/* Show filtered results based on search and filter */}
-          {filteredAllUsers.length > 0 && (
-            <optgroup label="All Users">
-              {filteredAllUsers.map(user => (
-                <option key={`user:${user.id}`} value={`guardian:${user.id}`}>
-                  {user.name} ({user.email})
-                </option>
-              ))}
-            </optgroup>
-          )}
-          
-          {filteredGuardians.length > 0 && (
-            <optgroup label="Guardians">
-              {filteredGuardians.map(guardian => (
-                <option key={`guardian:${guardian.id}`} value={`guardian:${guardian.id}`}>
-                  {guardian.name} ({guardian.email})
-                </option>
-              ))}
-            </optgroup>
-          )}
-          
-          {filteredPlayersAsUsers.length > 0 && (
-            <optgroup label="Players">
-              {filteredPlayersAsUsers.map(player => (
-                <option key={`player:${player.id}`} value={`player:${player.id}`}>
-                  {player.name} ({player.email})
-                </option>
-              ))}
-            </optgroup>
-          )}
-          
-          {/* Show message when no results found */}
-          {searchTerm && filteredGuardians.length === 0 && filteredPlayersAsUsers.length === 0 && filteredAllUsers.length === 0 && (
-            <option value="" disabled>
-              No users found matching "{searchTerm}"
-            </option>
-          )}
-        </Select>
+
+        {/* Selected User Display */}
+        {selectedSearchUser && (
+          <div className="mt-2 p-3 bg-primary-50 border border-primary-200 rounded-md">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium text-primary-900">{selectedSearchUser.name}</div>
+                <div className="text-sm text-primary-700">{selectedSearchUser.email}</div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSelectedSearchUser(null);
+                  setSearchTerm('');
+                  onPaymentMakerChange(null);
+                }}
+                className="text-primary-600 hover:text-primary-700"
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Loading Payment Maker Data */}
@@ -462,6 +681,54 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
             </Button>
           </div>
 
+          {/* Guardian General Payment Field */}
+          {selectedPaymentMaker.type === 'guardian' && onGuardianGeneralPaymentChange && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <Label htmlFor="guardianGeneralPayment" className="text-sm font-medium text-blue-900 mb-2 block">
+                    General Payment for Guardian
+                  </Label>
+                  <p className="text-xs text-blue-700 mb-3">
+                    This payment will be automatically distributed across linked players with outstanding balances (highest balance first)
+                  </p>
+                </div>
+                <div className="ml-4">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-blue-700">{currency}</span>
+                    <Input
+                      id="guardianGeneralPayment"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={guardianGeneralPaymentAmount}
+                      onChange={(e) => onGuardianGeneralPaymentChange(e.target.value)}
+                      className="w-32 border-blue-300 focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Guardian Available Credits Display */}
+          {selectedPaymentMaker.type === 'guardian' && guardianBalance && guardianBalance.availableCredits > 0 && (
+            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-green-900">Available Guardian Credits</div>
+                  <div className="text-xs text-green-700">
+                    Excess payments that can be applied to future invoices
+                  </div>
+                </div>
+                <div className="text-lg font-bold text-green-700">
+                  {currency} {guardianBalance.availableCredits.toFixed(2)}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-3">
             {playerPayments.map((payment) => (
               <Card key={payment.playerId} className="p-4">
@@ -469,19 +736,15 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
                   <div className="flex-1">
                     <div className="font-medium text-secondary-900">{payment.playerName}</div>
                     <div className="text-xs text-secondary-600 space-y-1">
-                      {/* Outstanding Balance (what they owe) */}
-                      <div className={`${payment.outstandingBalance > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        Outstanding: {payment.outstandingBalance > 0 
-                          ? `Owes ${currency} ${payment.outstandingBalance.toFixed(2)}` 
-                          : 'Up to date'
+                      {/* Net Balance (what they owe or credit they have) */}
+                      <div className={`${payment.netBalance > 0 ? 'text-red-600' : payment.netBalance < 0 ? 'text-blue-600' : 'text-green-600'}`}>
+                        {payment.netBalance > 0 
+                          ? `Owes ${currency} ${payment.netBalance.toFixed(2)}` 
+                          : payment.netBalance < 0 
+                            ? `Credit Balance: ${currency} ${Math.abs(payment.netBalance).toFixed(2)}`
+                            : 'Up to date'
                         }
                       </div>
-                      {/* Available Credits */}
-                      {payment.availableCredits > 0 && (
-                        <div className="text-blue-600">
-                          Available Credit: {currency} {payment.availableCredits.toFixed(2)}
-                        </div>
-                      )}
                     </div>
                   </div>
                   

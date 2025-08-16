@@ -1,4 +1,4 @@
-# Academy Management System
+# Vijaro - Sports Management System
 
 A comprehensive multi-academy sports management system built with React and Firebase.
 
@@ -34,7 +34,7 @@ Before running this project, make sure you have:
 
 ```bash
 git clone <repository-url>
-cd academy-management
+cd vijaro
 npm install
 ```
 

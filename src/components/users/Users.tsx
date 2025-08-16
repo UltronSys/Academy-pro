@@ -266,7 +266,7 @@ const Users: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
 
   const { userData } = useAuth();
-  const { selectedOrganization, selectedAcademy } = useApp();
+  const { selectedOrganization, selectedAcademy, setSelectedAcademy } = useApp();
 
   const isRolePreset = formData.roles.length > 0 && dialogMode === 'add' && activeTab !== 0;
   const isPlayerRole = formData.roles.includes('player');
@@ -417,21 +417,8 @@ const Users: React.FC = () => {
 
   useEffect(() => {
     if (userData) {
-      // For guardian tab, only search if there's a search term of at least 2 characters
-      if (activeTab === 3) {
-        if (searchTerm && searchTerm.trim().length >= 2) {
-          performAlgoliaSearch(searchTerm, 0);
-        } else {
-          // Clear results for guardian tab when no valid search term
-          setUsers([]);
-          setTotalUsers(0);
-          setCurrentPage(0);
-          setTotalPages(0);
-        }
-      } else {
-        // For other tabs, search normally
-        performAlgoliaSearch(searchTerm, 0);
-      }
+      // Search normally for all tabs including guardians
+      performAlgoliaSearch(searchTerm, 0);
       
       loadAcademies();
       loadSettings();
@@ -910,8 +897,8 @@ const Users: React.FC = () => {
           setError('Password must be at least 6 characters');
           return;
         }
-      } else if (!isPlayerRole && isOnlyGuardian && (!formData.email || !formData.phone)) {
-        setError('Email and phone are required for guardian role');
+      } else if (!isPlayerRole && isOnlyGuardian && (!formData.email && !formData.phone)) {
+        setError('Either email or phone is required for guardian role');
         return;
       }
     }
@@ -1545,21 +1532,8 @@ const Users: React.FC = () => {
                 }
                 
                 const timer = setTimeout(() => {
-                  // For guardian tab, only search if there's a valid search term
-                  if (activeTab === 3) {
-                    if (query && query.trim().length >= 2) {
-                      performAlgoliaSearch(query, 0);
-                    } else {
-                      // Clear results for guardian tab when no valid search term
-                      setUsers([]);
-                      setTotalUsers(0);
-                      setCurrentPage(0);
-                      setTotalPages(0);
-                    }
-                  } else {
-                    // For other tabs, search normally
-                    performAlgoliaSearch(query, 0);
-                  }
+                  // Search normally for all tabs including guardians
+                  performAlgoliaSearch(query, 0);
                 }, 300); // 300ms debounce
                 
                 setSearchDebounceTimer(timer);
@@ -1597,11 +1571,34 @@ const Users: React.FC = () => {
                 {totalUsers} users found
                 {searchTerm && ` matching "${searchTerm}"`}
                 {roleFilter !== 'all' && ` with role "${roleFilter}"`}
+                {selectedAcademy && ` in "${selectedAcademy.name}"`}
               </span>
               <span className="text-xs flex items-center gap-2">
                 <span className="text-success-600 font-semibold">⚡ Algolia Search</span>
                 📄 Showing 10 per page
               </span>
+            </div>
+          )}
+          
+          {/* Academy Filter Indicator */}
+          {selectedAcademy && (
+            <div className="flex items-center justify-between text-sm bg-primary-50 border border-primary-200 px-4 py-3 rounded-lg mt-2">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                </svg>
+                <span className="text-primary-700 font-medium">
+                  Filtering by academy: <strong>{selectedAcademy.name}</strong>
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedAcademy(null)}
+                className="text-primary-600 hover:text-primary-700 hover:bg-primary-100"
+              >
+                Show All Academies
+              </Button>
             </div>
           )}
         </CardBody>
@@ -1620,9 +1617,7 @@ const Users: React.FC = () => {
             data={users}
             columns={columns}
             emptyMessage={
-              activeTab === 3 && (!searchTerm || searchTerm.trim().length < 2)
-                ? 'Type at least 2 characters in the search box above to find guardians.'
-                : searchTerm || roleFilter !== 'all' 
+              searchTerm || roleFilter !== 'all' 
                 ? `No users found matching your criteria.`
                 : users.length === 0 
                   ? 'No users found. Start by adding your first user.'
@@ -2163,6 +2158,66 @@ const Users: React.FC = () => {
                       </p>
                     </div>
                     
+                    {/* Academy Selection - Show when role is preset */}
+                    {isRolePreset && (
+                      <div className="bg-secondary-50 rounded-xl p-6 mb-6">
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">
+                            <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
+                            </svg>
+                          </div>
+                          <div>
+                            <h3 className="font-semibold text-secondary-900">Academy Access</h3>
+                            <p className="text-xs text-secondary-600 font-normal">Select which academies this user can access</p>
+                          </div>
+                        </div>
+                        
+                        <Select
+                          value=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              const updatedAcademyIds = [...formData.academyId, e.target.value];
+                              setFormData({ ...formData, academyId: updatedAcademyIds });
+                            }
+                          }}
+                        >
+                          <option value="">Select an academy</option>
+                          {academies.filter(academy => !formData.academyId.includes(academy.id)).map((academy) => (
+                            <option key={academy.id} value={academy.id}>
+                              {academy.name}
+                            </option>
+                          ))}
+                        </Select>
+                        
+                        {formData.academyId.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            {formData.academyId.map((academyId) => {
+                              const academy = academies.find(a => a.id === academyId);
+                              return (
+                                <Badge key={academyId} variant="primary" className="flex items-center gap-2">
+                                  {academy?.name || academyId}
+                                  <button
+                                    onClick={() => setFormData({
+                                      ...formData,
+                                      academyId: formData.academyId.filter(id => id !== academyId)
+                                    })}
+                                    className="text-primary-600 hover:text-primary-800"
+                                  >
+                                    <DeleteIcon />
+                                  </button>
+                                </Badge>
+                              );
+                            })}
+                          </div>
+                        )}
+                        
+                        <p className="text-xs text-secondary-600 font-normal mt-3">
+                          {formData.academyId.length === 0 ? 'Organization-wide access' : `${formData.academyId.length} academy(ies) selected`}
+                        </p>
+                      </div>
+                    )}
+
                     <div className="bg-secondary-50 rounded-xl p-6">
                       <div className="flex items-center gap-3 mb-6">
                         <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">

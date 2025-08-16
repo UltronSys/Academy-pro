@@ -17,7 +17,8 @@
       "Bash(timeout 10s npm start:*)",
       "Bash(timeout:*)",
       "Bash(rm:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(npm ls:*)"
     ],
     "deny": []
   }

@@ -374,32 +374,52 @@ export const deleteReceipt = async (userId: string, receiptId: string): Promise<
   }
 };
 
-// Helper function to link sibling receipts
+// Helper function to link sibling receipts and check if debit is fully paid
 export const linkSiblingReceipts = async (
   debitUserId: string,
   debitReceiptId: string,
   creditUserId: string,
-  creditReceiptId: string
+  creditReceiptId: string,
+  isFullPayment: boolean = true // Whether this payment fully covers the debit
 ): Promise<void> => {
   try {
+    console.log('🔗 linkSiblingReceipts: Linking and updating status...', {
+      debitUserId,
+      debitReceiptId,
+      creditUserId,
+      creditReceiptId
+    });
+    
     const batch = writeBatch(db);
     
     const debitRef = doc(db, 'users', debitUserId, 'receipts', debitReceiptId);
     const creditRef = doc(db, 'users', creditUserId, 'receipts', creditReceiptId);
     
-    // Update debit receipt
-    batch.update(debitRef, {
+    // Update debit receipt - add credit link and update status if fully paid
+    const debitUpdate: any = {
       siblingReceiptRefs: [creditRef],
       updatedAt: serverTimestamp()
-    });
+    };
     
-    // Update credit receipt
+    // Only mark as completed if this is a full payment
+    if (isFullPayment) {
+      debitUpdate.status = 'completed';
+      console.log('📋 linkSiblingReceipts: Marking debit receipt as completed (full payment)');
+    } else {
+      debitUpdate.status = 'paid'; // Partially paid but not fully completed
+      console.log('📋 linkSiblingReceipts: Marking debit receipt as paid (partial payment)');
+    }
+    
+    batch.update(debitRef, debitUpdate);
+    
+    // Update credit receipt - link to debit receipt
     batch.update(creditRef, {
       siblingReceiptRefs: [debitRef],
       updatedAt: serverTimestamp()
     });
     
     await batch.commit();
+    console.log('✅ linkSiblingReceipts: Successfully linked receipts and marked debit as completed');
   } catch (error) {
     console.error('Error linking sibling receipts:', error);
     throw error;
@@ -450,6 +470,11 @@ export const getPendingDebitReceipts = async (
     const pendingDebits: Receipt[] = [];
 
     for (const debitReceipt of debitReceipts) {
+      // Skip completed debits - they are fully paid and not pending
+      if (debitReceipt.status === 'completed') {
+        continue;
+      }
+      
       // Calculate total credits applied to this debit
       const linkedCredits = organizationReceipts.filter(creditReceipt =>
         creditReceipt.type === 'credit' &&
@@ -460,6 +485,7 @@ export const getPendingDebitReceipts = async (
       const totalCreditsApplied = linkedCredits.reduce((sum, credit) => sum + credit.amount, 0);
       const remainingDebt = debitReceipt.amount - totalCreditsApplied;
       
+      // Only include debits with remaining balance (active or partially paid)
       if (remainingDebt > 0) {
         pendingDebits.push(debitReceipt);
       }
@@ -504,9 +530,13 @@ export const createCreditReceipt = async (
       organizationId: organizationId || '',
       invoiceDate: Timestamp.now(),
       paidDate: Timestamp.now(),
-      parentTransactionRef: parentTransactionRef || undefined,
       siblingReceiptRefs: siblingReceiptRef ? [siblingReceiptRef] : []
     };
+
+    // Only add parentTransactionRef if it's defined
+    if (parentTransactionRef) {
+      creditReceiptData.parentTransactionRef = parentTransactionRef;
+    }
 
     // Only add academyId if it's defined
     if (academyId !== undefined) {
@@ -517,16 +547,56 @@ export const createCreditReceipt = async (
     
     console.log('✅ createCreditReceipt: Credit receipt created:', creditReceipt.id);
     
-    // If there's a sibling debit receipt, link them and update debit status to 'paid'
+    // If there's a sibling debit receipt, link them and update debit status
     if (siblingReceiptRef) {
       console.log('🔗 Linking credit receipt to debit receipt and updating status...');
-      await linkSiblingReceipts(
-        userId, // debitUserId
-        siblingReceiptRef.id, // debitReceiptId
-        userId, // creditUserId (same user)
-        creditReceipt.id // creditReceiptId
-      );
-      console.log('✅ Debit receipt marked as paid and linked to credit receipt');
+      
+      // Check if this is a full payment by calculating the remaining debt
+      try {
+        const debitReceiptDoc = await getDoc(siblingReceiptRef);
+        const debitReceiptData = debitReceiptDoc.data() as Receipt;
+        
+        // Get all existing credit receipts linked to this debit to calculate remaining debt
+        const userReceipts = await getReceiptsByUser(userId);
+        const existingCreditsForDebit = userReceipts.filter(r => 
+          r.type === 'credit' &&
+          r.siblingReceiptRefs &&
+          r.siblingReceiptRefs.some(ref => ref.id === siblingReceiptRef.id) &&
+          r.id !== creditReceipt.id // Don't count the current credit receipt
+        );
+        
+        const totalExistingCredits = existingCreditsForDebit.reduce((sum, r) => sum + r.amount, 0);
+        const remainingDebt = debitReceiptData.amount - totalExistingCredits;
+        const isFullPayment = amount >= remainingDebt;
+        
+        console.log('💰 Payment comparison:', {
+          debitAmount: debitReceiptData.amount,
+          existingCredits: totalExistingCredits,
+          remainingDebt: remainingDebt,
+          creditAmount: amount,
+          isFullPayment
+        });
+        
+        await linkSiblingReceipts(
+          userId, // debitUserId
+          siblingReceiptRef.id, // debitReceiptId
+          userId, // creditUserId (same user)
+          creditReceipt.id, // creditReceiptId
+          isFullPayment // Pass whether this is a full payment
+        );
+        
+        console.log(`✅ Debit receipt marked as ${isFullPayment ? 'completed' : 'paid'} and linked to credit receipt`);
+      } catch (error) {
+        console.error('Error checking debit receipt amount:', error);
+        // Fallback to not changing status if we can't check
+        await linkSiblingReceipts(
+          userId,
+          siblingReceiptRef.id,
+          userId,
+          creditReceipt.id,
+          false // Default to partial payment if we can't determine
+        );
+      }
     }
     
     // Update user balance after creating the credit receipt
@@ -541,6 +611,9 @@ export const createCreditReceipt = async (
 };
 
 // Calculate user's outstanding balance (pending debits minus available credits)
+// Type for pending debit receipts with remaining amount
+export type PendingDebitReceipt = Receipt & { remainingAmount: number };
+
 export const calculateUserOutstandingBalance = async (
   userId: string,
   organizationId: string
@@ -548,22 +621,28 @@ export const calculateUserOutstandingBalance = async (
   outstandingDebits: number;
   availableCredits: number;
   netBalance: number;
-  pendingDebitReceipts: Receipt[];
+  pendingDebitReceipts: PendingDebitReceipt[];
   creditReceipts: Receipt[];
 }> => {
   try {
     const userReceipts = await getReceiptsByUser(userId);
-    // Filter out deleted receipts and organization-specific receipts
+    // Filter out deleted receipts and get organization-specific receipts
+    // Include active, paid, and completed receipts in calculations
     const organizationReceipts = userReceipts.filter(r => 
-      r.organizationId === organizationId && r.status === 'active'
+      r.organizationId === organizationId && r.status !== 'deleted'
     );
     
     // Calculate outstanding debits by checking actual payment coverage
     const debitReceipts = organizationReceipts.filter(r => r.type === 'debit');
-    const pendingDebitReceipts: Receipt[] = [];
+    const pendingDebitReceipts: PendingDebitReceipt[] = [];
     let outstandingDebits = 0;
 
     for (const debitReceipt of debitReceipts) {
+      // Skip completed debits - they shouldn't contribute to outstanding balance
+      if (debitReceipt.status === 'completed') {
+        continue;
+      }
+      
       // Calculate total credits applied to this debit
       const linkedCredits = organizationReceipts.filter(creditReceipt =>
         creditReceipt.type === 'credit' &&
@@ -574,8 +653,15 @@ export const calculateUserOutstandingBalance = async (
       const totalCreditsApplied = linkedCredits.reduce((sum, credit) => sum + credit.amount, 0);
       const remainingDebt = debitReceipt.amount - totalCreditsApplied;
       
+      // Only include in outstanding if there's remaining debt
+      // This handles both 'active' (unpaid) and 'paid' (partially paid) statuses
       if (remainingDebt > 0) {
-        pendingDebitReceipts.push(debitReceipt);
+        // Add the debit receipt with its remaining amount
+        const pendingDebit: PendingDebitReceipt = {
+          ...debitReceipt,
+          remainingAmount: remainingDebt
+        };
+        pendingDebitReceipts.push(pendingDebit);
         outstandingDebits += remainingDebt;
       }
     }
@@ -591,8 +677,9 @@ export const calculateUserOutstandingBalance = async (
       .filter(r => !r.siblingReceiptRefs || r.siblingReceiptRefs.length === 0)
       .reduce((sum, r) => sum + r.amount, 0);
     
-    // netBalance represents what the player actually owes after applying available credits
-    const netBalance = Math.max(0, outstandingDebits - availableCredits);
+    // netBalance represents the true net financial position
+    // Positive = owes money, Negative = has credit balance, Zero = balanced
+    const netBalance = outstandingDebits - availableCredits;
     
     console.log('💰 calculateUserOutstandingBalance:', {
       userId,
@@ -764,11 +851,25 @@ export const autoApplyAvailableCredits = async (
         console.log(`🔗 autoApplyAvailableCredits: Linked entire credit receipt ${creditReceipt.id} (${creditAmountToUse}) to debit`);
       } else {
         // Partial use - need to split the credit receipt
-        // Update the original to reduce its amount
         const remainingCredit = creditReceipt.amount - creditAmountToUse;
-        await updateReceipt(userId, creditReceipt.id, { 
-          amount: remainingCredit
-        });
+        
+        if (remainingCredit > 0) {
+          // Update the original to reduce its amount and update description
+          await updateReceipt(userId, creditReceipt.id, { 
+            amount: remainingCredit,
+            description: `${creditReceipt.description || 'Available credit'} (reduced from ${creditReceipt.amount} after ${creditAmountToUse} was applied)`
+          });
+          console.log(`✂️ autoApplyAvailableCredits: Reduced credit receipt amount to ${remainingCredit}`);
+        } else {
+          // Mark the original receipt as fully consumed by linking it to the debit
+          await updateReceipt(userId, creditReceipt.id, { 
+            amount: 0,
+            siblingReceiptRefs: [siblingDebitReceiptRef],
+            description: `${creditReceipt.description || 'Available credit'} (fully consumed - applied ${creditAmountToUse} to invoice)`,
+            status: 'completed'
+          });
+          console.log(`🔗 autoApplyAvailableCredits: Marked credit receipt ${creditReceipt.id} as fully consumed`);
+        }
         
         // Create a new linked credit receipt for the used portion
         await createCreditReceipt(
@@ -788,6 +889,31 @@ export const autoApplyAvailableCredits = async (
     }
     
     console.log(`💳 autoApplyAvailableCredits: Applied ${creditToApply} credit to debit ${newDebitReceipt.id}`);
+    
+    // Update the debit receipt to reflect the credit application
+    const isFullyPaid = creditToApply >= newDebitReceipt.amount;
+    const newStatus = isFullyPaid ? 'completed' : 'paid';
+    
+    // Get all credit receipts that are now linked to this debit
+    const linkedCreditRefs = unlinkedCredits
+      .filter((_, index) => {
+        // Calculate how much credit was applied from each receipt
+        let appliedSoFar = 0;
+        for (let i = 0; i <= index; i++) {
+          appliedSoFar += Math.min(unlinkedCredits[i].amount, creditToApply - appliedSoFar);
+          if (appliedSoFar >= creditToApply) break;
+        }
+        return appliedSoFar <= creditToApply;
+      })
+      .map(credit => doc(db, 'users', userId, 'receipts', credit.id));
+    
+    // Update the debit receipt with links back to credit receipts and new status
+    await updateReceipt(userId, newDebitReceipt.id, {
+      siblingReceiptRefs: linkedCreditRefs,
+      status: newStatus
+    });
+    
+    console.log(`📋 autoApplyAvailableCredits: Updated debit receipt status to '${newStatus}' and linked ${linkedCreditRefs.length} credit receipts`);
     
     // Immediately update the user's stored balance fields to reflect the credit application
     console.log(`🔄 autoApplyAvailableCredits: Updating user balance fields after credit application`);

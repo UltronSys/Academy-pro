@@ -952,7 +952,9 @@ export const createMultiPlayerPaymentTransaction = async (
             for (const debitReceipt of pendingDebits) {
               if (remainingDebitAmount <= 0) break;
               
-              const amountToPay = Math.min(remainingDebitAmount, debitReceipt.amount);
+              // Use the remaining amount on the debit, not the full amount
+              const debitRemainingAmount = debitReceipt.remainingAmount || debitReceipt.amount;
+              const amountToPay = Math.min(remainingDebitAmount, debitRemainingAmount);
               
               // Create credit receipt linked to this debit
               const siblingDebitReceiptRef = doc(db, 'users', payment.userRef.id, 'receipts', debitReceipt.id);
@@ -964,10 +966,10 @@ export const createMultiPlayerPaymentTransaction = async (
                 siblingDebitReceiptRef,
                 organizationId,
                 academyId,
-                `Payment by ${paymentMaker.name} for ${payment.playerName} - Applied to ${debitReceipt.product?.name || 'charge'}`
+                `Payment by ${paymentMaker.name} for ${payment.playerName} - Applied to ${debitReceipt.product?.name || 'charge'} (${amountToPay === debitRemainingAmount ? 'Full payment' : 'Partial payment'})`
               );
               
-              console.log(`💳 Created credit receipt for ${amountToPay} linked to debit ${debitReceipt.id}`);
+              console.log(`💳 Created credit receipt for ${amountToPay} linked to debit ${debitReceipt.id} (remaining on debit was ${debitRemainingAmount})`);
               remainingDebitAmount -= amountToPay;
             }
           }

@@ -203,7 +203,7 @@ export interface Receipt {
   id: string;
   type: 'debit' | 'credit' | 'excess';
   amount: number;
-  status: 'active' | 'deleted'; // Receipt status - deleted receipts are ignored in balance calculations
+  status: 'active' | 'paid' | 'completed' | 'deleted'; // Receipt status - active=unpaid, paid/completed=fully paid, deleted=ignored in calculations
   product?: {
     productRef: DocumentReference;
     name: string;

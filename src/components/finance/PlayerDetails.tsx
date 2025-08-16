@@ -8,6 +8,7 @@ import { getPlayerById, updatePlayer, assignProductToPlayer, removeProductFromPl
 import { getUserById } from '../../services/userService';
 import { getReceiptsByUser } from '../../services/receiptService';
 import { getProductsByPlayer, getProductsByOrganization } from '../../services/productService';
+import { getSettingsByOrganization } from '../../services/settingsService';
 import { Player, User, Receipt, Product } from '../../types';
 import { Timestamp } from 'firebase/firestore';
 
@@ -35,6 +36,7 @@ const PlayerDetails: React.FC = () => {
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [updatingProduct, setUpdatingProduct] = useState(false);
+  const [currency, setCurrency] = useState('USD');
   
   // Product linking states
   const [showLinkProductModal, setShowLinkProductModal] = useState(false);
@@ -113,6 +115,12 @@ const PlayerDetails: React.FC = () => {
       // Set current month as default
       if (sortedMonths.length > 0) {
         setSelectedMonth(sortedMonths[0]);
+      }
+
+      // Load currency from settings
+      const settingsData = await getSettingsByOrganization(selectedOrganization.id);
+      if (settingsData?.generalSettings?.currency) {
+        setCurrency(settingsData.generalSettings.currency);
       }
 
     } catch (error) {
@@ -322,6 +330,61 @@ const PlayerDetails: React.FC = () => {
     }
   };
 
+  // Helper functions to differentiate payment types
+  const getPaymentStatusColor = (receipt: Receipt) => {
+    const description = receipt.description?.toLowerCase() || '';
+    
+    // Don't show as available credit if amount is 0 or negative
+    if (receipt.amount <= 0) {
+      return 'success'; // Green for applied payments
+    }
+    
+    // Don't show as available credit if it's linked to a debit receipt (already applied)
+    if (receipt.siblingReceiptRefs && receipt.siblingReceiptRefs.length > 0) {
+      return 'success'; // Green for applied payments
+    }
+    
+    // Check if this creates available credit (excess payment)
+    if (description.includes('excess') || description.includes('credit')) {
+      return 'primary'; // Blue for available credit
+    }
+    
+    // Check if this was applied to existing invoices
+    if (description.includes('applied to') || description.includes('payment')) {
+      return 'success'; // Green for payments applied to invoices
+    }
+    
+    // Default for completed payments
+    return 'success';
+  };
+
+  const getPaymentStatusText = (receipt: Receipt) => {
+    const description = receipt.description?.toLowerCase() || '';
+    
+    // Don't show as available credit if amount is 0 or negative
+    if (receipt.amount <= 0) {
+      return 'PAYMENT APPLIED';
+    }
+    
+    // Don't show as available credit if it's linked to a debit receipt (already applied)
+    if (receipt.siblingReceiptRefs && receipt.siblingReceiptRefs.length > 0) {
+      return 'PAYMENT APPLIED';
+    }
+    
+    // Check if this creates available credit
+    if (description.includes('excess') || description.includes('credit')) {
+      return 'AVAILABLE CREDIT';
+    }
+    
+    // Check if this was applied to existing invoices
+    if (description.includes('applied to')) {
+      return 'PAYMENT APPLIED';
+    }
+    
+    // General payment completed
+    return 'COMPLETED';
+  };
+
   const handleUnlinkProduct = async (productId: string, productName: string) => {
     if (!player || !canWrite('finance')) return;
 
@@ -382,7 +445,7 @@ const PlayerDetails: React.FC = () => {
       header: 'Amount Due',
       render: (receipt: Receipt) => (
         <div className="font-medium text-error-600">
-          ${receipt.amount.toFixed(2)}
+          {currency} {receipt.amount.toFixed(2)}
         </div>
       )
     },
@@ -392,8 +455,12 @@ const PlayerDetails: React.FC = () => {
       render: (receipt: Receipt) => {
         const getStatusColor = (status: string) => {
           switch (status) {
-            case 'paid':
+            case 'completed':
               return 'success';
+            case 'paid':
+              return 'primary'; // Blue for partially paid
+            case 'active':
+              return 'warning'; // Yellow for unpaid/active
             case 'pending':
               return 'warning';
             case 'overdue':
@@ -403,9 +470,26 @@ const PlayerDetails: React.FC = () => {
           }
         };
         
+        const getStatusText = (status: string) => {
+          switch (status) {
+            case 'completed':
+              return 'FULLY PAID';
+            case 'paid':
+              return 'PARTIALLY PAID';
+            case 'active':
+              return 'UNPAID';
+            case 'pending':
+              return 'PENDING';
+            case 'overdue':
+              return 'OVERDUE';
+            default:
+              return status.toUpperCase();
+          }
+        };
+        
         return (
-          <Badge variant={getStatusColor(receipt.status || 'pending')}>
-            {(receipt.status || 'pending').toUpperCase()}
+          <Badge variant={getStatusColor(receipt.status || 'active')}>
+            {getStatusText(receipt.status || 'active')}
           </Badge>
         );
       }
@@ -426,8 +510,23 @@ const PlayerDetails: React.FC = () => {
       key: 'description',
       header: 'Description',
       render: (receipt: Receipt) => (
-        <div className="font-medium text-secondary-900">
-          {receipt.description || receipt.product?.name || 'Payment'}
+        <div>
+          <div className="font-medium text-secondary-900">
+            {receipt.description || receipt.product?.name || 'Payment'}
+          </div>
+          {/* Add context for payment types */}
+          <div className="text-xs text-secondary-500 mt-1">
+            {(() => {
+              const description = receipt.description?.toLowerCase() || '';
+              if (description.includes('excess') || description.includes('credit')) {
+                return '💳 Creates available credit for future use';
+              } else if (description.includes('applied to')) {
+                return '✅ Applied to existing invoices';
+              } else {
+                return '💰 Payment received';
+              }
+            })()}
+          </div>
         </div>
       )
     },
@@ -436,7 +535,7 @@ const PlayerDetails: React.FC = () => {
       header: 'Amount Paid',
       render: (receipt: Receipt) => (
         <div className="font-medium text-success-600">
-          ${receipt.amount.toFixed(2)}
+          {currency} {receipt.amount.toFixed(2)}
         </div>
       )
     },
@@ -444,8 +543,8 @@ const PlayerDetails: React.FC = () => {
       key: 'status',
       header: 'Status',
       render: (receipt: Receipt) => (
-        <Badge variant="success">
-          COMPLETED
+        <Badge variant={getPaymentStatusColor(receipt)}>
+          {getPaymentStatusText(receipt)}
         </Badge>
       )
     }
@@ -548,7 +647,7 @@ const PlayerDetails: React.FC = () => {
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
                         <div className="font-medium text-secondary-900">{assignedProduct.productName}</div>
-                        <div className="text-sm text-secondary-600">Price: ${assignedProduct.price}</div>
+                        <div className="text-sm text-secondary-600">Price: {currency} {assignedProduct.price}</div>
                         
                         {isEditing ? (
                           <div className="mt-3 grid grid-cols-2 gap-4 max-w-md">
@@ -760,7 +859,7 @@ const PlayerDetails: React.FC = () => {
                       <option value="">Choose a product...</option>
                       {availableProducts.map(product => (
                         <option key={product.id} value={product.id}>
-                          {product.name} - ${product.price.toFixed(2)} ({product.productType})
+                          {product.name} - {currency} {product.price.toFixed(2)} ({product.productType})
                         </option>
                       ))}
                     </select>

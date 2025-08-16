@@ -639,7 +639,7 @@ const Signup: React.FC = () => {
           
           <div className="space-y-4">
             <h1 className="text-5xl font-bold text-white leading-tight">
-              Academy Pro
+              Vijaro
             </h1>
             <p className="text-xl text-white/90 leading-relaxed">
               Start Your Football Academy Journey Today

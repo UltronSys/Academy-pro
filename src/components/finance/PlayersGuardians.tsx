@@ -60,6 +60,31 @@ const PlayersGuardians: React.FC = () => {
     }
   }, [selectedOrganization, selectedAcademy]);
 
+  // Refresh data when the page becomes visible (user returns from transaction page)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && selectedOrganization?.id) {
+        console.log('📊 Page became visible, refreshing financial data...');
+        loadFinancialData();
+      }
+    };
+
+    const handleFocus = () => {
+      if (selectedOrganization?.id) {
+        console.log('📊 Window focused, refreshing financial data...');
+        loadFinancialData();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [selectedOrganization?.id]);
+
   const loadFinancialData = async () => {
     if (!selectedOrganization?.id) return;
 
@@ -413,8 +438,8 @@ const PlayersGuardians: React.FC = () => {
       key: 'player', 
       header: 'Player',
       render: (playerSummary: PlayerFinancialSummary) => (
-        <div className="cursor-pointer" onClick={() => navigate(`/users/${playerSummary.user.id}`)}>
-          <div className="font-medium text-secondary-900 hover:text-primary-600">{playerSummary.user.name}</div>
+        <div>
+          <div className="font-medium text-secondary-900">{playerSummary.user.name}</div>
           <div className="text-sm text-secondary-600">{playerSummary.user.email}</div>
           {playerSummary.player.createdAt && (
             <div className="text-xs text-secondary-500">
@@ -432,8 +457,7 @@ const PlayersGuardians: React.FC = () => {
           {playerSummary.guardians.length > 0 ? (
             playerSummary.guardians.map((guardian, index) => (
               <div key={guardian.id} className={`${index > 0 ? 'mt-2 pt-2 border-t' : ''}`}>
-                <div className="font-medium text-secondary-900 cursor-pointer hover:text-primary-600" 
-                     onClick={() => navigate(`/users/${guardian.id}`)}>
+                <div className="font-medium text-secondary-900">
                   {guardian.name}
                 </div>
                 <div className="text-sm text-secondary-600">{guardian.email}</div>
@@ -496,8 +520,8 @@ const PlayersGuardians: React.FC = () => {
       key: 'guardian', 
       header: 'Guardian',
       render: (guardianSummary: GuardianFinancialSummary) => (
-        <div className="cursor-pointer" onClick={() => navigate(`/users/${guardianSummary.guardian.id}`)}>
-          <div className="font-medium text-secondary-900 hover:text-primary-600">{guardianSummary.guardian.name}</div>
+        <div>
+          <div className="font-medium text-secondary-900">{guardianSummary.guardian.name}</div>
           <div className="text-sm text-secondary-600">{guardianSummary.guardian.email}</div>
           {guardianSummary.guardian.phone && (
             <div className="text-xs text-secondary-500">{guardianSummary.guardian.phone}</div>
@@ -520,8 +544,7 @@ const PlayersGuardians: React.FC = () => {
               return (
                 <div key={index} className="text-sm">
                   <div className="flex items-center space-x-2">
-                    <span className="font-medium text-secondary-900 cursor-pointer hover:text-primary-600"
-                          onClick={() => navigate(`/users/${playerSummary.user.id}`)}>
+                    <span className="font-medium text-secondary-900">
                       {playerSummary.user.name}
                     </span>
                     <Badge variant={getStatusColor(status)} className="text-xs py-0 px-1">
@@ -565,10 +588,7 @@ const PlayersGuardians: React.FC = () => {
           <Button 
             variant="ghost" 
             size="sm"
-            onClick={() => {
-              setSelectedGuardian(guardianSummary);
-              setShowDetailsModal(true);
-            }}
+            onClick={() => navigate(`/finance/guardian/${guardianSummary.guardian.id}`)}
           >
             View Details
           </Button>
@@ -832,8 +852,7 @@ const PlayersGuardians: React.FC = () => {
                           return (
                             <div key={index} className="flex justify-between items-center p-3 bg-secondary-50 rounded-lg">
                               <div>
-                                <div className="font-medium text-secondary-900 cursor-pointer hover:text-primary-600"
-                                     onClick={() => navigate(`/users/${playerSummary.user.id}`)}>
+                                <div className="font-medium text-secondary-900">
                                   {playerSummary.user.name}
                                 </div>
                                 <div className="text-sm text-secondary-600">

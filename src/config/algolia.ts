@@ -16,6 +16,7 @@ export const ALGOLIA_CONFIG = {
   INDICES: {
     USERS: process.env.REACT_APP_ALGOLIA_USERS_INDEX || 'users',
     PLAYERS: process.env.REACT_APP_ALGOLIA_PLAYERS_INDEX || 'players',
+    TRANSACTIONS: process.env.REACT_APP_ALGOLIA_TRANSACTIONS_INDEX || 'transactions',
   }
 };
 

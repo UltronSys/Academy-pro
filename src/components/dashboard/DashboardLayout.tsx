@@ -396,7 +396,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
           <SchoolIcon />
         </div>
         <div>
-          <h2 className="text-lg font-bold text-secondary-900">Academy Pro</h2>
+          <h2 className="text-lg font-bold text-secondary-900">Vijaro</h2>
           <p className="text-xs font-medium text-secondary-600">Management System</p>
         </div>
       </div>

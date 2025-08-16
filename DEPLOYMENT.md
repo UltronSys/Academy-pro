@@ -24,9 +24,9 @@
    In the Vercel dashboard, add these environment variables:
    ```
    REACT_APP_FIREBASE_API_KEY=AIzaSyA5E5MMTHVl5i4C-CaYL42lhwtzk-D7BHw
-   REACT_APP_FIREBASE_AUTH_DOMAIN=academypro-dev.firebaseapp.com
-   REACT_APP_FIREBASE_PROJECT_ID=academypro-dev
-   REACT_APP_FIREBASE_STORAGE_BUCKET=academypro-dev.firebasestorage.app
+   REACT_APP_FIREBASE_AUTH_DOMAIN=vijaro-dev.firebaseapp.com
+   REACT_APP_FIREBASE_PROJECT_ID=vijaro-dev
+   REACT_APP_FIREBASE_STORAGE_BUCKET=vijaro-dev.firebasestorage.app
    REACT_APP_FIREBASE_MESSAGING_SENDER_ID=778451716357
    REACT_APP_FIREBASE_APP_ID=1:778451716357:web:16c78dc0cde05f09f20f6c
    REACT_APP_FIREBASE_MEASUREMENT_ID=G-X93KR7ELBF
