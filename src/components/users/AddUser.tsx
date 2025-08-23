@@ -220,13 +220,11 @@ const AddUser: React.FC = () => {
       
       // Create Firebase Auth account for users who can log in
       if (hasLoginRole) {
-        console.log('Creating Firebase Auth account for user:', formData.email);
         
         // Import and use createUserAsAdmin
         const { createUserAsAdmin } = await import('../../services/authService');
         const { uid } = await createUserAsAdmin(formData.email, formData.password, formData.name);
         newUserId = uid;
-        console.log('Firebase Auth user created with ID:', newUserId);
         
         // Update user document with additional data and roles
         await updateUser(newUserId, {
@@ -252,7 +250,6 @@ const AddUser: React.FC = () => {
             academyId: formData.academyId
           }))
         });
-        console.log('Player user document created with ID:', newUserId);
       }
       
       // If creating a player, also create player record

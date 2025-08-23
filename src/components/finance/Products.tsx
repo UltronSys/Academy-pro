@@ -251,12 +251,6 @@ const Products: React.FC = () => {
   };
 
   const handlePlayerLinkingChange = (playerIds: string[], playerNames: string[]) => {
-    console.log('🔗 Products - Player linking change:', {
-      playerIds,
-      playerNames,
-      previousIds: linkingPlayerIds,
-      previousNames: linkingPlayerNames
-    });
     setLinkingPlayerIds(playerIds);
     setLinkingPlayerNames(playerNames);
   };
@@ -274,16 +268,6 @@ const Products: React.FC = () => {
 
   const handleSubmitPlayerLinking = async () => {
     if (!selectedProductForLinking) return;
-    
-    console.log('🚀 Products - Starting player linking submission:', {
-      productId: selectedProductForLinking.id,
-      productName: selectedProductForLinking.name,
-      linkingPlayerIds,
-      linkingPlayerNames,
-      invoiceGeneration,
-      invoiceDate,
-      deadlineDate
-    });
     
     // Validate dates only for scheduled invoices
     if (invoiceGeneration === 'scheduled') {

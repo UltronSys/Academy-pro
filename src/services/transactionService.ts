@@ -228,7 +228,6 @@ export const getTransactionsByOrganization = async (
   includeDeleted: boolean = false
 ): Promise<Transaction[]> => {
   try {
-    console.log('transactionService: Getting transactions for organization:', organizationId);
     
     const q = query(
       collection(db, COLLECTION_NAME), 
@@ -236,7 +235,6 @@ export const getTransactionsByOrganization = async (
     );
     const querySnapshot = await getDocs(q);
     
-    console.log('transactionService: Found', querySnapshot.size, 'transactions');
     
     let transactions = querySnapshot.docs.map(doc => ({
       id: doc.id,
@@ -783,7 +781,6 @@ export const getDeletedTransactionsByOrganization = async (organizationId: strin
     );
     const querySnapshot = await getDocs(q);
     
-    console.log('transactionService: Found', querySnapshot.size, 'deleted transactions');
     
     const transactions = querySnapshot.docs.map(doc => ({
       id: doc.id,

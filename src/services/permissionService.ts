@@ -224,6 +224,5 @@ export const getUserPermissions = async (
     });
   });
   
-  console.log(`Final permissions for roles ${userRoles}:`, permissions);
   return permissions;
 };

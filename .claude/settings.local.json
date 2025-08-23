@@ -18,7 +18,9 @@
       "Bash(timeout:*)",
       "Bash(rm:*)",
       "Bash(pkill:*)",
-      "Bash(npm ls:*)"
+      "Bash(npm ls:*)",
+      "Bash(chmod:*)",
+      "Bash(./remove_console.sh)"
     ],
     "deny": []
   }

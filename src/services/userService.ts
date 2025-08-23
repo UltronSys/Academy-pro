@@ -57,17 +57,13 @@ export const createUser = async (userData: Omit<User, 'createdAt' | 'updatedAt'>
 
 export const getUserById = async (userId: string): Promise<User | null> => {
   try {
-    console.log('getUserById: Fetching user with ID:', userId);
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);
     
     if (userSnap.exists()) {
       const userData = { id: userSnap.id, ...userSnap.data() } as User;
-      console.log('getUserById: Found user data:', userData);
-      console.log('getUserById: User roles:', userData.roles);
       return userData;
     } else {
-      console.log('getUserById: User document does not exist');
       return null;
     }
   } catch (error) {
@@ -178,7 +174,6 @@ export const getAllUsers = async (): Promise<User[]> => {
 
 export const getUsersByOrganization = async (organizationId: string): Promise<User[]> => {
   try {
-    console.log('getUsersByOrganization: Fetching users for organizationId:', organizationId);
     const usersRef = collection(db, 'users');
     const querySnapshot = await getDocs(usersRef);
     
@@ -187,16 +182,12 @@ export const getUsersByOrganization = async (organizationId: string): Promise<Us
       ...doc.data()
     })) as User[];
     
-    console.log('getUsersByOrganization: All users found:', users.length);
-    console.log('getUsersByOrganization: User data sample:', users.map(u => ({ id: u.id, name: u.name, roles: u.roles })));
     
     // Filter users who have roles in this organization
     const filteredUsers = users.filter(user => 
       user.roles && user.roles.some(role => role.organizationId === organizationId)
     );
     
-    console.log('getUsersByOrganization: Filtered users for org:', filteredUsers.length);
-    console.log('getUsersByOrganization: Filtered users:', filteredUsers.map(u => ({ id: u.id, name: u.name, roles: u.roles })));
     
     return filteredUsers;
   } catch (error) {

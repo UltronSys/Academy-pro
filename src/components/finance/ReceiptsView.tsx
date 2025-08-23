@@ -27,7 +27,6 @@ const ReceiptsView: React.FC = () => {
         
         // Load all receipts for the organization
         const receiptsData = await getReceiptsByOrganization(selectedOrganization.id);
-        console.log('Loaded receipts:', receiptsData.length);
         setReceipts(receiptsData);
         
         // Load transaction information for receipts that have parentTransactionRef

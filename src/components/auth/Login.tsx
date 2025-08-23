@@ -84,10 +84,8 @@ const Login: React.FC = () => {
       
       // Step 1: Sign in user
       await signIn(email, password);
-      console.log('User signed in successfully');
       
       // Step 2: Navigate immediately to dashboard - AuthContext will handle data loading
-      console.log('Navigating to dashboard...');
       navigate('/dashboard', { replace: true });
     } catch (error: any) {
       setError('Failed to sign in. Please check your credentials.');

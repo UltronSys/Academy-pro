@@ -53,12 +53,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshUserData = async () => {
     if (currentUser) {
       try {
-        console.log('AuthContext: Refreshing user data for user:', currentUser.uid);
         const userDoc = await getUserById(currentUser.uid);
-        console.log('AuthContext: Fetched user data:', userDoc);
-        console.log('AuthContext: User roles:', userDoc?.roles);
         setUserData(userDoc);
-        console.log('AuthContext: User data set in context');
       } catch (error) {
         console.error('Error refreshing user data:', error);
         setUserData(null);

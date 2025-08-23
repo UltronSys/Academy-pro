@@ -61,10 +61,6 @@ class AlgoliaService {
   }
 
   private initialize() {
-    console.log('🔧 Initializing Algolia service...');
-    console.log('📌 APP_ID:', ALGOLIA_CONFIG.APP_ID ? 'Set' : 'Not set');
-    console.log('📌 SEARCH_KEY:', ALGOLIA_CONFIG.SEARCH_API_KEY ? 'Set' : 'Not set');
-    console.log('📌 ADMIN_KEY:', ALGOLIA_CONFIG.ADMIN_API_KEY && ALGOLIA_CONFIG.ADMIN_API_KEY !== 'YOUR_ADMIN_KEY' ? 'Set' : 'Not set');
     
     if (!validateAlgoliaConfig()) {
       console.warn('Algolia not configured. Search functionality will be limited.');
@@ -80,16 +76,13 @@ class AlgoliaService {
 
       // Initialize admin client for write operations (if admin key is available)
       if (ALGOLIA_CONFIG.ADMIN_API_KEY && ALGOLIA_CONFIG.ADMIN_API_KEY !== 'YOUR_ADMIN_KEY') {
-        console.log('🔑 Initializing admin client with key:', ALGOLIA_CONFIG.ADMIN_API_KEY.substring(0, 8) + '...');
         this.adminClient = algoliasearch(
           ALGOLIA_CONFIG.APP_ID,
           ALGOLIA_CONFIG.ADMIN_API_KEY
         );
         this.adminUsersIndex = this.adminClient.initIndex(ALGOLIA_CONFIG.INDICES.USERS);
-        console.log('✅ Algolia admin client initialized for write operations');
       } else {
         console.warn('⚠️ Algolia Admin API Key not configured. Write operations will fail.');
-        console.warn('Current ADMIN_KEY value:', ALGOLIA_CONFIG.ADMIN_API_KEY);
       }
 
       // Initialize indices
@@ -99,7 +92,6 @@ class AlgoliaService {
       this.configureIndex();
       
       this.isInitialized = true;
-      console.log('✅ Algolia initialized successfully');
     } catch (error) {
       console.error('Failed to initialize Algolia:', error);
     }
@@ -160,7 +152,6 @@ class AlgoliaService {
       };
 
       // Note: Settings should be configured via dashboard or backend
-      console.log('Index settings configured (should be done in dashboard):', settings);
     } catch (error) {
       console.error('Error configuring index:', error);
     }
@@ -212,20 +203,9 @@ class AlgoliaService {
 
   // Search users with pagination and filters
   public async searchUsers(options: SearchOptions): Promise<SearchResults> {
-    console.log('🔍 searchUsers called with options:', options);
-    console.log('🔧 Service state:', {
-      isInitialized: this.isInitialized,
-      hasUsersIndex: !!this.usersIndex,
-      hasClient: !!this.client
-    });
     
     if (!this.isInitialized || !this.usersIndex) {
       console.warn('Algolia not initialized. Returning empty results.');
-      console.warn('Debug info:', {
-        isInitialized: this.isInitialized,
-        usersIndex: this.usersIndex,
-        client: this.client
-      });
       return {
         users: [],
         totalUsers: 0,

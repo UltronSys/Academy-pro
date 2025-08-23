@@ -55,12 +55,6 @@ const PlayerMultiSelect: React.FC<PlayerMultiSelectProps> = ({
           hitsPerPage: 20
         });
 
-        console.log('🔍 PlayerMultiSelect Search Results:', {
-          query: searchTerm,
-          totalResults: results.users.length,
-          selectedPlayerIds,
-          users: results.users.map(u => ({ id: u.objectID, name: u.name }))
-        });
 
         const playersWithNames: PlayerWithName[] = results.users
           .filter(record => !selectedPlayerIds.includes(record.objectID))
@@ -70,10 +64,6 @@ const PlayerMultiSelect: React.FC<PlayerMultiSelectProps> = ({
             email: record.email
           }));
 
-        console.log('🎯 PlayerMultiSelect Filtered Results:', {
-          filteredCount: playersWithNames.length,
-          players: playersWithNames
-        });
 
         setSearchResults(playersWithNames);
       } catch (error) {
@@ -147,12 +137,6 @@ const PlayerMultiSelect: React.FC<PlayerMultiSelectProps> = ({
       return player?.userName || `Player ${id}`;
     });
     
-    console.log('🔄 PlayerMultiSelect Selection Update:', {
-      newPlayerIds,
-      selectedNames,
-      searchResultsCount: searchResults.length,
-      selectedPlayersCount: selectedPlayers.length
-    });
     
     onSelectionChange(newPlayerIds, selectedNames);
   };

@@ -141,7 +141,7 @@ const Signup: React.FC = () => {
     imageFile: null as File | null
   });
 
-  // Academies data
+  // Academies data - Start with one required academy
   const [academies, setAcademies] = useState<AcademyData[]>([
     { name: '', country: '', city: '', location: '' }
   ]);
@@ -177,10 +177,15 @@ const Signup: React.FC = () => {
         return;
       }
     } else if (activeStep === 2) {
-      // Validate academies data
+      // Validate academies data - At least one academy is required
       const validAcademies = academies.filter(a => a.name && a.city);
       if (validAcademies.length === 0) {
-        setError('Please add at least one academy with name and city');
+        setError('At least one academy is required. Please provide academy name and city.');
+        return;
+      }
+      // Ensure the first academy (required) has all necessary fields
+      if (!academies[0].name || !academies[0].city) {
+        setError('The first academy is required. Please fill in the academy name and city.');
         return;
       }
     }
@@ -197,6 +202,11 @@ const Signup: React.FC = () => {
   };
 
   const removeAcademy = (index: number) => {
+    // Don't allow removing the last academy
+    if (academies.length <= 1) {
+      setError('At least one academy is required');
+      return;
+    }
     setAcademies(academies.filter((_, i) => i !== index));
   };
 
@@ -208,6 +218,13 @@ const Signup: React.FC = () => {
 
   const handleSubmit = async () => {
     try {
+      // Final validation - ensure at least one valid academy
+      const validAcademiesForSubmit = academies.filter(a => a.name && a.city);
+      if (validAcademiesForSubmit.length === 0) {
+        setError('At least one academy with name and city is required to complete registration');
+        return;
+      }
+      
       setError('');
       setLoading(true);
       setLoadingMessage('Creating organization...');
@@ -528,9 +545,14 @@ const Signup: React.FC = () => {
         return (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <p className="text-secondary-600 text-sm">
-                Add your football training academies
-              </p>
+              <div>
+                <p className="text-secondary-600 text-sm">
+                  Add your football training academies
+                </p>
+                <p className="text-xs text-error-500 mt-1">
+                  * At least one academy is required
+                </p>
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -547,13 +569,14 @@ const Signup: React.FC = () => {
                 <div key={index} className="p-4 border border-secondary-200 rounded-lg bg-secondary-50">
                   <div className="flex items-center justify-between mb-4">
                     <span className="text-sm font-medium text-primary-600 bg-primary-100 px-2 py-1 rounded">
-                      Academy {index + 1}
+                      Academy {index + 1} {index === 0 && <span className="text-error-500">*</span>}
                     </span>
                     {academies.length > 1 && (
                       <button
                         type="button"
                         onClick={() => removeAcademy(index)}
                         className="text-error-500 hover:text-error-700"
+                        title={index === 0 ? "Cannot remove the first academy" : "Remove academy"}
                       >
                         <TrashIcon />
                       </button>
@@ -561,8 +584,8 @@ const Signup: React.FC = () => {
                   </div>
                   <div className="space-y-3">
                     <Input
-                      placeholder="Academy Name (e.g., Manchester Training Center)"
-                      required
+                      placeholder={index === 0 ? "Academy Name (Required) - e.g., Manchester Training Center" : "Academy Name (e.g., Manchester Training Center)"}
+                      required={index === 0}
                       value={academy.name}
                       onChange={(e) => updateAcademy(index, 'name', e.target.value)}
                     />

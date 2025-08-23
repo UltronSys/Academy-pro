@@ -22,15 +22,6 @@ export const ALGOLIA_CONFIG = {
 
 // Validate configuration
 export const validateAlgoliaConfig = () => {
-  console.log('🔍 Validating Algolia config...');
-  console.log('🔧 Raw env vars:');
-  console.log('  - REACT_APP_ALGOLIA_APP_ID:', process.env.REACT_APP_ALGOLIA_APP_ID);
-  console.log('  - REACT_APP_ALGOLIA_SEARCH_KEY:', process.env.REACT_APP_ALGOLIA_SEARCH_KEY);
-  console.log('  - REACT_APP_ALGOLIA_ADMIN_KEY:', process.env.REACT_APP_ALGOLIA_ADMIN_KEY);
-  console.log('📝 ALGOLIA_CONFIG values:');
-  console.log('  - APP_ID:', ALGOLIA_CONFIG.APP_ID);
-  console.log('  - SEARCH_API_KEY:', ALGOLIA_CONFIG.SEARCH_API_KEY);
-  console.log('  - ADMIN_API_KEY:', ALGOLIA_CONFIG.ADMIN_API_KEY);
   
   const missingKeys = [];
   
@@ -46,14 +37,8 @@ export const validateAlgoliaConfig = () => {
   if (missingKeys.length > 0) {
     console.error('❌ Algolia config validation failed!');
     console.error('Missing keys:', missingKeys);
-    console.warn(
-      '⚠️ Algolia configuration missing. Please set the following environment variables:',
-      missingKeys.join(', ')
-    );
-    console.warn('Visit https://www.algolia.com/dashboard to get your API keys');
     return false;
   }
   
-  console.log('✅ Algolia config validation passed');
   return true;
 };

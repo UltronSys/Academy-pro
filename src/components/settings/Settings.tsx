@@ -216,9 +216,7 @@ const Settings: React.FC = () => {
           fieldCategories: settings.fieldCategories || []
         };
         
-        console.log('💾 Saving settings with playerStatusOptions:', settingsToSave.playerStatusOptions);
         await updateSettings(organizationId, settingsToSave);
-        console.log('✅ Settings saved successfully');
         setSuccess('Settings saved successfully!');
         setTimeout(() => setSuccess(''), 3000);
       }
@@ -259,7 +257,6 @@ const Settings: React.FC = () => {
         return;
       }
 
-      console.log('Saving academy:', academyForm);
 
       if (academyDialogMode === 'add') {
         const academyData = {
@@ -270,7 +267,6 @@ const Settings: React.FC = () => {
           imageUrl: academyForm.imageUrl?.trim() || ''
         };
         
-        console.log('Creating new academy with data:', academyData);
         await createAcademy(organizationId, academyData);
         setSuccess('Academy created successfully!');
       } else if (selectedAcademyForEdit) {
@@ -282,7 +278,6 @@ const Settings: React.FC = () => {
           imageUrl: academyForm.imageUrl?.trim() || ''
         };
         
-        console.log('Updating academy with data:', updateData);
         await updateAcademy(organizationId, selectedAcademyForEdit.id, updateData);
         setSuccess('Academy updated successfully!');
       }
@@ -324,22 +319,17 @@ const Settings: React.FC = () => {
         fieldCategories: updatedCategories
       };
       
-      console.log('Settings: Saving category, updatedSettings:', updatedSettings);
-      console.log('Settings: Updated field categories:', updatedCategories);
       
       setSettings(updatedSettings);
       
       // Save to Firebase
       const organizationId = userData?.roles[0]?.organizationId;
       if (organizationId) {
-        console.log('Settings: Updating settings in Firebase for org:', organizationId);
         await updateSettings(organizationId, updatedSettings);
-        console.log('Settings: Settings updated in Firebase, reloading...');
         // Add a small delay to ensure Firebase has processed the update
         await new Promise(resolve => setTimeout(resolve, 500));
         // Reload settings from Firebase to ensure consistency
         await loadSettings();
-        console.log('Settings: Settings reloaded from Firebase');
       }
       
       setOpenCategoryDialog(false);
@@ -1038,7 +1028,6 @@ const Settings: React.FC = () => {
                                   try {
                                     const organizationId = userData?.roles[0]?.organizationId;
                                     if (organizationId) {
-                                      console.log('🗑️ Auto-saving after removing status:', status);
                                       await updateSettings(organizationId, updatedSettings);
                                       setSuccess(`Status "${status}" removed successfully!`);
                                       setTimeout(() => setSuccess(''), 2000);
@@ -1081,7 +1070,6 @@ const Settings: React.FC = () => {
                                   try {
                                     const organizationId = userData?.roles[0]?.organizationId;
                                     if (organizationId) {
-                                      console.log('💾 Auto-saving after adding status:', newStatusOption.trim());
                                       await updateSettings(organizationId, updatedSettings);
                                       setSuccess(`Status "${newStatusOption.trim()}" added successfully!`);
                                       setTimeout(() => setSuccess(''), 2000);
@@ -1114,7 +1102,6 @@ const Settings: React.FC = () => {
                                   try {
                                     const organizationId = userData?.roles[0]?.organizationId;
                                     if (organizationId) {
-                                      console.log('💾 Auto-saving after adding status via button:', newStatusOption.trim());
                                       await updateSettings(organizationId, updatedSettings);
                                       setSuccess(`Status "${newStatusOption.trim()}" added successfully!`);
                                       setTimeout(() => setSuccess(''), 2000);
@@ -1228,7 +1215,6 @@ const Settings: React.FC = () => {
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              console.log('Add Field clicked for category:', category.id);
                               setSelectedField(null);
                               setSelectedCategoryId(category.id);
                               setFieldDialogMode('add');

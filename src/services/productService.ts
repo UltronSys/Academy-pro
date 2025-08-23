@@ -19,10 +19,8 @@ const COLLECTION_NAME = 'products';
 
 export const createProduct = async (productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> => {
   try {
-    console.log('productService: Starting product creation with data:', productData);
     
     const productRef = doc(collection(db, COLLECTION_NAME));
-    console.log('productService: Generated product ID:', productRef.id);
     
     const now = Timestamp.now();
     const product: Product = {
@@ -32,10 +30,8 @@ export const createProduct = async (productData: Omit<Product, 'id' | 'createdAt
       updatedAt: now
     };
     
-    console.log('productService: Final product object to save:', product);
     
     await setDoc(productRef, product);
-    console.log('productService: Product saved successfully to Firestore');
     
     return product;
   } catch (error) {
@@ -61,7 +57,6 @@ export const getProductById = async (productId: string): Promise<Product | null>
 
 export const getProductsByOrganization = async (organizationId: string): Promise<Product[]> => {
   try {
-    console.log('productService: Getting products for organization:', organizationId);
     
     // First try without orderBy in case that's causing issues
     const q = query(
@@ -70,7 +65,6 @@ export const getProductsByOrganization = async (organizationId: string): Promise
     );
     const querySnapshot = await getDocs(q);
     
-    console.log('productService: Found', querySnapshot.size, 'products');
     
     const products = querySnapshot.docs.map(doc => ({
       id: doc.id,
@@ -198,7 +192,6 @@ export const linkPlayersToProduct = async (
   invoiceGeneration: 'immediate' | 'scheduled'
 ): Promise<void> => {
   try {
-    console.log('🚀 linkPlayersToProduct: Starting with:', { productId, playerIds, playerNames });
     
     // Get the product details first
     const product = await getProductById(productId);
@@ -221,7 +214,6 @@ export const linkPlayersToProduct = async (
       }
     });
     
-    console.log('🎆 linkPlayersToProduct: New players to process:', { newPlayerIds, newPlayerNames });
     
     // Update product document with all linked players (existing + new)
     await updateProduct(productId, {
@@ -243,7 +235,6 @@ export const linkPlayersToProduct = async (
     for (let i = 0; i < newPlayerIds.length; i++) {
       const playerId = newPlayerIds[i];
       try {
-        console.log(`🔍 Processing NEW player ${i + 1}/${newPlayerIds.length}: ${playerId} (${newPlayerNames[i]})`);
         
         // Get player details - try by player ID first, then by user ID
         let player = null;
@@ -258,7 +249,6 @@ export const linkPlayersToProduct = async (
           try {
             const { getPlayerByUserId } = await import('./playerService');
             player = await getPlayerByUserId(playerId);
-            console.log(`✅ Found player by userId: ${playerId}`);
           } catch (error) {
             console.warn(`⚠️ Player record not found for user: ${playerId}`);
             console.log(`🔧 This user might have player role but no player record. Skipping...`);

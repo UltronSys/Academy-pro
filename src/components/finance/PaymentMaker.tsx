@@ -243,12 +243,6 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
     // Set available players for additional selection (excluding already included ones)
     const currentPlayerIds = playerPayments.map(p => p.playerId);
     const available = players.filter(player => !currentPlayerIds.includes(player.id));
-    console.log('Available players for selection:', {
-      totalPlayers: players.length,
-      currentPlayerIds,
-      available: available.length,
-      availablePlayers: available.map(p => ({ id: p.id, userId: p.userId, name: users.find(u => u.id === p.userId)?.name }))
-    });
     setAvailablePlayersForSelection(available);
   }, [players, playerPayments]);
 

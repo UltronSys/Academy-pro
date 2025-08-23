@@ -111,34 +111,24 @@ const Dashboard: React.FC = () => {
 
   const organizationId = userData?.roles[0]?.organizationId;
   
-  // Debug user data
-  console.log('Dashboard: authLoading:', authLoading);
-  console.log('Dashboard: userData:', userData);
-  console.log('Dashboard: userData?.roles:', userData?.roles);
-  console.log('Dashboard: userData?.roles[0]:', userData?.roles[0]);
-  console.log('Dashboard: organizationId:', organizationId);
 
   useEffect(() => {
     const loadDashboardData = async () => {
       // Wait for auth to finish loading
       if (authLoading) {
-        console.log('Dashboard: Auth still loading, skipping data load');
         return;
       }
 
       try {
         setLoading(true);
-        console.log('Dashboard: Auth loaded, loading data for organizationId:', organizationId);
         
         if (organizationId) {
           // If user has organizationId, load organization-specific data
-          console.log('Dashboard: Fetching organization data...');
           const [orgUsers, academies] = await Promise.all([
             getUsersByOrganization(organizationId),
             getAcademiesByOrganization(organizationId)
           ]);
 
-          console.log('Dashboard: Data loaded:', { usersCount: orgUsers.length, academiesCount: academies.length });
           setUsers(orgUsers);
           setTotalAcademies(academies.length);
 
@@ -150,7 +140,6 @@ const Dashboard: React.FC = () => {
           }
         } else {
           // If no organizationId, show empty dashboard
-          console.log('Dashboard: No organizationId, showing empty state');
           setUsers([]);
           setTotalAcademies(0);
           setAcademyUsers([]);

@@ -16,10 +16,8 @@ export const usePermissions = () => {
 
   useEffect(() => {
     const fetchPermissions = async () => {
-      console.log('usePermissions: fetchPermissions called', { currentUser: !!currentUser, userData: !!userData, organizationId });
       
       if (!currentUser || !userData) {
-        console.log('usePermissions: No currentUser or userData, setting empty permissions');
         setPermissions([]);
         setLoading(false);
         return;
@@ -27,7 +25,6 @@ export const usePermissions = () => {
 
       // If no organizationId, grant full permissions
       if (!organizationId) {
-        console.log('usePermissions: No organizationId, granting full permissions');
         const fullPermissions: Permission[] = [
           { resource: 'users', actions: ['read', 'write', 'delete'] },
           { resource: 'settings', actions: ['read', 'write', 'delete'] },
@@ -46,19 +43,15 @@ export const usePermissions = () => {
       try {
         // Get user's roles for the current organization
         const userRole = userData.roles.find(r => r.organizationId === organizationId);
-        console.log('usePermissions: userRole found:', userRole);
         
         if (!userRole) {
-          console.log('usePermissions: No userRole found for organizationId:', organizationId);
           setPermissions([]);
           setLoading(false);
           return;
         }
 
         // Fetch user's aggregated permissions
-        console.log('usePermissions: Fetching permissions for roles:', userRole.role);
         const userPermissions = await getUserPermissions(organizationId, userRole.role);
-        console.log('usePermissions: User permissions loaded:', userPermissions);
         setPermissions(userPermissions);
 
         // Fetch all role permissions for the organization
@@ -106,7 +99,6 @@ export const usePermissions = () => {
       
       const permission = permissions.find(p => p.resource === resource);
       const hasAccess = permission ? permission.actions.includes('read') : false;
-      console.log(`canRead(${resource}):`, { permission, hasAccess, allPermissions: permissions });
       return hasAccess;
     },
     [permissions, userData, organizationId]

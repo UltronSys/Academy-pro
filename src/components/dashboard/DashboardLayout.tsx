@@ -201,22 +201,18 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   // First priority: Use navigation state if available (from signup)
   useEffect(() => {
     if (navigationState?.justSignedUp) {
-      console.log('DashboardLayout: Using signup navigation state:', navigationState);
       
       // Force refresh user data from AuthContext to sync with the new user
       if (navigationState.userData) {
-        console.log('DashboardLayout: Forcing AuthContext refresh for new user data');
         
         // Immediate refresh
         refreshUserData().then(() => {
-          console.log('DashboardLayout: AuthContext refreshed successfully');
         }).catch((error) => {
           console.error('DashboardLayout: Failed to refresh AuthContext:', error);
         });
         
         // Backup refresh after a short delay to ensure it's loaded
         setTimeout(() => {
-          console.log('DashboardLayout: Backup AuthContext refresh');
           refreshUserData().catch((error) => {
             console.error('DashboardLayout: Backup refresh failed:', error);
           });
@@ -235,11 +231,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         }
       }
       
-      console.log('DashboardLayout: Navigation state data applied:', {
-        organization: navigationState.organization?.name,
-        academiesCount: navigationState.academies?.length,
-        userRole: navigationState.userData?.roles?.[0]?.role
-      });
       
       // Clear the navigation state to prevent reuse
       navigate(location.pathname, { replace: true, state: null });
@@ -255,17 +246,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
       }
       
       try {
-        console.log('DashboardLayout: Loading data for organization:', organizationId);
         
         const [orgData, academyData] = await Promise.all([
           getOrganization(organizationId),
           getAcademiesByOrganization(organizationId)
         ]);
         
-        console.log('DashboardLayout: Data loaded:', {
-          organization: orgData?.name,
-          academiesCount: academyData?.length
-        });
         
         if (orgData) {
           setOrganization(orgData);
@@ -289,7 +275,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   // Fallback: Force reload if userData changes and we still don't have data
   useEffect(() => {
     if (userData && organizationId && !navigationState?.justSignedUp && (!organization || academies.length === 0)) {
-      console.log('DashboardLayout: Force reloading data after userData change');
       
       const forceReload = async () => {
         try {
@@ -310,7 +295,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             }
           }
           
-          console.log('DashboardLayout: Force reload completed');
         } catch (error) {
           console.error('DashboardLayout: Force reload failed:', error);
         }
@@ -384,7 +368,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const menuItems = allMenuItems.filter(item => {
     if (!item.resource) return true; // Dashboard is always visible
     const hasAccess = canRead(item.resource as any);
-    console.log(`Menu item ${item.text} (resource: ${item.resource}): ${hasAccess ? 'VISIBLE' : 'HIDDEN'}`);
     return hasAccess;
   });
 

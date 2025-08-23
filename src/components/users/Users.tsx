@@ -225,11 +225,16 @@ const Users: React.FC = () => {
   const [guardianPhone, setGuardianPhone] = useState('');
   const [guardianSearchResult, setGuardianSearchResult] = useState<User | null>(null);
   const [showCreateGuardian, setShowCreateGuardian] = useState(false);
+  const [guardianCreationLoading, setGuardianCreationLoading] = useState(false);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [playerGuardianMap, setPlayerGuardianMap] = useState<Record<string, User[]>>({});
   const [selectedPlayer, setSelectedPlayer] = useState<User | null>(null);
   const [playerGuardians, setPlayerGuardians] = useState<User[]>([]);
   const [openPlayerGuardiansDialog, setOpenPlayerGuardiansDialog] = useState(false);
+  const [showLinkPlayersModal, setShowLinkPlayersModal] = useState(false);
+  const [selectedPlayersToLink, setSelectedPlayersToLink] = useState<string[]>([]);
+  const [availablePlayersForLinking, setAvailablePlayersForLinking] = useState<User[]>([]);
+  const [success, setSuccess] = useState('');
   
   // Algolia search states
   // Always use Algolia for search
@@ -282,18 +287,6 @@ const Users: React.FC = () => {
       ? steps.slice(0, 2) 
       : steps.slice(0, 3);
 
-  // Debug logging for step navigation in edit mode
-  if (dialogMode === 'edit' && openDialog) {
-    console.log('🔍 Step navigation debug:', {
-      dialogMode,
-      activeStep,
-      isPlayerRole,
-      formDataRoles: formData.roles,
-      steps,
-      effectiveSteps,
-      shouldShowPlayerStep
-    });
-  }
 
   const renderParameterField = (field: ParameterField) => {
     const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
@@ -436,7 +429,6 @@ const Users: React.FC = () => {
       const organizationId = userData?.roles[0]?.organizationId;
       if (organizationId) {
         const settings = await getSettingsByOrganization(organizationId);
-        console.log('🔧 Loaded settings with playerStatusOptions:', settings?.playerStatusOptions);
         setOrganizationSettings(settings);
       }
     } catch (error) {
@@ -461,22 +453,12 @@ const Users: React.FC = () => {
         roleFilterValue = roleFilter;
       }
       
-      console.log('🔍 Search Filter Debug:', {
-        activeTab,
-        dropdownRoleFilter: roleFilter,
-        finalRoleFilterValue: roleFilterValue,
-        selectedAcademyId: selectedAcademy?.id,
-        selectedAcademyName: selectedAcademy?.name,
-        query,
-        page
-      });
       
       let results;
       
       if (activeTab === 4) {
         // For admin tab, we need to search for both admin and owner roles
         // Since Algolia can only filter by one role at a time, we'll do two searches and combine results
-        console.log('🔍 Admin Tab Search - Academy Filter:', selectedAcademy?.id);
         
         const [adminResults, ownerResults] = await Promise.all([
           searchUsersAlgolia({
@@ -501,12 +483,6 @@ const Users: React.FC = () => {
           })
         ]);
         
-        console.log('🔍 Admin Search Results:', {
-          adminCount: adminResults.totalUsers,
-          ownerCount: ownerResults.totalUsers,
-          adminUsers: adminResults.users.map(u => ({ name: u.name, academies: u.academies })),
-          ownerUsers: ownerResults.users.map(u => ({ name: u.name, academies: u.academies }))
-        });
         
         // Combine results and remove duplicates
         const combinedUsers = [...adminResults.users, ...ownerResults.users];
@@ -526,7 +502,6 @@ const Users: React.FC = () => {
           role: roleFilterValue !== 'all' ? roleFilterValue : undefined,
           academyId: selectedAcademy?.id
         };
-        console.log('🔍 Algolia Search Filters:', searchFilters);
         
         results = await searchUsersAlgolia({
           query,
@@ -536,16 +511,6 @@ const Users: React.FC = () => {
           hitsPerPage: 10
         });
         
-        console.log('🔍 Algolia Search Results:', {
-          totalUsers: results.totalUsers,
-          returnedUsers: results.users.length,
-          userAcademies: results.users.map(u => ({ 
-            id: u.objectID, 
-            name: u.name, 
-            academies: u.academies,
-            roles: u.roles 
-          }))
-        });
       }
       
       // Convert Algolia records back to User format
@@ -589,7 +554,6 @@ const Users: React.FC = () => {
         await loadGuardianMapping(algoliaUsers);
       }
       
-      console.log(`🔍 Algolia search completed: ${results.totalUsers} users found in ${results.processingTimeMS}ms`);
     } catch (error) {
       console.error('Algolia search error:', error);
       setError('Search failed. Please check Algolia configuration.');
@@ -625,10 +589,6 @@ const Users: React.FC = () => {
       const organizationId = userData?.roles[0]?.organizationId;
       if (organizationId) {
         const players = await getPlayersByOrganization(organizationId);
-        console.log('🔍 Loading guardian mapping:', {
-          totalPlayers: players.length,
-          playersWithGuardians: players.filter(p => p.guardianId && p.guardianId.length > 0).length
-        });
         
         setAllPlayers(players);
         
@@ -657,7 +617,6 @@ const Users: React.FC = () => {
         
         // For missing guardians, search them individually using Algolia
         const missingGuardianIds = Array.from(allGuardianIds).filter(id => !foundGuardians.has(id));
-        console.log(`🔍 Found ${foundGuardians.size} guardians in Algolia, ${missingGuardianIds.length} missing`);
         
         if (missingGuardianIds.length > 0) {
           try {
@@ -727,7 +686,6 @@ const Users: React.FC = () => {
           }
         }
         setPlayerGuardianMap(guardianMap);
-        console.log('🗺️ Guardian map built:', Object.keys(guardianMap).length, 'players with guardians');
         
         const guardianUsers = algoliaUsers.filter(user => 
           user.roles.some(role => 
@@ -766,6 +724,13 @@ const Users: React.FC = () => {
     setSelectedUser(null);
     setDialogMode('add');
     setActiveStep(0);
+    
+    // Reset guardian search fields when opening add dialog
+    setGuardianPhone('');
+    setGuardianSearchResult(null);
+    setShowCreateGuardian(false);
+    setNewGuardianData({ name: '', email: '', phone: '' });
+    
     setFormData({
       name: '',
       email: '',
@@ -785,10 +750,15 @@ const Users: React.FC = () => {
   };
 
   const handleEditUser = async (user: User) => {
-    console.log('🔧 Opening edit modal for user:', user);
     setSelectedUser(user);
     setDialogMode('edit');
     setActiveStep(0);
+    
+    // Reset guardian search fields when opening edit dialog
+    setGuardianPhone('');
+    setGuardianSearchResult(null);
+    setShowCreateGuardian(false);
+    setNewGuardianData({ name: '', email: '', phone: '' });
     
     // Load user data into form
     const isPlayer = user.roles.some(role => 
@@ -944,12 +914,6 @@ const Users: React.FC = () => {
           ...updatedUserData,
           updatedAt: { toDate: () => new Date() } as any
         };
-        console.log('📋 Final user object being synced to Algolia:', {
-          id: updatedUser.id,
-          name: updatedUser.name,
-          email: updatedUser.email,
-          roles: updatedUser.roles
-        });
         await syncUserToAlgolia(updatedUser);
         console.log('✅ User synced to Algolia successfully');
         
@@ -1026,7 +990,6 @@ const Users: React.FC = () => {
       });
       
       setUsers(prevUsers => {
-        console.log('🔄 INSIDE setUsers - prevUsers:', prevUsers.map(u => ({ id: u.id, name: u.name })));
         
         const updatedUsers = prevUsers.map(user => {
           if (user.id === selectedUser.id) {
@@ -1047,8 +1010,6 @@ const Users: React.FC = () => {
           return user;
         });
         
-        console.log('📋 INSIDE setUsers - updatedUsers:', updatedUsers.map(u => ({ id: u.id, name: u.name })));
-        console.log('📋 INSIDE setUsers - Updated user check:', updatedUsers.find(u => u.id === selectedUser.id)?.name);
         return updatedUsers;
       });
       
@@ -1057,11 +1018,6 @@ const Users: React.FC = () => {
       
       // Check state immediately after setting (this might not show the updated state due to async nature)
       setTimeout(() => {
-        console.log('🔍 AFTER UPDATE - Users state check:', {
-          usersLength: users.length,
-          updatedUserInState: users.find(u => u.id === selectedUser.id)?.name,
-          allUserNames: users.map(u => ({ id: u.id, name: u.name }))
-        });
       }, 100);
       
       // Refresh the search results to show updated data in the table
@@ -1229,8 +1185,6 @@ const Users: React.FC = () => {
         filteredByTab = users.filter(user => user.roles?.some(role => 
           Array.isArray(role.role) ? role.role.includes('coach') : role.role === 'coach'
         ));
-        console.log('Coach tab - Total users:', users.length, 'Coaches found:', filteredByTab.length);
-        console.log('All users roles:', users.map(u => ({ name: u.name, roles: u.roles })));
         break;
       case 3:
         filteredByTab = users.filter(user => user.roles?.some(role => 
@@ -1278,7 +1232,6 @@ const Users: React.FC = () => {
           <div>
             <div className="font-semibold text-secondary-900">
               {(() => {
-                console.log('🎯 TABLE RENDER - User name:', { id: user.id, name: user.name, timestamp: Date.now() });
                 return user.name;
               })()}
             </div>
@@ -1350,19 +1303,83 @@ const Users: React.FC = () => {
                 e.stopPropagation();
                 setSelectedGuardian(user);
                 try {
-                  console.log('🔍 Looking for players linked to guardian:', user.id, user.name);
+                  console.log('🔍 Loading players for guardian:', user.id, user.name);
                   const players = await getPlayersByGuardianId(user.id);
-                  console.log('📋 Found players:', players.length, players);
-                  const playerUsers = await Promise.all(
-                    players.map(async (player) => {
-                      const userDoc = users.find(u => u.id === player.userId);
-                      console.log('👤 Player user doc:', player.userId, userDoc?.name);
-                      return userDoc;
-                    })
-                  );
-                  const validPlayerUsers = playerUsers.filter(u => u !== undefined) as User[];
-                  console.log('✅ Valid player users:', validPlayerUsers.length, validPlayerUsers.map(p => p.name));
-                  setLinkedPlayers(validPlayerUsers);
+                  console.log('📋 Found player records:', players.length);
+                  
+                  if (players.length > 0) {
+                    console.log('👥 Player IDs found:', players.map(p => p.userId));
+                  }
+                  
+                  const playerUsers: User[] = [];
+                  
+                  // First try to find players in current users list
+                  for (const player of players) {
+                    const userDoc = users.find(u => u.id === player.userId);
+                    console.log('👤 Looking for player user:', player.userId, userDoc ? '✅ Found' : '❌ Not found locally');
+                    if (userDoc) {
+                      playerUsers.push(userDoc);
+                    }
+                  }
+                  
+                  // If we didn't find all users locally, search with Algolia
+                  if (playerUsers.length < players.length) {
+                    console.log('🔎 Some players not found locally, searching with Algolia...');
+                    const organizationId = userData?.roles[0]?.organizationId;
+                    if (organizationId) {
+                      const searchResults = await searchUsersAlgolia({
+                        query: '',
+                        organizationId,
+                        filters: {
+                          role: 'player'
+                        },
+                        page: 0,
+                        hitsPerPage: 1000
+                      });
+                      
+                      console.log('🔎 Algolia returned:', searchResults.users.length, 'players');
+                      
+                      for (const player of players) {
+                        if (!playerUsers.find(u => u.id === player.userId)) {
+                          const userRecord = searchResults.users.find(u => u.objectID === player.userId);
+                          if (userRecord) {
+                            console.log('✅ Found player in Algolia:', userRecord.name);
+                            const userDoc: User = {
+                              id: userRecord.objectID,
+                              name: userRecord.name,
+                              email: userRecord.email || '',
+                              phone: userRecord.phone,
+                              roles: userRecord.roleDetails || [],
+                              createdAt: userRecord.createdAt ? 
+                                { 
+                                  toDate: () => new Date(userRecord.createdAt!), 
+                                  seconds: Math.floor((userRecord.createdAt || 0) / 1000),
+                                  nanoseconds: 0,
+                                  toMillis: () => userRecord.createdAt || 0,
+                                  isEqual: () => false,
+                                  toJSON: () => ({ seconds: Math.floor((userRecord.createdAt || 0) / 1000), nanoseconds: 0 })
+                                } as any : undefined,
+                              updatedAt: userRecord.updatedAt ? 
+                                { 
+                                  toDate: () => new Date(userRecord.updatedAt!), 
+                                  seconds: Math.floor((userRecord.updatedAt || 0) / 1000),
+                                  nanoseconds: 0,
+                                  toMillis: () => userRecord.updatedAt || 0,
+                                  isEqual: () => false,
+                                  toJSON: () => ({ seconds: Math.floor((userRecord.updatedAt || 0) / 1000), nanoseconds: 0 })
+                                } as any : undefined
+                            };
+                            playerUsers.push(userDoc);
+                          } else {
+                            console.warn('❌ Player not found in Algolia either:', player.userId);
+                          }
+                        }
+                      }
+                    }
+                  }
+                  
+                  console.log('📊 Final linked players count:', playerUsers.length);
+                  setLinkedPlayers(playerUsers);
                   setOpenGuardianDialog(true);
                 } catch (error) {
                   console.error('❌ Error loading linked players:', error);
@@ -1380,13 +1397,6 @@ const Users: React.FC = () => {
               onClick={(e) => {
                 e.stopPropagation();
                 const guardians = playerGuardianMap[user.id] || [];
-                console.log('🔍 Viewing guardians for player:', {
-                  playerId: user.id,
-                  playerName: user.name,
-                  guardians: guardians,
-                  guardianCount: guardians.length,
-                  playerGuardianMapKeys: Object.keys(playerGuardianMap)
-                });
                 setSelectedPlayer(user);
                 setPlayerGuardians(guardians);
                 setOpenPlayerGuardiansDialog(true);
@@ -1868,7 +1878,20 @@ const Users: React.FC = () => {
                 showPagination={false}
               />
             </div>
-            <div className="flex justify-end p-6 border-t border-secondary-200">
+            <div className="flex justify-between p-6 border-t border-secondary-200">
+              {canWrite('users') && (
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    // Simply open the modal without loading all players
+                    setAvailablePlayersForLinking([]);
+                    setSelectedPlayersToLink([]);
+                    setShowLinkPlayersModal(true);
+                  }}
+                >
+                  Link More Players
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 onClick={() => setOpenGuardianDialog(false)}
@@ -1877,6 +1900,370 @@ const Users: React.FC = () => {
               </Button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Link Players to Guardian Modal */}
+      {showLinkPlayersModal && selectedGuardian && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            <div className="flex justify-between items-center p-6 border-b border-secondary-200">
+              <div>
+                <h3 className="text-lg font-semibold text-secondary-900">
+                  Link Players to Guardian
+                </h3>
+                <p className="text-sm text-secondary-600 mt-1">
+                  Guardian: {selectedGuardian.name}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowLinkPlayersModal(false);
+                  setSelectedPlayersToLink([]);
+                }}
+                className="text-secondary-400 hover:text-secondary-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="p-6">
+              {/* Search for players */}
+              <div className="mb-4">
+                <Input
+                  type="text"
+                  placeholder="Search players by name or email..."
+                  className="w-full"
+                  onChange={async (e) => {
+                    const searchValue = e.target.value.trim();
+                    
+                    if (searchValue.length < 2) {
+                      // Clear results if search is too short
+                      setAvailablePlayersForLinking([]);
+                      return;
+                    }
+                    
+                    try {
+                      const organizationId = userData?.roles[0]?.organizationId;
+                      if (!organizationId || !selectedGuardian) return;
+                      
+                      console.log('Searching for players with query:', searchValue);
+                      
+                      // Search for players using Algolia
+                      const searchResults = await searchUsersAlgolia({
+                        query: searchValue,
+                        organizationId,
+                        filters: {
+                          role: 'player'
+                        },
+                        page: 0,
+                        hitsPerPage: 50
+                      });
+                      
+                      console.log('Found players:', searchResults.users.length);
+                      
+                      // Get all players in org to check guardian relationships
+                      const allPlayersInOrg = await getPlayersByOrganization(organizationId);
+                      
+                      // Filter out players that already have this guardian
+                      const availablePlayers: User[] = [];
+                      
+                      for (const userRecord of searchResults.users) {
+                        const playerRecord = allPlayersInOrg.find(p => p.userId === userRecord.objectID);
+                        
+                        // Only include if player doesn't have this guardian yet
+                        if (playerRecord && (!playerRecord.guardianId || !playerRecord.guardianId.includes(selectedGuardian.id))) {
+                          const userDoc: User = {
+                            id: userRecord.objectID,
+                            name: userRecord.name,
+                            email: userRecord.email || '',
+                            phone: userRecord.phone,
+                            roles: userRecord.roleDetails || [],
+                            createdAt: userRecord.createdAt ? 
+                              { 
+                                toDate: () => new Date(userRecord.createdAt!), 
+                                seconds: Math.floor((userRecord.createdAt || 0) / 1000),
+                                nanoseconds: 0,
+                                toMillis: () => userRecord.createdAt || 0,
+                                isEqual: () => false,
+                                toJSON: () => ({ seconds: Math.floor((userRecord.createdAt || 0) / 1000), nanoseconds: 0 })
+                              } as any : undefined,
+                            updatedAt: userRecord.updatedAt ? 
+                              { 
+                                toDate: () => new Date(userRecord.updatedAt!), 
+                                seconds: Math.floor((userRecord.updatedAt || 0) / 1000),
+                                nanoseconds: 0,
+                                toMillis: () => userRecord.updatedAt || 0,
+                                isEqual: () => false,
+                                toJSON: () => ({ seconds: Math.floor((userRecord.updatedAt || 0) / 1000), nanoseconds: 0 })
+                              } as any : undefined
+                          };
+                          availablePlayers.push(userDoc);
+                        }
+                      }
+                      
+                      console.log('Available players (not linked to this guardian):', availablePlayers.length);
+                      setAvailablePlayersForLinking(availablePlayers);
+                      
+                    } catch (error) {
+                      console.error('Error searching players:', error);
+                      setError('Failed to search for players');
+                    }
+                  }}
+                />
+              </div>
+
+              {/* Players list */}
+              <div className="mb-6">
+                <h4 className="text-sm font-semibold text-secondary-700 mb-2">
+                  Select players to link ({selectedPlayersToLink.length} selected)
+                </h4>
+                <div className="max-h-96 overflow-y-auto border rounded-lg">
+                  {availablePlayersForLinking.length > 0 ? (
+                    <div className="divide-y">
+                      {availablePlayersForLinking.map((player) => (
+                        <div
+                          key={player.id}
+                          className="flex items-center justify-between p-3 hover:bg-secondary-50"
+                        >
+                          <div className="flex items-center space-x-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedPlayersToLink.includes(player.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedPlayersToLink([...selectedPlayersToLink, player.id]);
+                                } else {
+                                  setSelectedPlayersToLink(selectedPlayersToLink.filter(id => id !== player.id));
+                                }
+                              }}
+                              className="h-4 w-4 text-primary-600 rounded border-secondary-300 focus:ring-primary-500"
+                            />
+                            <div>
+                              <div className="font-medium text-secondary-900">{player.name}</div>
+                              <div className="text-sm text-secondary-600">{player.email}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center text-secondary-500">
+                      {availablePlayersForLinking.length === 0 ? 
+                        'Type at least 2 characters to search for players' : 
+                        'No available players found'
+                      }
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex justify-end space-x-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowLinkPlayersModal(false);
+                    setSelectedPlayersToLink([]);
+                    setAvailablePlayersForLinking([]);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (!selectedGuardian || selectedPlayersToLink.length === 0) return;
+                    
+                    try {
+                      const guardianId = selectedGuardian.id;
+                      const organizationId = userData?.roles[0]?.organizationId;
+                      
+                      console.log('Linking players to guardian:', guardianId);
+                      console.log('Players to link:', selectedPlayersToLink);
+                      
+                      // Update each selected player to add this guardian
+                      const updatePromises = selectedPlayersToLink.map(async (playerId) => {
+                        console.log('Looking for player with userId:', playerId);
+                        const playerData = await getPlayerByUserId(playerId);
+                        console.log('Found player data:', playerData);
+                        
+                        if (playerData) {
+                          const currentGuardianIds = playerData.guardianId || [];
+                          console.log('Current guardian IDs:', currentGuardianIds);
+                          
+                          if (!currentGuardianIds.includes(guardianId)) {
+                            const updatedGuardianIds = [...currentGuardianIds, guardianId];
+                            console.log('Updating player with new guardian IDs:', updatedGuardianIds);
+                            
+                            await updatePlayer(playerData.id, {
+                              guardianId: updatedGuardianIds
+                            });
+                            console.log('Player updated successfully');
+                          } else {
+                            console.log('Guardian already linked to this player');
+                          }
+                        } else {
+                          console.warn('No player data found for userId:', playerId);
+                        }
+                      });
+                      
+                      await Promise.all(updatePromises);
+                      console.log('All players updated');
+                      
+                      setSuccess(`Successfully linked ${selectedPlayersToLink.length} player(s) to ${selectedGuardian.name}`);
+                      setShowLinkPlayersModal(false);
+                      setSelectedPlayersToLink([]);
+                      setAvailablePlayersForLinking([]);
+                      
+                      // Force a delay to ensure database updates are complete
+                      await new Promise(resolve => setTimeout(resolve, 1000));
+                      
+                      // Reload linked players - with better error handling
+                      console.log('Reloading players for guardian:', selectedGuardian.id);
+                      try {
+                        const players = await getPlayersByGuardianId(selectedGuardian.id);
+                        console.log('Found linked players:', players.length);
+                        
+                        // Get user details for linked players
+                        const playerUsers: User[] = [];
+                        
+                        // First try from current users list
+                        for (const player of players) {
+                          const userDoc = users.find(u => u.id === player.userId);
+                          if (userDoc) {
+                            playerUsers.push(userDoc);
+                          }
+                        }
+                        
+                        // If we didn't find all users, search with Algolia
+                        if (playerUsers.length < players.length && organizationId) {
+                          console.log('Some users not found locally, searching with Algolia...');
+                          const searchResults = await searchUsersAlgolia({
+                            query: '',
+                            organizationId,
+                            filters: {
+                              role: 'player'
+                            },
+                            page: 0,
+                            hitsPerPage: 1000
+                          });
+                          
+                          for (const player of players) {
+                            if (!playerUsers.find(u => u.id === player.userId)) {
+                              const userRecord = searchResults.users.find(u => u.objectID === player.userId);
+                              if (userRecord) {
+                                const userDoc: User = {
+                                  id: userRecord.objectID,
+                                  name: userRecord.name,
+                                  email: userRecord.email || '',
+                                  phone: userRecord.phone,
+                                  roles: userRecord.roleDetails || [],
+                                  createdAt: userRecord.createdAt ? 
+                                    { 
+                                      toDate: () => new Date(userRecord.createdAt!), 
+                                      seconds: Math.floor((userRecord.createdAt || 0) / 1000),
+                                      nanoseconds: 0,
+                                      toMillis: () => userRecord.createdAt || 0,
+                                      isEqual: () => false,
+                                      toJSON: () => ({ seconds: Math.floor((userRecord.createdAt || 0) / 1000), nanoseconds: 0 })
+                                    } as any : undefined,
+                                  updatedAt: userRecord.updatedAt ? 
+                                    { 
+                                      toDate: () => new Date(userRecord.updatedAt!), 
+                                      seconds: Math.floor((userRecord.updatedAt || 0) / 1000),
+                                      nanoseconds: 0,
+                                      toMillis: () => userRecord.updatedAt || 0,
+                                      isEqual: () => false,
+                                      toJSON: () => ({ seconds: Math.floor((userRecord.updatedAt || 0) / 1000), nanoseconds: 0 })
+                                    } as any : undefined
+                                };
+                                playerUsers.push(userDoc);
+                              }
+                            }
+                          }
+                        }
+                        
+                        console.log('Setting linked players:', playerUsers.length);
+                        setLinkedPlayers(playerUsers);
+                        
+                      } catch (reloadError) {
+                        console.error('Error reloading linked players:', reloadError);
+                      }
+                      
+                      // Reload the entire user list and guardian mapping to refresh UI
+                      if (organizationId) {
+                        await performAlgoliaSearch(searchTerm, currentPage);
+                        // Force reload guardian mapping with fresh user data
+                        const freshSearchResults = await searchUsersAlgolia({
+                          query: searchTerm,
+                          organizationId,
+                          filters: activeTab === 1 ? { role: 'player' } : 
+                                  activeTab === 2 ? { role: 'coach' } :
+                                  activeTab === 3 ? { role: 'guardian' } : {},
+                          page: currentPage,
+                          hitsPerPage: 20
+                        });
+                        
+                        const freshUsers: User[] = freshSearchResults.users.map(record => ({
+                          id: record.objectID,
+                          name: record.name,
+                          email: record.email || '',
+                          phone: record.phone,
+                          roles: record.roleDetails || [],
+                          createdAt: record.createdAt ? 
+                            { 
+                              toDate: () => new Date(record.createdAt!), 
+                              seconds: Math.floor((record.createdAt || 0) / 1000),
+                              nanoseconds: 0,
+                              toMillis: () => record.createdAt || 0,
+                              isEqual: () => false,
+                              toJSON: () => ({ seconds: Math.floor((record.createdAt || 0) / 1000), nanoseconds: 0 })
+                            } as any : undefined,
+                          updatedAt: record.updatedAt ? 
+                            { 
+                              toDate: () => new Date(record.updatedAt!), 
+                              seconds: Math.floor((record.updatedAt || 0) / 1000),
+                              nanoseconds: 0,
+                              toMillis: () => record.updatedAt || 0,
+                              isEqual: () => false,
+                              toJSON: () => ({ seconds: Math.floor((record.updatedAt || 0) / 1000), nanoseconds: 0 })
+                            } as any : undefined
+                        }));
+                        
+                        setUsers(freshUsers);
+                        await loadGuardianMapping(freshUsers);
+                      }
+                    } catch (error) {
+                      console.error('Error linking players:', error);
+                      setError('Failed to link players to guardian');
+                    }
+                  }}
+                  disabled={selectedPlayersToLink.length === 0}
+                >
+                  Link {selectedPlayersToLink.length} Player{selectedPlayersToLink.length !== 1 ? 's' : ''}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Alert */}
+      {success && (
+        <div className="fixed top-4 right-4 z-50">
+          <Alert variant="success">
+            <div className="flex justify-between items-center">
+              <span>{success}</span>
+              <button
+                onClick={() => setSuccess('')}
+                className="ml-4 text-success-700 hover:text-success-900"
+              >
+                ×
+              </button>
+            </div>
+          </Alert>
         </div>
       )}
 
@@ -2397,9 +2784,15 @@ const Users: React.FC = () => {
                               }
                               
                               try {
+                                console.log('🔍 Searching for guardian with query:', guardianPhone.trim());
+                                console.log('🔍 Dialog mode:', dialogMode);
+                                
                                 // Search for existing guardian using Algolia
                                 const organizationId = userData?.roles[0]?.organizationId;
-                                if (!organizationId) return;
+                                if (!organizationId) {
+                                  console.error('No organization ID found');
+                                  return;
+                                }
                                 
                                 const results = await searchUsersAlgolia({
                                   query: guardianPhone.trim(),
@@ -2410,6 +2803,8 @@ const Users: React.FC = () => {
                                   page: 0,
                                   hitsPerPage: 10
                                 });
+                                
+                                console.log('🔍 Search results:', results.users.length, 'guardians found');
                                 
                                 if (results.users.length > 0) {
                                   // Convert first result to User format for display
@@ -2491,10 +2886,119 @@ const Users: React.FC = () => {
                         )}
                         
                         {guardianPhone.trim().length >= 2 && !guardianSearchResult && (
-                          <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                            <div className="text-sm text-yellow-800">
-                              No guardian found matching "{guardianPhone}"
+                          <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                            <div className="flex items-center justify-between mb-4">
+                              <div>
+                                <div className="text-sm text-blue-800 font-medium">
+                                  No guardian found matching "{guardianPhone}"
+                                </div>
+                                <div className="text-xs text-blue-700 mt-1">
+                                  Would you like to create a new guardian?
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setShowCreateGuardian(true)}
+                              >
+                                Create Guardian
+                              </Button>
                             </div>
+                            
+                            {showCreateGuardian && (
+                              <div className="border-t border-blue-200 pt-4 space-y-3">
+                                <div className="text-sm font-medium text-blue-800 mb-2">
+                                  Create New Guardian
+                                </div>
+                                <div className="space-y-3">
+                                  <Input
+                                    placeholder="Guardian Name"
+                                    value={newGuardianData.name}
+                                    onChange={(e) => setNewGuardianData({...newGuardianData, name: e.target.value})}
+                                    required
+                                  />
+                                  <Input
+                                    placeholder="Email Address"
+                                    type="email"
+                                    value={newGuardianData.email}
+                                    onChange={(e) => setNewGuardianData({...newGuardianData, email: e.target.value})}
+                                    required
+                                  />
+                                  <Input
+                                    placeholder="Phone Number"
+                                    value={newGuardianData.phone || guardianPhone}
+                                    onChange={(e) => setNewGuardianData({...newGuardianData, phone: e.target.value})}
+                                    required
+                                  />
+                                  <div className="flex items-center space-x-2">
+                                    <Button
+                                      size="sm"
+                                      onClick={async () => {
+                                        if (!newGuardianData.name || !newGuardianData.email) {
+                                          setError('Guardian name and email are required');
+                                          return;
+                                        }
+                                        
+                                        try {
+                                          setGuardianCreationLoading(true);
+                                          const organizationId = userData?.roles[0]?.organizationId;
+                                          if (!organizationId) {
+                                            throw new Error('Organization ID not found');
+                                          }
+                                          
+                                          // Create the guardian user (Firestore only, no auth needed)
+                                          const guardianUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+                                          await createUser({
+                                            id: guardianUserId,
+                                            name: newGuardianData.name,
+                                            email: newGuardianData.email,
+                                            phone: newGuardianData.phone || guardianPhone,
+                                            roles: [{
+                                              role: ['guardian'],
+                                              organizationId: organizationId,
+                                              academyId: []
+                                            }]
+                                          });
+                                          
+                                          console.log('✅ Guardian created with ID:', guardianUserId);
+                                          
+                                          // Link the guardian to the player immediately
+                                          setFormData({
+                                            ...formData,
+                                            guardianId: [...formData.guardianId, guardianUserId]
+                                          });
+                                          
+                                          // Reset the creation form
+                                          setNewGuardianData({ name: '', email: '', phone: '' });
+                                          setShowCreateGuardian(false);
+                                          setGuardianPhone('');
+                                          setSuccess('Guardian created and linked successfully!');
+                                          
+                                        } catch (error) {
+                                          console.error('Error creating guardian:', error);
+                                          setError('Failed to create guardian. Please try again.');
+                                        } finally {
+                                          setGuardianCreationLoading(false);
+                                        }
+                                      }}
+                                      disabled={guardianCreationLoading || !newGuardianData.name || !newGuardianData.email}
+                                    >
+                                      {guardianCreationLoading ? 'Creating...' : 'Create & Link Guardian'}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setShowCreateGuardian(false);
+                                        setNewGuardianData({ name: '', email: '', phone: '' });
+                                      }}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                         

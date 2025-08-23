@@ -131,7 +131,6 @@ const Transactions: React.FC = () => {
         setLoading(true);
         
         // Always use Algolia for transactions
-        console.log('📊 Using Algolia for transaction management');
         await performAlgoliaSearch();
         
         // Sync existing transactions to Algolia in background
@@ -139,24 +138,17 @@ const Transactions: React.FC = () => {
           ? await getTransactionsByAcademy(selectedOrganization.id, selectedAcademy.id)
           : await getTransactionsByOrganization(selectedOrganization.id);
         
-        console.log(`🔄 Syncing ${transactionsData.length} transactions to Algolia`);
         transactionsData.forEach(transaction => {
           syncTransactionToAlgolia(transaction).catch(console.error);
         });
         
         // Load players and users from Algolia
-        console.log('📊 Loading players and users from Algolia');
         
         // Load players (users with player role)
-        console.log('🔍 Searching for players in organization:', selectedOrganization.id);
         const playersSearchResult = await searchUsers({
           organizationId: selectedOrganization.id,
           filters: { role: 'player' },
           hitsPerPage: 1000 // Get all players
-        });
-        console.log('🔍 Algolia players search result:', {
-          totalFound: playersSearchResult.totalUsers,
-          players: playersSearchResult.users.map(u => ({ id: u.objectID, name: u.name, roles: u.roles }))
         });
         
         // Convert Algolia user records to Player format
@@ -179,19 +171,9 @@ const Transactions: React.FC = () => {
         setPlayers(playersData);
         
         // Load all users (players, guardians, coaches, etc.)
-        console.log('🔍 Searching for all users in organization:', selectedOrganization.id);
         const usersSearchResult = await searchUsers({
           organizationId: selectedOrganization.id,
           hitsPerPage: 1000 // Get all users
-        });
-        console.log('🔍 Algolia all users search result:', {
-          totalFound: usersSearchResult.totalUsers,
-          users: usersSearchResult.users.map(u => ({ 
-            id: u.objectID, 
-            name: u.name, 
-            roles: u.roles,
-            roleDetails: u.roleDetails?.map(r => r.role).flat() 
-          }))
         });
         
         // Convert Algolia user records to User format
@@ -205,10 +187,6 @@ const Transactions: React.FC = () => {
           updatedAt: user.updatedAt ? { toDate: () => new Date(user.updatedAt!) } : undefined
         } as unknown as User));
         
-        console.log('Transactions: Loaded from Algolia:', {
-          players: playersData.length,
-          users: usersData.length
-        });
         setUsers(usersData);
         
         // Debug: Also check if we can find players from all users (fallback)
@@ -218,11 +196,6 @@ const Transactions: React.FC = () => {
           )
         );
         
-        console.log('🔍 Players found via different methods:', {
-          viaRoleFilter: playersData.length,
-          viaAllUsersFilter: allUsersWithPlayerRole.length,
-          totalUsersLoaded: usersData.length
-        });
         
         // Load payment methods and currency from settings
         const settingsData = await getSettingsByOrganization(selectedOrganization.id);
@@ -301,7 +274,6 @@ const Transactions: React.FC = () => {
       setTotalTransactions(searchResults.totalTransactions);
       setTotalPages(searchResults.totalPages);
       
-      console.log(`🔍 Algolia search completed: ${searchResults.totalTransactions} results in ${searchResults.processingTimeMS}ms`);
     } catch (error) {
       console.error('Algolia search error:', error);
       showToast('Search error. Please check your Algolia configuration.', 'error');

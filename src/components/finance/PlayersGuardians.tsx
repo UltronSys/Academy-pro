@@ -10,6 +10,7 @@ import { getReceiptsByUser, getReceiptsByOrganization, calculateUserOutstandingB
 import { getSettingsByOrganization } from '../../services/settingsService';
 import { Player, User, Transaction, Receipt } from '../../types';
 import { getUserById } from '../../services/userService';
+import { updatePlayer } from '../../services/playerService';
 
 interface PlayerFinancialSummary {
   player: Player;
@@ -51,6 +52,10 @@ const PlayersGuardians: React.FC = () => {
   const [guardianFinancials, setGuardianFinancials] = useState<GuardianFinancialSummary[]>([]);
   const [selectedGuardian, setSelectedGuardian] = useState<GuardianFinancialSummary | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showLinkPlayersModal, setShowLinkPlayersModal] = useState(false);
+  const [selectedGuardianForLinking, setSelectedGuardianForLinking] = useState<GuardianFinancialSummary | null>(null);
+  const [selectedPlayersToLink, setSelectedPlayersToLink] = useState<string[]>([]);
+  const [availablePlayersForLinking, setAvailablePlayersForLinking] = useState<PlayerFinancialSummary[]>([]);
   
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -198,7 +203,6 @@ const PlayersGuardians: React.FC = () => {
     }
 
     try {
-      console.log(`🔍 Starting financial data load for ${playerSummaries.length} players`);
       
       // Load all organization receipts once for efficiency
       let allOrgReceipts: Receipt[] = [];
@@ -214,14 +218,12 @@ const PlayersGuardians: React.FC = () => {
       const updatedSummaries = await Promise.all(
         playerSummaries.map(async (playerSummary) => {
           try {
-            console.log(`📊 Processing financial data for ${playerSummary.user.name}`);
 
             // Get transactions
             let transactions: Transaction[] = [];
             try {
               const userRef = { id: playerSummary.player.userId } as any;
               transactions = await getTransactionsByOwner(selectedOrganization.id, userRef);
-              console.log(`✅ Loaded ${transactions.length} transactions for ${playerSummary.user.name}`);
             } catch (transactionError) {
               console.error(`Error loading transactions for ${playerSummary.user.name}:`, transactionError);
             }
@@ -240,10 +242,6 @@ const PlayersGuardians: React.FC = () => {
                 playerSummary.player.userId, 
                 selectedOrganization.id
               );
-              console.log(`✅ Calculated balance for ${playerSummary.user.name}:`, {
-                outstandingDebits: balanceInfo.outstandingDebits,
-                availableCredits: balanceInfo.availableCredits
-              });
             } catch (balanceError) {
               console.error(`Error calculating balance for ${playerSummary.user.name}:`, balanceError);
             }
@@ -287,7 +285,6 @@ const PlayersGuardians: React.FC = () => {
         })
       );
 
-      console.log(`✅ Finished processing ${updatedSummaries.length} player summaries`);
       setPlayerFinancials(updatedSummaries);
 
       // Update guardian summaries with detailed data
@@ -343,6 +340,53 @@ const PlayersGuardians: React.FC = () => {
 
   const showToast = (message: string, type: 'success' | 'error' | 'info') => {
     setToast({ message, type });
+  };
+
+  const handleOpenLinkPlayersModal = (guardian: GuardianFinancialSummary) => {
+    setSelectedGuardianForLinking(guardian);
+    
+    // Get players without guardians or not linked to this guardian
+    const unlinkedPlayers = playerFinancials.filter(player => {
+      return !player.guardians.some(g => g.id === guardian.guardian.id);
+    });
+    
+    setAvailablePlayersForLinking(unlinkedPlayers);
+    setSelectedPlayersToLink([]);
+    setShowLinkPlayersModal(true);
+  };
+
+  const handleLinkPlayers = async () => {
+    if (!selectedGuardianForLinking || selectedPlayersToLink.length === 0) return;
+    
+    try {
+      const guardianId = selectedGuardianForLinking.guardian.id;
+      
+      // Update each selected player to add this guardian
+      const updatePromises = selectedPlayersToLink.map(async (playerId) => {
+        const player = playerFinancials.find(p => p.player.id === playerId)?.player;
+        if (player) {
+          const currentGuardianIds = player.guardianId || [];
+          if (!currentGuardianIds.includes(guardianId)) {
+            await updatePlayer(player.id, {
+              guardianId: [...currentGuardianIds, guardianId]
+            });
+          }
+        }
+      });
+      
+      await Promise.all(updatePromises);
+      
+      showToast(`Successfully linked ${selectedPlayersToLink.length} player(s) to ${selectedGuardianForLinking.guardian.name}`, 'success');
+      setShowLinkPlayersModal(false);
+      setSelectedGuardianForLinking(null);
+      setSelectedPlayersToLink([]);
+      
+      // Reload data to reflect changes
+      loadFinancialData();
+    } catch (error) {
+      console.error('Error linking players:', error);
+      showToast('Failed to link players to guardian', 'error');
+    }
   };
 
   const statusOptions = [
@@ -592,6 +636,16 @@ const PlayersGuardians: React.FC = () => {
           >
             View Details
           </Button>
+          {canWrite('users') && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="text-primary-600 hover:text-primary-700"
+              onClick={() => handleOpenLinkPlayersModal(guardianSummary)}
+            >
+              Link Players
+            </Button>
+          )}
           {canWrite('finance') && guardianSummary.totalNetBalance > 0 && (
             <Button variant="ghost" size="sm" className="text-primary-600 hover:text-primary-700">
               Send Invoice
@@ -890,6 +944,127 @@ const PlayersGuardians: React.FC = () => {
                       }}
                     >
                       Close
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Link Players Modal */}
+      {showLinkPlayersModal && selectedGuardianForLinking && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-full p-4">
+            <div className="w-full max-w-2xl my-8">
+              <Card className="w-full">
+                <div className="p-6 border-b bg-white">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="text-xl font-bold text-secondary-900">Link Players to Guardian</h3>
+                      <p className="text-sm text-secondary-600 mt-1">
+                        Guardian: {selectedGuardianForLinking.guardian.name}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowLinkPlayersModal(false);
+                        setSelectedGuardianForLinking(null);
+                        setSelectedPlayersToLink([]);
+                      }}
+                      className="text-secondary-400 hover:text-secondary-600"
+                    >
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="p-6">
+                  {/* Search for players */}
+                  <div className="mb-4">
+                    <Input
+                      type="text"
+                      placeholder="Search players..."
+                      className="w-full"
+                      onChange={(e) => {
+                        const searchValue = e.target.value.toLowerCase();
+                        const filtered = playerFinancials.filter(player => {
+                          return !player.guardians.some(g => g.id === selectedGuardianForLinking.guardian.id) &&
+                                 (player.user.name.toLowerCase().includes(searchValue) ||
+                                  player.user.email.toLowerCase().includes(searchValue));
+                        });
+                        setAvailablePlayersForLinking(filtered);
+                      }}
+                    />
+                  </div>
+
+                  {/* Players list */}
+                  <div className="mb-6">
+                    <h4 className="text-sm font-semibold text-secondary-700 mb-2">
+                      Select players to link ({selectedPlayersToLink.length} selected)
+                    </h4>
+                    <div className="max-h-96 overflow-y-auto border rounded-lg">
+                      {availablePlayersForLinking.length > 0 ? (
+                        <div className="divide-y">
+                          {availablePlayersForLinking.map((player) => (
+                            <div
+                              key={player.player.id}
+                              className="flex items-center justify-between p-3 hover:bg-secondary-50"
+                            >
+                              <div className="flex items-center space-x-3">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedPlayersToLink.includes(player.player.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedPlayersToLink([...selectedPlayersToLink, player.player.id]);
+                                    } else {
+                                      setSelectedPlayersToLink(selectedPlayersToLink.filter(id => id !== player.player.id));
+                                    }
+                                  }}
+                                  className="h-4 w-4 text-primary-600 rounded border-secondary-300 focus:ring-primary-500"
+                                />
+                                <div>
+                                  <div className="font-medium text-secondary-900">{player.user.name}</div>
+                                  <div className="text-sm text-secondary-600">{player.user.email}</div>
+                                  {player.guardians.length > 0 && (
+                                    <div className="text-xs text-secondary-500">
+                                      Current guardians: {player.guardians.map(g => g.name).join(', ')}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-8 text-center text-secondary-500">
+                          No available players to link
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="flex justify-end space-x-3">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setShowLinkPlayersModal(false);
+                        setSelectedGuardianForLinking(null);
+                        setSelectedPlayersToLink([]);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleLinkPlayers}
+                      disabled={selectedPlayersToLink.length === 0}
+                    >
+                      Link {selectedPlayersToLink.length} Player{selectedPlayersToLink.length !== 1 ? 's' : ''}
                     </Button>
                   </div>
                 </div>

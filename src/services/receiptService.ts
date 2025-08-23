@@ -681,30 +681,6 @@ export const calculateUserOutstandingBalance = async (
     // Positive = owes money, Negative = has credit balance, Zero = balanced
     const netBalance = outstandingDebits - availableCredits;
     
-    console.log('💰 calculateUserOutstandingBalance:', {
-      userId,
-      organizationId,
-      totalReceipts: organizationReceipts.length,
-      debitReceipts: debitReceipts.length,
-      creditReceipts: creditReceipts.length,
-      outstandingDebits,
-      availableCredits,
-      netBalance,
-      pendingDebitCount: pendingDebitReceipts.length
-    });
-    
-    // Debug: Show details of each debit receipt and its payment status
-    debitReceipts.forEach((debit, index) => {
-      const linkedCredits = organizationReceipts.filter(creditReceipt =>
-        creditReceipt.type === 'credit' &&
-        creditReceipt.siblingReceiptRefs &&
-        creditReceipt.siblingReceiptRefs.some(ref => ref.id === debit.id)
-      );
-      const totalCreditsApplied = linkedCredits.reduce((sum, credit) => sum + credit.amount, 0);
-      const remainingDebt = debit.amount - totalCreditsApplied;
-      
-      console.log(`📋 Debit ${index + 1}: Amount=${debit.amount}, Credits Applied=${totalCreditsApplied}, Remaining=${remainingDebt}`);
-    });
     
     return {
       outstandingDebits, // Raw pending debit amount

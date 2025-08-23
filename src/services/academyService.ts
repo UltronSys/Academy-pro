@@ -69,19 +69,15 @@ export const getAcademy = async (organizationId: string, academyId: string): Pro
 
 export const getAcademiesByOrganization = async (organizationId: string): Promise<Academy[]> => {
   try {
-    console.log('Fetching academies for organization:', organizationId);
     const academiesRef = collection(db, 'organizations', organizationId, 'academies');
-    console.log('Academies collection path:', `organizations/${organizationId}/academies`);
     
     const querySnapshot = await getDocs(academiesRef);
-    console.log('Query snapshot size:', querySnapshot.size);
     
     const academies = querySnapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
     })) as Academy[];
     
-    console.log('Fetched academies:', academies);
     return academies;
   } catch (error) {
     console.error('Error getting academies by organization:', error);

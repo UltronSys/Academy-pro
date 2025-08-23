@@ -86,13 +86,6 @@ class AlgoliaTransactionService {
   }
 
   private initialize() {
-    console.log('🔧 Initializing Algolia Transaction service...');
-    console.log('📌 Config values:', {
-      APP_ID: ALGOLIA_CONFIG.APP_ID,
-      SEARCH_KEY: ALGOLIA_CONFIG.SEARCH_API_KEY ? 'Set' : 'Not set',
-      ADMIN_KEY: ALGOLIA_CONFIG.ADMIN_API_KEY ? 'Set' : 'Not set',
-      INDEX: ALGOLIA_CONFIG.INDICES.TRANSACTIONS
-    });
     
     if (!validateAlgoliaConfig()) {
       throw new Error('Algolia is not configured. Please set up your Algolia API keys in the .env file.');
@@ -104,7 +97,6 @@ class AlgoliaTransactionService {
         ALGOLIA_CONFIG.APP_ID,
         ALGOLIA_CONFIG.SEARCH_API_KEY
       );
-      console.log('✅ Algolia search client created');
 
       // Initialize admin client for write operations (if admin key is available)
       if (ALGOLIA_CONFIG.ADMIN_API_KEY && ALGOLIA_CONFIG.ADMIN_API_KEY !== 'YOUR_ADMIN_KEY') {
@@ -113,20 +105,17 @@ class AlgoliaTransactionService {
           ALGOLIA_CONFIG.ADMIN_API_KEY
         );
         this.adminTransactionsIndex = this.adminClient.initIndex(ALGOLIA_CONFIG.INDICES.TRANSACTIONS);
-        console.log('✅ Algolia admin client initialized for transaction write operations');
       } else {
         console.warn('⚠️ Algolia Admin API Key not configured. Transaction write operations will fail.');
       }
 
       // Initialize indices
       this.transactionsIndex = this.client.initIndex(ALGOLIA_CONFIG.INDICES.TRANSACTIONS);
-      console.log('✅ Transactions index initialized:', ALGOLIA_CONFIG.INDICES.TRANSACTIONS);
       
       // Configure index settings for optimal search
       this.configureIndex();
       
       this.isInitialized = true;
-      console.log('✅ Algolia Transaction service initialized successfully');
     } catch (error) {
       console.error('Failed to initialize Algolia Transaction service:', error);
     }
@@ -179,7 +168,6 @@ class AlgoliaTransactionService {
         paginationLimitedTo: 1000
       };
 
-      console.log('Transaction index settings configured (should be done in dashboard):', settings);
     } catch (error) {
       console.error('Error configuring transaction index:', error);
     }
@@ -240,13 +228,6 @@ class AlgoliaTransactionService {
 
   // Search transactions with pagination and filters
   public async searchTransactions(options: TransactionSearchOptions): Promise<TransactionSearchResults> {
-    console.log('🔍 searchTransactions called with options:', options);
-    console.log('🔧 Service state:', {
-      isInitialized: this.isInitialized,
-      hasTransactionsIndex: !!this.transactionsIndex,
-      hasClient: !!this.client,
-      indexName: this.transactionsIndex?.indexName
-    });
     
     if (!this.isInitialized || !this.transactionsIndex) {
       throw new Error('Algolia Transaction service not initialized. Please check your Algolia configuration.');
@@ -367,7 +348,6 @@ class AlgoliaTransactionService {
 
     try {
       await this.adminTransactionsIndex.saveObject(transaction);
-      console.log(`✅ Transaction ${transaction.objectID} synced to Algolia`);
     } catch (error) {
       console.error('Error saving transaction to Algolia:', error);
     }
@@ -412,7 +392,6 @@ class AlgoliaTransactionService {
         await this.adminTransactionsIndex.saveObjects(batch);
         console.log(`✅ Synced batch ${i / batchSize + 1} (${batch.length} transactions)`);
       }
-      console.log(`✅ All ${transactions.length} transactions synced to Algolia`);
     } catch (error) {
       console.error('Error batch saving transactions to Algolia:', error);
     }
