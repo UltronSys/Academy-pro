@@ -8,7 +8,7 @@ import {
   Timestamp 
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Player, Product } from '../types';
+import { Player } from '../types';
 import { createDebitReceipt } from './receiptService';
 import { getProductById } from './productService';
 
@@ -259,7 +259,6 @@ export const processPlayerScheduledReceipts = async (playerId: string): Promise<
   details: { productId: string; status: 'success' | 'failed'; error?: string }[];
 }> => {
   try {
-    const playerRef = doc(db, 'players', playerId);
     const playerSnapshot = await getDocs(query(collection(db, 'players'), where('__name__', '==', playerId)));
     
     if (playerSnapshot.empty) {

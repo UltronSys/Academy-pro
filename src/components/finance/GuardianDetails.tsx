@@ -2,14 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, Toast, Badge, DataTable } from '../ui';
 import { useApp } from '../../contexts/AppContext';
-import { useAuth } from '../../contexts/AuthContext';
-import { usePermissions } from '../../hooks/usePermissions';
 import { getUserById } from '../../services/userService';
 import { getReceiptsByUser, calculateUserOutstandingBalance } from '../../services/receiptService';
 import { getPlayersByGuardianId } from '../../services/playerService';
-import { getTransactionsByOwner } from '../../services/transactionService';
 import { getSettingsByOrganization } from '../../services/settingsService';
-import { User, Receipt, Player, Transaction } from '../../types';
+import { User, Receipt, Player } from '../../types';
 
 interface GroupedReceipts {
   [key: string]: Receipt[];
@@ -28,7 +25,6 @@ const GuardianDetails: React.FC = () => {
   const { guardianId } = useParams<{ guardianId: string }>();
   const navigate = useNavigate();
   const { selectedOrganization } = useApp();
-  const { canWrite } = usePermissions();
   
   const [loading, setLoading] = useState(true);
   const [guardian, setGuardian] = useState<User | null>(null);
@@ -39,7 +35,6 @@ const GuardianDetails: React.FC = () => {
   const [groupedCreditReceipts, setGroupedCreditReceipts] = useState<GroupedReceipts>({});
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [currency, setCurrency] = useState('USD');
   
@@ -52,7 +47,7 @@ const GuardianDetails: React.FC = () => {
     if (guardianId && selectedOrganization?.id) {
       loadGuardianData();
     }
-  }, [guardianId, selectedOrganization]);
+  }, [guardianId, selectedOrganization]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadGuardianData = async () => {
     if (!guardianId || !selectedOrganization?.id) return;
@@ -109,9 +104,6 @@ const GuardianDetails: React.FC = () => {
 
       // Load player summaries (for linked players table only - no need for receipts)
       const playerSummaries: PlayerSummary[] = [];
-      let totalOutstandingSum = 0;
-      let totalCreditsSum = 0;
-      let totalNetSum = 0;
 
       for (const player of players) {
         try {
@@ -122,9 +114,6 @@ const GuardianDetails: React.FC = () => {
           // Calculate financial balance
           const balanceInfo = await calculateUserOutstandingBalance(player.userId, selectedOrganization.id);
 
-          totalOutstandingSum += balanceInfo.outstandingDebits;
-          totalCreditsSum += balanceInfo.availableCredits;
-          totalNetSum += balanceInfo.netBalance;
 
           playerSummaries.push({
             player,
@@ -151,18 +140,6 @@ const GuardianDetails: React.FC = () => {
       // Group guardian's receipts by month
       groupReceiptsByMonth(guardianDebitReceipts, guardianCreditReceipts);
 
-      // Load guardian's own transactions
-      try {
-        const guardianTransactions = await getTransactionsByOwner(
-          selectedOrganization.id, 
-          { id: guardianId } as any
-        );
-        setTransactions(guardianTransactions);
-        console.log(`Loaded ${guardianTransactions.length} guardian transactions`);
-      } catch (error) {
-        console.error('Error loading guardian transactions:', error);
-        setTransactions([]);
-      }
 
     } catch (error) {
       console.error('Error loading guardian data:', error);

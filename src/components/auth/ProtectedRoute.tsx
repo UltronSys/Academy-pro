@@ -17,7 +17,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requiredAction,
   fallbackPath = '/dashboard'
 }) => {
-  const { currentUser, loading: authLoading, userData } = useAuth();
+  const { currentUser, loading: authLoading } = useAuth();
   const { loading: permissionsLoading, hasPermission } = usePermissions();
   const [hasAccess, setHasAccess] = React.useState<boolean | null>(null);
 

@@ -1,23 +1,17 @@
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
+import {
+  collection,
+  doc,
+  getDocs,
+  query,
   where,
   orderBy,
   serverTimestamp,
   Timestamp,
-  DocumentReference,
-  writeBatch,
-  collectionGroup
+  DocumentReference
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Receipt, Product, Player, User } from '../types';
-import { createReceipt, calculateUserOutstandingBalance, autoApplyAvailableCredits, createCreditReceipt } from './receiptService';
+import { Receipt } from '../types';
+import { createReceipt, calculateUserOutstandingBalance, createCreditReceipt } from './receiptService';
 import { getPlayersByGuardianId } from './playerService';
 import { getUserById } from './userService';
 import { createTransaction } from './transactionService';

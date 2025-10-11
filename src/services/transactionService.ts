@@ -1,14 +1,11 @@
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  query,
   where,
-  orderBy,
   serverTimestamp,
   Timestamp,
   DocumentReference,
@@ -16,7 +13,7 @@ import {
   collectionGroup
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Transaction, Receipt, User } from '../types';
+import { Transaction, Receipt } from '../types';
 import { createCreditReceipt, getReceiptsByUser, calculateUserOutstandingBalance } from './receiptService';
 
 const COLLECTION_NAME = 'transactions';
@@ -483,7 +480,6 @@ export const softDeleteTransaction = async (
       
       // Query all receipts that have this transaction as their parentTransactionRef
       const allReceipts = await getDocs(collectionGroup(db, 'receipts'));
-      const transactionRef = doc(db, COLLECTION_NAME, transactionId);
       
       associatedReceipts = allReceipts.docs
         .filter(receiptDoc => {

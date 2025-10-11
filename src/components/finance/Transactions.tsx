@@ -1,36 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Card, Input, Label, Select, DataTable, Badge, Toast, ConfirmModal, PlayerMultiSelect } from '../ui';
+import { Button, Card, Input, Label, Select, DataTable, Badge, Toast, ConfirmModal } from '../ui';
 import PaymentMaker from './PaymentMaker';
 import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { 
-  createIncomeTransaction,
+import {
   createExpenseTransaction,
   createMultiPlayerPaymentTransaction,
   getTransactionsByOrganization,
   getTransactionsByAcademy,
   updateTransactionStatus,
-  deleteTransaction,
   softDeleteTransaction,
   restoreTransaction,
-  getDeletedTransactionsByOrganization,
-  getTransactionSummary 
+  getDeletedTransactionsByOrganization
 } from '../../services/transactionService';
 import { calculateUserOutstandingBalance } from '../../services/receiptService';
 import { createGuardianPaymentTransaction } from '../../services/guardianFinanceService';
-import { Transaction, Player, Settings, User, Receipt } from '../../types';
-import { 
-  searchTransactions, 
-  syncTransactionToAlgolia, 
-  deleteTransactionFromAlgolia,
-  isAlgoliaTransactionConfigured 
+import { Transaction, Player, User } from '../../types';
+import {
+  searchTransactions,
+  syncTransactionToAlgolia,
+  deleteTransactionFromAlgolia
 } from '../../services/algoliaTransactionService';
 import { searchUsers } from '../../services/algoliaService';
 import { doc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getSettingsByOrganization } from '../../services/settingsService';
-import { getPendingDebitReceipts } from '../../services/receiptService';
 
 
 const Transactions: React.FC = () => {
@@ -75,12 +70,12 @@ const Transactions: React.FC = () => {
   }>>({});
   // const [summary, setSummary] = useState<any>(null); // Summary removed for cleaner UI
   const [selectedTransactionType, setSelectedTransactionType] = useState<'income' | 'expense' | 'internal'>('income');
-  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
-  const [selectedPlayerNames, setSelectedPlayerNames] = useState<string[]>([]);
-  const [pendingReceipts, setPendingReceipts] = useState<Receipt[]>([]);
-  const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   
   // PaymentMaker component state
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+  const [selectedPlayerNames, setSelectedPlayerNames] = useState<string[]>([]);
+  const [pendingReceipts, setPendingReceipts] = useState<any[]>([]);
+  const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   const [selectedPaymentMaker, setSelectedPaymentMaker] = useState<{
     name: string;
     userRef: any;
@@ -99,28 +94,6 @@ const Transactions: React.FC = () => {
   // Guardian payment state  
   const [guardianGeneralPaymentAmount, setGuardianGeneralPaymentAmount] = useState<string>('');
 
-  const handlePlayerSelectionChange = async (playerIds: string[], playerNames: string[]) => {
-    setSelectedPlayerIds(playerIds);
-    setSelectedPlayerNames(playerNames);
-    
-    // Load pending receipts for the selected player
-    if (playerIds.length > 0 && selectedOrganization?.id) {
-      const playerData = players.find(p => p.id === playerIds[0]);
-      if (playerData) {
-        try {
-          const receipts = await getPendingDebitReceipts(playerData.userId, selectedOrganization.id);
-          setPendingReceipts(receipts);
-          console.log('Found pending receipts:', receipts.length);
-        } catch (error) {
-          console.error('Error loading pending receipts:', error);
-          setPendingReceipts([]);
-        }
-      }
-    } else {
-      setPendingReceipts([]);
-      setSelectedReceiptId(null);
-    }
-  };
 
   // Load transactions and products on component mount
   useEffect(() => {
@@ -190,11 +163,6 @@ const Transactions: React.FC = () => {
         setUsers(usersData);
         
         // Debug: Also check if we can find players from all users (fallback)
-        const allUsersWithPlayerRole = usersData.filter(user => 
-          user.roles?.some(role => 
-            Array.isArray(role.role) ? role.role.includes('player') : role.role === 'player'
-          )
-        );
         
         
         // Load payment methods and currency from settings
@@ -223,7 +191,7 @@ const Transactions: React.FC = () => {
     };
 
     loadData();
-  }, [selectedOrganization?.id, selectedAcademy?.id]);
+  }, [selectedOrganization?.id, selectedAcademy?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   
   // Perform Algolia search
   const performAlgoliaSearch = async () => {
@@ -292,7 +260,7 @@ const Transactions: React.FC = () => {
       
       return () => clearTimeout(debounceTimer);
     }
-  }, [searchTerm, filterStatus, filterType, dateRange, currentPage, selectedAcademy?.id]);
+  }, [searchTerm, filterStatus, filterType, dateRange, currentPage, selectedAcademy?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   
   // Load deleted transactions
   const loadDeletedTransactions = async () => {
@@ -312,7 +280,7 @@ const Transactions: React.FC = () => {
     if (showDeletedTransactions) {
       loadDeletedTransactions();
     }
-  }, [showDeletedTransactions, selectedOrganization?.id]);
+  }, [showDeletedTransactions, selectedOrganization?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showToast = (message: string, type: 'success' | 'error' | 'info') => {
     setToast({ message, type });
@@ -474,7 +442,6 @@ const Transactions: React.FC = () => {
 
     const formData = new FormData(e.currentTarget);
     const type = formData.get('transactionType') as 'income' | 'expense' | 'internal';
-    const ownerName = formData.get('ownerName') as string;
     const vendor = formData.get('vendor') as string;
     const paymentMethod = formData.get('paymentMethod') as string;
     const description = formData.get('description') as string;

@@ -51,11 +51,6 @@ const resources: { value: ResourceType; label: string }[] = [
   // { value: 'reports', label: 'Reports' },
 ];
 
-const actions: { value: PermissionAction; label: string }[] = [
-  { value: 'read', label: 'Read' },
-  { value: 'write', label: 'Write' },
-  { value: 'delete', label: 'Delete' },
-];
 
 export function RolePermissions() {
   const { userData } = useAuth();

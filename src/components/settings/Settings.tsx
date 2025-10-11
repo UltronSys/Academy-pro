@@ -10,7 +10,7 @@ import {
 } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
-import { Settings as SettingsType, ParameterField, FieldCategory, Academy, Organization } from '../../types';
+import { Settings as SettingsType, ParameterField, FieldCategory, Academy } from '../../types';
 import { getSettingsByOrganization, updateSettings } from '../../services/settingsService';
 import { getAcademiesByOrganization, createAcademy, updateAcademy, deleteAcademy } from '../../services/academyService';
 import { RolePermissions } from './RolePermissions';
@@ -19,11 +19,6 @@ import { countryOptions, cityOptions } from '../../constants/locations';
 import { getOrganizationById } from '../../services/organizationService';
 
 // Icons
-const SaveIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-  </svg>
-);
 
 const EditIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -111,7 +106,6 @@ const Settings: React.FC = () => {
   const [academyDialogMode, setAcademyDialogMode] = useState<'add' | 'edit'>('add');
   const [selectedAcademyForEdit, setSelectedAcademyForEdit] = useState<Academy | null>(null);
   const [academyForm, setAcademyForm] = useState<Partial<Academy>>({});
-  const [organization, setOrganization] = useState<Organization | null>(null);
   
   // Category dialog states
   const [openCategoryDialog, setOpenCategoryDialog] = useState(false);
@@ -130,7 +124,7 @@ const Settings: React.FC = () => {
     loadSettings();
     loadAcademies();
     loadOrganization();
-  }, [selectedOrganization, selectedAcademy]);
+  }, [selectedOrganization, selectedAcademy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSettings = async () => {
     try {
@@ -196,14 +190,14 @@ const Settings: React.FC = () => {
     try {
       const organizationId = userData?.roles[0]?.organizationId;
       if (organizationId) {
-        const org = await getOrganizationById(organizationId);
-        setOrganization(org);
+        await getOrganizationById(organizationId);
       }
     } catch (error) {
       console.error('Error loading organization:', error);
     }
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleSaveSettings = async () => {
     try {
       setLoading(true);

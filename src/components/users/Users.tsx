@@ -14,12 +14,12 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { User, UserRole, Academy, Player, Settings, ParameterField, SkillField, FieldCategory } from '../../types';
+import { User, UserRole, Academy, Settings, ParameterField, FieldCategory } from '../../types';
 import { updateUser, deleteUser, createUser } from '../../services/userService';
 import { getAcademiesByOrganization } from '../../services/academyService';
 import { createPlayer, getPlayerByUserId, updatePlayer, getPlayersByGuardianId, getPlayersByOrganization } from '../../services/playerService';
 import { getSettingsByOrganization, getFieldCategoriesForAcademy } from '../../services/settingsService';
-import { searchUsers as searchUsersAlgolia, isAlgoliaConfigured } from '../../services/algoliaService';
+import { searchUsers as searchUsersAlgolia } from '../../services/algoliaService';
 
 // Icons - using simple SVG icons instead of Material UI icons
 const SearchIcon = () => (
@@ -76,11 +76,6 @@ const SaveIcon = () => (
   </svg>
 );
 
-const CheckCircleIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
 
 // Helper function to get user initials
 const getInitials = (name: string) => {
@@ -217,7 +212,6 @@ const Users: React.FC = () => {
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [activeStep, setActiveStep] = useState(0);
-  const [showSuccessNotification, setShowSuccessNotification] = useState(false);
   const [guardians, setGuardians] = useState<User[]>([]);
   const [selectedGuardian, setSelectedGuardian] = useState<User | null>(null);
   const [linkedPlayers, setLinkedPlayers] = useState<User[]>([]);
@@ -226,7 +220,6 @@ const Users: React.FC = () => {
   const [guardianSearchResult, setGuardianSearchResult] = useState<User | null>(null);
   const [showCreateGuardian, setShowCreateGuardian] = useState(false);
   const [guardianCreationLoading, setGuardianCreationLoading] = useState(false);
-  const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [playerGuardianMap, setPlayerGuardianMap] = useState<Record<string, User[]>>({});
   const [selectedPlayer, setSelectedPlayer] = useState<User | null>(null);
   const [playerGuardians, setPlayerGuardians] = useState<User[]>([]);
@@ -267,11 +260,10 @@ const Users: React.FC = () => {
   
   const [submitLoading, setSubmitLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const [guardianCreateLoading, setGuardianCreateLoading] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
 
   const { userData } = useAuth();
-  const { selectedOrganization, selectedAcademy, setSelectedAcademy } = useApp();
+  const { selectedAcademy, setSelectedAcademy } = useApp();
 
   const isRolePreset = formData.roles.length > 0 && dialogMode === 'add' && activeTab !== 0;
   const isPlayerRole = formData.roles.includes('player');
@@ -416,13 +408,13 @@ const Users: React.FC = () => {
       loadAcademies();
       loadSettings();
     }
-  }, [userData, selectedAcademy, activeTab, searchTerm, roleFilter]);
+  }, [userData, selectedAcademy, activeTab, searchTerm, roleFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (userData) {
       loadSettings();
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   
   const loadSettings = async () => {
     try {
@@ -581,7 +573,7 @@ const Users: React.FC = () => {
       console.log(`🔄 User dialog opened (${dialogMode}), refreshing settings...`);
       loadSettings();
     }
-  }, [openDialog, dialogMode]);
+  }, [openDialog, dialogMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load guardian mapping from Algolia results
   const loadGuardianMapping = async (algoliaUsers: User[]) => {
@@ -590,7 +582,6 @@ const Users: React.FC = () => {
       if (organizationId) {
         const players = await getPlayersByOrganization(organizationId);
         
-        setAllPlayers(players);
         
         // Build a map of player userId to guardian Users
         const guardianMap: Record<string, User[]> = {};
@@ -1172,6 +1163,7 @@ const Users: React.FC = () => {
     }
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const getFilteredUsers = () => {
     let filteredByTab = users;
     
@@ -1214,7 +1206,6 @@ const Users: React.FC = () => {
     });
   };
 
-  const filteredUsers = getFilteredUsers();
 
   // DataTable columns configuration - conditionally add guardians column for players
   const baseColumns = [

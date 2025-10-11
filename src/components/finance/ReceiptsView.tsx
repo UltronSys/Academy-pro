@@ -1,18 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Card, DataTable, Badge, Toast } from '../ui';
+import { Card, DataTable, Badge, Toast } from '../ui';
 import { useApp } from '../../contexts/AppContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { getReceiptsByOrganization, getUserReceiptSummary } from '../../services/receiptService';
 import { getPlayersByOrganization } from '../../services/playerService';
-import { Receipt, Player, Transaction } from '../../types';
+import { Receipt, Transaction } from '../../types';
 import { getUserById } from '../../services/userService';
 import { getDoc } from 'firebase/firestore';
 
 const ReceiptsView: React.FC = () => {
   const { selectedOrganization } = useApp();
-  const { userData } = useAuth();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [playerSummaries, setPlayerSummaries] = useState<Map<string, any>>(new Map());
@@ -51,7 +48,6 @@ const ReceiptsView: React.FC = () => {
         
         // Load players
         const playersData = await getPlayersByOrganization(selectedOrganization.id);
-        setPlayers(playersData);
         
         // Calculate summaries for each player
         const summaries = new Map();

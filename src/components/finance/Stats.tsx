@@ -3,21 +3,12 @@ import { Card, Select, Button } from '../ui';
 import { useApp } from '../../contexts/AppContext';
 import { getTransactionsByOrganization } from '../../services/transactionService';
 import { getPlayersByOrganization } from '../../services/playerService';
-import { getReceiptsByOrganization, getUserReceiptSummary } from '../../services/receiptService';
+import { getReceiptsByOrganization } from '../../services/receiptService';
 import { getProductsByOrganization } from '../../services/productService';
 import { getUserById } from '../../services/userService';
 import { getSettingsByOrganization } from '../../services/settingsService';
 import { Transaction, Player, Receipt, Product, User } from '../../types';
 
-interface ChartData {
-  labels: string[];
-  datasets: {
-    label: string;
-    data: number[];
-    backgroundColor?: string;
-    borderColor?: string;
-  }[];
-}
 
 const Stats: React.FC = () => {
   const { selectedAcademy, selectedOrganization } = useApp();
@@ -27,11 +18,7 @@ const Stats: React.FC = () => {
   const [defaultCurrency, setDefaultCurrency] = useState<string>('USD');
   
   // Real data state
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [playerUsers, setPlayerUsers] = useState<Map<string, User>>(new Map());
   
   // Calculated metrics
   const [metrics, setMetrics] = useState({
@@ -64,7 +51,7 @@ const Stats: React.FC = () => {
     if (selectedOrganization?.id) {
       loadFinancialData();
     }
-  }, [selectedOrganization, selectedAcademy]);
+  }, [selectedOrganization, selectedAcademy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadFinancialData = async () => {
     if (!selectedOrganization?.id) {
@@ -102,9 +89,6 @@ const Stats: React.FC = () => {
         products: productsData.length
       });
       
-      setTransactions(transactionsData);
-      setPlayers(playersData);
-      setReceipts(receiptsData);
       setProducts(productsData);
       
       // Load player users for names
@@ -121,7 +105,6 @@ const Stats: React.FC = () => {
           }
         })
       );
-      setPlayerUsers(userMap);
       
       // Calculate metrics
       calculateMetrics(transactionsData, playersData, receiptsData, productsData, userMap);

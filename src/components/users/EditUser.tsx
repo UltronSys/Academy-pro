@@ -10,11 +10,10 @@ import {
   Badge
 } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
-import { useApp } from '../../contexts/AppContext';
-import { User, UserRole, Academy, Player, Settings, ParameterField, SkillField, FieldCategory } from '../../types';
-import { getUserById, updateUser, createUser } from '../../services/userService';
+import { User, Academy, Settings, ParameterField, FieldCategory } from '../../types';
+import { getUserById, updateUser } from '../../services/userService';
 import { getAcademiesByOrganization } from '../../services/academyService';
-import { createPlayer, getPlayerByUserId, updatePlayer } from '../../services/playerService';
+import { getPlayerByUserId, updatePlayer } from '../../services/playerService';
 import { getSettingsByOrganization, getFieldCategoriesForAcademy } from '../../services/settingsService';
 
 // Icons
@@ -36,11 +35,6 @@ const SaveIcon = () => (
   </svg>
 );
 
-const CheckCircleIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
 
 const DeleteIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -70,10 +64,8 @@ const EditUser: React.FC = () => {
     dynamicFields: {} as Record<string, any>
   });
   const [submitLoading, setSubmitLoading] = useState(false);
-  const [guardians, setGuardians] = useState<User[]>([]);
 
   const { userData } = useAuth();
-  const { selectedOrganization } = useApp();
 
   const steps = ['Full Name', 'Role Assignment', 'Contact Information', 'Player Details'];
   const isPlayerRole = formData.roles.includes('player');
@@ -86,7 +78,7 @@ const EditUser: React.FC = () => {
       loadAcademies();
       loadSettings();
     }
-  }, [userData, userId]);
+  }, [userData, userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (organizationSettings && formData.academyId.length > 0) {

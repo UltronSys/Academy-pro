@@ -20,7 +20,11 @@
       "Bash(pkill:*)",
       "Bash(npm ls:*)",
       "Bash(chmod:*)",
-      "Bash(./remove_console.sh)"
+      "Bash(./remove_console.sh)",
+      "Bash(npx eslint:*)",
+      "Bash(mkdir:*)",
+      "Read(//home/nasser/vijaro/**)",
+      "Bash(npx create-next-app@latest:*)"
     ],
     "deny": []
   }

@@ -1,14 +1,12 @@
-import { 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword, 
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
   signOut,
   sendPasswordResetEmail,
-  updateProfile,
-  getAuth
+  updateProfile
 } from 'firebase/auth';
 import { auth, adminAuth } from '../firebase';
 import { createUser } from './userService';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
 export const signUp = async (email: string, password: string, name: string) => {
   try {
