@@ -16,7 +16,6 @@ import {
 import { PhotoCamera, Add } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { createAcademy } from '../../services/academyService';
-import { getOrganizationById } from '../../services/organizationService';
 import { countryOptions, cityOptions } from '../../constants/locations';
 
 const CreateAcademy: React.FC = () => {

@@ -1,14 +1,13 @@
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
+import {
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  query,
   where,
-  orderBy,
   serverTimestamp,
   Timestamp,
   DocumentReference,
@@ -16,7 +15,7 @@ import {
   collectionGroup
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Receipt, Product } from '../types';
+import { Receipt } from '../types';
 import { recalculateAndUpdateUserBalance, recalculateAndUpdateUserOutstandingAndCredits } from './userService';
 
 export const createReceipt = async (

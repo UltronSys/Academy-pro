@@ -126,6 +126,7 @@ class AlgoliaTransactionService {
 
     try {
       // Index settings configuration
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const settings = {
         searchableAttributes: [
           'description',
@@ -240,6 +241,7 @@ class AlgoliaTransactionService {
       filters = {},
       page = 0,
       hitsPerPage = 10,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       sortBy = 'date_desc'
     } = options;
 
@@ -294,6 +296,7 @@ class AlgoliaTransactionService {
       }
 
       // Configure sorting
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       let indexName = ALGOLIA_CONFIG.INDICES.TRANSACTIONS;
       // Note: For sorting, you would typically create replica indices in Algolia dashboard
       // For now, we'll use the default index and rely on custom ranking

@@ -2,12 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, Input, Label, Toast, Badge, DataTable } from '../ui';
 import { useApp } from '../../contexts/AppContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { getPlayerById, updatePlayer, assignProductToPlayer, removeProductFromPlayer } from '../../services/playerService';
 import { getUserById } from '../../services/userService';
 import { getReceiptsByUser } from '../../services/receiptService';
-import { getProductsByPlayer, getProductsByOrganization } from '../../services/productService';
+import { getProductsByOrganization } from '../../services/productService';
 import { getSettingsByOrganization } from '../../services/settingsService';
 import { Player, User, Receipt, Product } from '../../types';
 import { Timestamp } from 'firebase/firestore';
@@ -26,9 +25,6 @@ const PlayerDetails: React.FC = () => {
   const [player, setPlayer] = useState<Player | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [guardians, setGuardians] = useState<User[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [debitReceipts, setDebitReceipts] = useState<Receipt[]>([]);
-  const [creditReceipts, setCreditReceipts] = useState<Receipt[]>([]);
   const [groupedDebitReceipts, setGroupedDebitReceipts] = useState<GroupedReceipts>({});
   const [groupedCreditReceipts, setGroupedCreditReceipts] = useState<GroupedReceipts>({});
   const [selectedMonth, setSelectedMonth] = useState<string>('');
@@ -53,7 +49,7 @@ const PlayerDetails: React.FC = () => {
     if (playerId && selectedOrganization?.id) {
       loadPlayerDetails();
     }
-  }, [playerId, selectedOrganization]);
+  }, [playerId, selectedOrganization]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadPlayerDetails = async () => {
     if (!playerId || !selectedOrganization?.id) return;
@@ -81,11 +77,6 @@ const PlayerDetails: React.FC = () => {
       const guardiansData = await Promise.all(guardianPromises);
       setGuardians(guardiansData.filter(g => g !== null) as User[]);
 
-      // Load products assigned to player
-      if (selectedOrganization.id) {
-        const productsData = await getProductsByPlayer(selectedOrganization.id, playerId);
-        setProducts(productsData);
-      }
 
       // Load receipts
       const receiptsData = await getReceiptsByUser(playerData.userId);
@@ -94,8 +85,6 @@ const PlayerDetails: React.FC = () => {
       const debits = receiptsData.filter(r => r.type === 'debit');
       const credits = receiptsData.filter(r => r.type === 'credit');
       
-      setDebitReceipts(debits);
-      setCreditReceipts(credits);
       
       // Group receipts by month
       const debitGroups = groupReceiptsByMonth(debits);

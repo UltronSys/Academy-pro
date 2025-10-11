@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Button, Label, Select, Input, Card } from '../ui';
 import { User, Player } from '../../types';
 import { calculateUserOutstandingBalance } from '../../services/receiptService';
-import { getUserStoredOutstandingAndCredits, recalculateAndUpdateUserOutstandingAndCredits } from '../../services/userService';
-import { searchUsers } from '../../services/algoliaService';
+import { recalculateAndUpdateUserOutstandingAndCredits } from '../../services/userService';
 import { useApp } from '../../contexts/AppContext';
 import { doc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -51,7 +50,6 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
   guardianGeneralPaymentAmount = ''
 }) => {
   const { selectedOrganization } = useApp();
-  const [guardianPlayers, setGuardianPlayers] = useState<Player[]>([]);
   const [availablePlayersForSelection, setAvailablePlayersForSelection] = useState<Player[]>([]);
   const [showAdditionalPlayerSelection, setShowAdditionalPlayerSelection] = useState(false);
   const [selectedAdditionalPlayerId, setSelectedAdditionalPlayerId] = useState('');
@@ -141,7 +139,6 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
   useEffect(() => {
     const loadGuardianPlayersAndBalances = async () => {
       if (!selectedPaymentMaker || selectedPaymentMaker.type !== 'guardian') {
-        setGuardianPlayers([]);
         setGuardianBalance(null);
         // Don't clear playerPayments here if it's a player type - it's handled in handlePaymentMakerChange
         if (selectedPaymentMaker?.type !== 'player') {
@@ -187,7 +184,6 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
         });
         
         console.log(`📊 Found ${linkedPlayers.length} players linked to guardian`);
-        setGuardianPlayers(linkedPlayers);
 
         // Load guardian's own balance (excess payments/credits)
         if (selectedOrganization?.id) {
@@ -237,7 +233,7 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
     };
 
     loadGuardianPlayersAndBalances();
-  }, [selectedPaymentMaker, users, players, selectedOrganization]);
+  }, [selectedPaymentMaker, users, players, selectedOrganization]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Set available players for additional selection (excluding already included ones)
@@ -292,6 +288,7 @@ const PaymentMaker: React.FC<PaymentMakerProps> = ({
     }
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handlePaymentMakerChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     if (!value) {

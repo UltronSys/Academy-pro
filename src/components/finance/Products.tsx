@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Card, Input, Label, Select, DataTable, Toast, ConfirmModal, PlayerMultiSelect } from '../ui';
 import { useApp } from '../../contexts/AppContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { 
   createProduct, 
@@ -12,14 +11,12 @@ import {
   linkPlayersToProduct,
   unlinkPlayersFromProduct
 } from '../../services/productService';
-import { Player, Product } from '../../types';
+import { Product } from '../../types';
 import { getPlayersByOrganization } from '../../services/playerService';
 import { getSettingsByOrganization } from '../../services/settingsService';
-import { db } from '../../firebase';
 
 const Products: React.FC = () => {
   const { selectedAcademy, selectedOrganization } = useApp();
-  const { userData } = useAuth();
   const { canWrite, canDelete } = usePermissions();
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,7 +32,6 @@ const Products: React.FC = () => {
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void } | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [defaultCurrency, setDefaultCurrency] = useState<string>('USD');
-  const [players, setPlayers] = useState<Player[]>([]);
   
   // Player linking states
   const [showLinkPlayersModal, setShowLinkPlayersModal] = useState(false);
@@ -71,8 +67,7 @@ const Products: React.FC = () => {
         setProducts(productsData);
         
         // Load players for linking functionality
-        const playersData = await getPlayersByOrganization(selectedOrganization.id);
-        setPlayers(playersData);
+        await getPlayersByOrganization(selectedOrganization.id);
         
         // Load currency from settings
         const settingsData = await getSettingsByOrganization(selectedOrganization.id);

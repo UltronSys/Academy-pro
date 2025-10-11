@@ -7,10 +7,8 @@ import {
   Badge,
   Alert,
   Avatar,
-  DataTable
 } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
-import { useApp } from '../../contexts/AppContext';
 import { User, Player, Academy } from '../../types';
 import { getUserById } from '../../services/userService';
 import { getPlayerByUserId } from '../../services/playerService';
@@ -72,14 +70,13 @@ const UserDetails: React.FC = () => {
   
 
   const { userData } = useAuth();
-  const { selectedOrganization } = useApp();
 
   useEffect(() => {
     if (userData && userId) {
       loadUserDetails();
       loadAcademies();
     }
-  }, [userData, userId]);
+  }, [userData, userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadUserDetails = async () => {
     try {

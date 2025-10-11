@@ -104,7 +104,6 @@ const StatsCard: React.FC<StatsCardProps> = ({ title, value, icon, subtitle, tre
 const Dashboard: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [academyUsers, setAcademyUsers] = useState<User[]>([]);
-  const [totalAcademies, setTotalAcademies] = useState(0);
   const [loading, setLoading] = useState(true);
   const { userData, loading: authLoading } = useAuth();
   const { selectedOrganization, selectedAcademy } = useApp();
@@ -124,13 +123,12 @@ const Dashboard: React.FC = () => {
         
         if (organizationId) {
           // If user has organizationId, load organization-specific data
-          const [orgUsers, academies] = await Promise.all([
+          const [orgUsers] = await Promise.all([
             getUsersByOrganization(organizationId),
             getAcademiesByOrganization(organizationId)
           ]);
 
           setUsers(orgUsers);
-          setTotalAcademies(academies.length);
 
           if (selectedAcademy) {
             const academySpecificUsers = await getUsersByAcademy(organizationId, selectedAcademy.id);
@@ -141,7 +139,6 @@ const Dashboard: React.FC = () => {
         } else {
           // If no organizationId, show empty dashboard
           setUsers([]);
-          setTotalAcademies(0);
           setAcademyUsers([]);
         }
       } catch (error) {

@@ -1,12 +1,11 @@
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
+import {
+  collection,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
   deleteDoc,
   getDocs,
-  query,
   serverTimestamp
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -140,6 +139,7 @@ export const getAcademyStats = async (organizationId: string, academyId: string)
       totalGuardians: 0,
       recentActivities: []
     };
+    // eslint-disable-next-line no-unreachable
   } catch (error) {
     console.error('Error getting academy stats:', error);
     throw error;

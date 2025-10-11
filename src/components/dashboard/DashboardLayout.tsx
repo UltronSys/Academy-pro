@@ -65,11 +65,6 @@ const SchoolIcon = () => (
   </svg>
 );
 
-const SearchIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-  </svg>
-);
 
 const AllUsersIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -107,23 +102,8 @@ const FinanceIcon = () => (
   </svg>
 );
 
-const EventIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-  </svg>
-);
 
-const TrainingIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-  </svg>
-);
 
-const ReportIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-  </svg>
-);
 
 const UserIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -155,7 +135,6 @@ const BellIcon = () => (
   </svg>
 );
 
-const drawerWidth = 280;
 
 interface DashboardLayoutProps {
   children?: React.ReactNode;
@@ -375,8 +354,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     <div className="h-full bg-white flex flex-col">
       {/* Logo */}
       <div className="flex items-center space-x-3 px-4 sm:px-6 py-4 border-b border-secondary-200 flex-shrink-0">
-        <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg text-white">
-          <SchoolIcon />
+        <div className="flex items-center justify-center w-12 h-12 bg-white rounded-lg overflow-hidden">
+          <img
+            src="/logo.png"
+            alt="Vijaro Logo"
+            className="w-10 h-10 object-contain"
+          />
         </div>
         <div>
           <h2 className="text-lg font-bold text-secondary-900">Vijaro</h2>
@@ -399,8 +382,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         <nav className="space-y-1">
           {menuItems.map((item) => {
             const isActive = location.pathname === item.path;
-            const isUsersPage = location.pathname.startsWith('/users');
-            const isFinancePage = location.pathname.startsWith('/finance');
             
             return (
               <div key={item.text}>

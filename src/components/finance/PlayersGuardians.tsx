@@ -2,11 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Input, Select, DataTable, Badge, Tabs, Toast } from '../ui';
 import { useApp } from '../../contexts/AppContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { getPlayersByOrganization } from '../../services/playerService';
 import { getTransactionsByOwner } from '../../services/transactionService';
-import { getReceiptsByUser, getReceiptsByOrganization, calculateUserOutstandingBalance } from '../../services/receiptService';
+import { getReceiptsByOrganization, calculateUserOutstandingBalance } from '../../services/receiptService';
 import { getSettingsByOrganization } from '../../services/settingsService';
 import { Player, User, Transaction, Receipt } from '../../types';
 import { getUserById } from '../../services/userService';
@@ -63,7 +62,7 @@ const PlayersGuardians: React.FC = () => {
     if (selectedOrganization?.id) {
       loadFinancialData();
     }
-  }, [selectedOrganization, selectedAcademy]);
+  }, [selectedOrganization, selectedAcademy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh data when the page becomes visible (user returns from transaction page)
   useEffect(() => {
@@ -88,7 +87,7 @@ const PlayersGuardians: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [selectedOrganization?.id]);
+  }, [selectedOrganization?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadFinancialData = async () => {
     if (!selectedOrganization?.id) return;

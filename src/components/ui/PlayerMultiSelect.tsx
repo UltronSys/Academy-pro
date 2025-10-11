@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Input, Button } from './';
-import { Player } from '../../types';
+import { Input } from './';
 import { searchUsers as searchUsersAlgolia } from '../../services/algoliaService';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -161,9 +160,6 @@ const PlayerMultiSelect: React.FC<PlayerMultiSelectProps> = ({
     setSearchTerm('');
   };
 
-  const handleRemovePlayer = (playerId: string) => {
-    updateSelection(selectedPlayerIds.filter(id => id !== playerId));
-  };
 
   return (
     <div className="relative" ref={dropdownRef}>

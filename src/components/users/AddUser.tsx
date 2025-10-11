@@ -10,10 +10,8 @@ import {
   Badge
 } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
-import { useApp } from '../../contexts/AppContext';
-import { User, UserRole, Academy, Settings, ParameterField, FieldCategory } from '../../types';
+import { Academy, Settings, ParameterField, FieldCategory } from '../../types';
 import { createUser, getUsersByOrganization, updateUser } from '../../services/userService';
-import { signUp } from '../../services/authService';
 import { getAcademiesByOrganization } from '../../services/academyService';
 import { createPlayer } from '../../services/playerService';
 import { getSettingsByOrganization, getFieldCategoriesForAcademy } from '../../services/settingsService';
@@ -52,7 +50,6 @@ const DeleteIcon = () => (
 const AddUser: React.FC = () => {
   const navigate = useNavigate();
   const [academies, setAcademies] = useState<Academy[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeStep, setActiveStep] = useState(0);
@@ -71,19 +68,8 @@ const AddUser: React.FC = () => {
     dynamicFields: {} as Record<string, any>
   });
   const [submitLoading, setSubmitLoading] = useState(false);
-  const [guardians, setGuardians] = useState<User[]>([]);
-  const [guardianPhone, setGuardianPhone] = useState('');
-  const [guardianSearchResult, setGuardianSearchResult] = useState<User | null>(null);
-  const [showCreateGuardian, setShowCreateGuardian] = useState(false);
-  const [newGuardianData, setNewGuardianData] = useState({
-    name: '',
-    email: '',
-    phone: ''
-  });
-  const [guardianCreateLoading, setGuardianCreateLoading] = useState(false);
 
   const { userData } = useAuth();
-  const { selectedOrganization } = useApp();
 
   const steps = ['Full Name', 'Role Assignment', 'Contact Information', 'Player Details'];
   const isPlayerRole = formData.roles.includes('player');
@@ -98,7 +84,7 @@ const AddUser: React.FC = () => {
     if (userData) {
       loadInitialData();
     }
-  }, [userData]);
+  }, [userData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     console.log('===== AddUser useEffect START =====');
@@ -150,14 +136,12 @@ const AddUser: React.FC = () => {
         console.log('AddUser: loadInitialData - settings.fieldCategories:', settings?.fieldCategories);
         
         setAcademies(academyData);
-        setUsers(userData_list);
         setOrganizationSettings(settings);
         
         // Filter guardians
-        const guardianUsers = userData_list.filter(user => 
+        userData_list.filter(user => 
           user.roles.some(role => role.role.includes('guardian'))
         );
-        setGuardians(guardianUsers);
       }
     } catch (error) {
       console.error('Error loading data:', error);
