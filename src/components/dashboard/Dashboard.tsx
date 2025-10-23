@@ -3,7 +3,6 @@ import { Card, CardBody, Badge } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
 import { getUsersByOrganization, getUsersByAcademy } from '../../services/userService';
-import { getAcademiesByOrganization } from '../../services/academyService';
 import { User } from '../../types';
 
 // Icons - using simple SVG icons instead of Material UI icons
@@ -120,16 +119,13 @@ const Dashboard: React.FC = () => {
 
       try {
         setLoading(true);
-        
-        if (organizationId) {
-          // If user has organizationId, load organization-specific data
-          const [orgUsers] = await Promise.all([
-            getUsersByOrganization(organizationId),
-            getAcademiesByOrganization(organizationId)
-          ]);
 
+        if (organizationId) {
+          // Fetch organization users (academies come from AppContext now)
+          const orgUsers = await getUsersByOrganization(organizationId);
           setUsers(orgUsers);
 
+          // If academy is selected, fetch academy-specific users
           if (selectedAcademy) {
             const academySpecificUsers = await getUsersByAcademy(organizationId, selectedAcademy.id);
             setAcademyUsers(academySpecificUsers);
@@ -344,7 +340,7 @@ const Dashboard: React.FC = () => {
             
             {recentUsers.length > 0 ? (
               <div className="space-y-4">
-                {recentUsers.map((user, index) => (
+                {recentUsers.map((user) => (
                   <div key={user.id} className="flex items-center space-x-3 p-3 rounded-lg hover:bg-secondary-50 transition-colors duration-200">
                     <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-full flex items-center justify-center text-white font-semibold text-sm">
                       {getInitials(user.name)}
