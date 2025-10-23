@@ -1,22 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { 
-  checkPermission, 
-  getUserPermissions,
-  getRolePermissions 
-} from '../services/permissionService';
-import { Permission, ResourceType, PermissionAction, RolePermission } from '../types';
+import { usePermissionsContext } from '../contexts/PermissionsContext';
+import { checkPermission } from '../services/permissionService';
+import { Permission, ResourceType, PermissionAction } from '../types';
 
 export const usePermissions = () => {
   const { currentUser, userData } = useAuth();
+  const { rolePermissions, loading: permissionsLoading } = usePermissionsContext();
   const organizationId = userData?.roles[0]?.organizationId;
   const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [rolePermissions, setRolePermissions] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchPermissions = async () => {
-      
+    const calculatePermissions = () => {
       if (!currentUser || !userData) {
         setPermissions([]);
         setLoading(false);
@@ -40,33 +36,50 @@ export const usePermissions = () => {
         return;
       }
 
-      try {
-        // Get user's roles for the current organization
-        const userRole = userData.roles.find(r => r.organizationId === organizationId);
-        
-        if (!userRole) {
-          setPermissions([]);
-          setLoading(false);
-          return;
-        }
+      // Get user's roles for the current organization
+      const userRole = userData.roles.find(r => r.organizationId === organizationId);
 
-        // Fetch user's aggregated permissions
-        const userPermissions = await getUserPermissions(organizationId, userRole.role);
-        setPermissions(userPermissions);
-
-        // Fetch all role permissions for the organization
-        const orgRolePermissions = await getRolePermissions(organizationId);
-        setRolePermissions(orgRolePermissions);
-      } catch (error) {
-        console.error('Error fetching permissions:', error);
+      if (!userRole) {
         setPermissions([]);
-      } finally {
         setLoading(false);
+        return;
       }
+
+      // Calculate user's aggregated permissions from cached rolePermissions
+      // No Firebase query needed - uses data from PermissionsContext!
+      const allPermissions: Map<ResourceType, Set<PermissionAction>> = new Map();
+
+      for (const roleName of userRole.role) {
+        // Find the role permission from cached data
+        const rolePermission = rolePermissions.find(
+          rp => rp.roleName === roleName && rp.organizationId === organizationId
+        );
+
+        if (rolePermission) {
+          // Aggregate permissions from this role
+          for (const permission of rolePermission.permissions) {
+            const existing = allPermissions.get(permission.resource) || new Set();
+            permission.actions.forEach(action => existing.add(action));
+            allPermissions.set(permission.resource, existing);
+          }
+        }
+      }
+
+      // Convert map to array of permissions
+      const calculatedPermissions: Permission[] = [];
+      allPermissions.forEach((actions, resource) => {
+        calculatedPermissions.push({
+          resource,
+          actions: Array.from(actions)
+        });
+      });
+
+      setPermissions(calculatedPermissions);
+      setLoading(false);
     };
 
-    fetchPermissions();
-  }, [currentUser, userData, organizationId]);
+    calculatePermissions();
+  }, [currentUser, userData, organizationId, rolePermissions]);
 
   const hasPermission = useCallback(
     async (resource: ResourceType, action: PermissionAction): Promise<boolean> => {
@@ -140,7 +153,7 @@ export const usePermissions = () => {
     [permissions]
   );
 
-  const refreshPermissions = useCallback(async () => {
+  const refreshPermissions = useCallback(() => {
     if (!currentUser || !userData || !organizationId) {
       return;
     }
@@ -150,21 +163,40 @@ export const usePermissions = () => {
       return;
     }
 
-    try {
-      const userPermissions = await getUserPermissions(organizationId, userRole.role);
-      setPermissions(userPermissions);
-      
-      const orgRolePermissions = await getRolePermissions(organizationId);
-      setRolePermissions(orgRolePermissions);
-    } catch (error) {
-      console.error('Error refreshing permissions:', error);
+    // Recalculate permissions from cached rolePermissions (no Firebase query)
+    const allPermissions: Map<ResourceType, Set<PermissionAction>> = new Map();
+
+    for (const roleName of userRole.role) {
+      const rolePermission = rolePermissions.find(
+        rp => rp.roleName === roleName && rp.organizationId === organizationId
+      );
+
+      if (rolePermission) {
+        for (const permission of rolePermission.permissions) {
+          const existing = allPermissions.get(permission.resource) || new Set();
+          permission.actions.forEach(action => existing.add(action));
+          allPermissions.set(permission.resource, existing);
+        }
+      }
     }
-  }, [currentUser, userData, organizationId]);
+
+    const calculatedPermissions: Permission[] = [];
+    allPermissions.forEach((actions, resource) => {
+      calculatedPermissions.push({
+        resource,
+        actions: Array.from(actions)
+      });
+    });
+
+    setPermissions(calculatedPermissions);
+
+    // rolePermissions are automatically refreshed by PermissionsContext listener
+  }, [currentUser, userData, organizationId, rolePermissions]);
 
   return {
     permissions,
     rolePermissions,
-    loading,
+    loading: loading || permissionsLoading,
     hasPermission,
     canRead,
     canWrite,

@@ -1,7 +1,8 @@
-import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { AppProvider } from './contexts/AppContext';
+import { PermissionsProvider } from './contexts/PermissionsContext';
+import { SettingsProvider } from './contexts/SettingsContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import Login from './components/auth/Login';
 import Signup from './components/auth/Signup';
@@ -20,8 +21,10 @@ import GuardianDetails from './components/finance/GuardianDetails';
 function App() {
   return (
     <AuthProvider>
-      <AppProvider>
-        <Router>
+      <PermissionsProvider>
+        <SettingsProvider>
+          <AppProvider>
+            <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
@@ -116,7 +119,9 @@ function App() {
             <Route path="/" element={<Navigate to="/dashboard" />} />
           </Routes>
         </Router>
-      </AppProvider>
+          </AppProvider>
+        </SettingsProvider>
+      </PermissionsProvider>
     </AuthProvider>
   );
 }

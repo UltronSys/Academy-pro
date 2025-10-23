@@ -3,9 +3,6 @@ import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { getAcademiesByOrganization } from '../../services/academyService';
-import { getOrganization } from '../../services/organizationService';
-import { Academy, Organization } from '../../types';
 import { Avatar, Select } from '../ui';
 
 // Icons
@@ -145,15 +142,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [academies, setAcademies] = useState<Academy[]>([]);
-  const [organization, setOrganization] = useState<Organization | null>(null);
   const [usersExpanded, setUsersExpanded] = useState(location.pathname.startsWith('/users'));
   const [financeExpanded, setFinanceExpanded] = useState(location.pathname.startsWith('/finance'));
-  const { currentUser, userData, logout, refreshUserData } = useAuth();
-  const { selectedAcademy, setSelectedAcademy, setSelectedOrganization } = useApp();
+  const { currentUser, userData, logout } = useAuth();
+  const {
+    selectedOrganization,
+    selectedAcademy,
+    organizations,
+    academies,
+    setSelectedAcademy
+  } = useApp();
   const { canRead } = usePermissions();
 
-  const organizationId = userData?.roles[0]?.organizationId;
+  // Get organization from context (it's now an array, get first item)
+  const organization = organizations[0] || selectedOrganization;
   
   // Check if we have navigation state from signup
   const navigationState = location.state as any;
@@ -177,111 +179,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     setFinanceExpanded(location.pathname.startsWith('/finance'));
   }, [location.pathname]);
 
-  // First priority: Use navigation state if available (from signup)
+  // Handle navigation state from signup (just clear it, data comes from AppContext now)
   useEffect(() => {
     if (navigationState?.justSignedUp) {
-      
-      // Force refresh user data from AuthContext to sync with the new user
-      if (navigationState.userData) {
-        
-        // Immediate refresh
-        refreshUserData().then(() => {
-        }).catch((error) => {
-          console.error('DashboardLayout: Failed to refresh AuthContext:', error);
-        });
-        
-        // Backup refresh after a short delay to ensure it's loaded
-        setTimeout(() => {
-          refreshUserData().catch((error) => {
-            console.error('DashboardLayout: Backup refresh failed:', error);
-          });
-        }, 1000);
-      }
-      
-      if (navigationState.organization) {
-        setOrganization(navigationState.organization);
-        setSelectedOrganization(navigationState.organization);
-      }
-      
-      if (navigationState.academies && navigationState.academies.length > 0) {
-        setAcademies(navigationState.academies);
-        if (selectedAcademy === undefined) {
-          setSelectedAcademy(null); // Start with "All Academies" selected
-        }
-      }
-      
-      
       // Clear the navigation state to prevent reuse
+      // Data is now automatically loaded by AppContext
       navigate(location.pathname, { replace: true, state: null });
     }
-  }, [navigationState, setSelectedOrganization, setSelectedAcademy, selectedAcademy, navigate, location.pathname, refreshUserData]);
-
-  // Second priority: Load data normally if we have organizationId but no data
-  useEffect(() => {
-    const loadData = async () => {
-      // Skip if we just used navigation state or if we already have data
-      if (navigationState?.justSignedUp || !organizationId || (organization && academies.length > 0)) {
-        return;
-      }
-      
-      try {
-        
-        const [orgData, academyData] = await Promise.all([
-          getOrganization(organizationId),
-          getAcademiesByOrganization(organizationId)
-        ]);
-        
-        
-        if (orgData) {
-          setOrganization(orgData);
-          setSelectedOrganization(orgData);
-        }
-        
-        setAcademies(academyData);
-        // Only set the first academy as selected if no academy is currently selected
-        // and we're not explicitly showing "All Academies"
-        if (academyData.length > 0 && selectedAcademy === undefined) {
-          setSelectedAcademy(null); // Start with "All Academies" selected
-        }
-      } catch (error) {
-        console.error('DashboardLayout: Error loading data:', error);
-      }
-    };
-
-    loadData();
-  }, [organizationId, setSelectedOrganization, setSelectedAcademy, organization, academies.length, selectedAcademy, navigationState]);
-
-  // Fallback: Force reload if userData changes and we still don't have data
-  useEffect(() => {
-    if (userData && organizationId && !navigationState?.justSignedUp && (!organization || academies.length === 0)) {
-      
-      const forceReload = async () => {
-        try {
-          const [orgData, academyData] = await Promise.all([
-            getOrganization(organizationId),
-            getAcademiesByOrganization(organizationId)
-          ]);
-          
-          if (orgData) {
-            setOrganization(orgData);
-            setSelectedOrganization(orgData);
-          }
-          
-          if (academyData && academyData.length > 0) {
-            setAcademies(academyData);
-            if (selectedAcademy === undefined) {
-              setSelectedAcademy(null);
-            }
-          }
-          
-        } catch (error) {
-          console.error('DashboardLayout: Force reload failed:', error);
-        }
-      };
-      
-      forceReload();
-    }
-  }, [userData, organizationId, organization, academies.length, selectedAcademy, setSelectedOrganization, setSelectedAcademy, navigationState]);
+  }, [navigationState, navigate, location.pathname]);
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
