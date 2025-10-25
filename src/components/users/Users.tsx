@@ -21,6 +21,7 @@ import { getAcademiesByOrganization } from '../../services/academyService';
 import { createPlayer, getPlayerByUserId, updatePlayer, getPlayersByOrganization, getPlayersByGuardianId } from '../../services/playerService';
 import { getFieldCategoriesForAcademy } from '../../services/settingsService';
 import { searchUsers as searchUsersAlgolia } from '../../services/algoliaService';
+import { getCachedUsers, markUserAsSynced, cleanupUserCache } from '../../utils/userCache';
 import PlayerGuardiansDialog from './PlayerGuardiansDialog';
 import GuardianPlayersDialog from './GuardianPlayersDialog';
 
@@ -222,6 +223,7 @@ const Users: React.FC = () => {
   const [openGuardianDialog, setOpenGuardianDialog] = useState(false);
   const [guardianPhone, setGuardianPhone] = useState('');
   const [guardianSearchResult, setGuardianSearchResult] = useState<User | null>(null);
+  const [guardianSearchPerformed, setGuardianSearchPerformed] = useState(false);
   const [showCreateGuardian, setShowCreateGuardian] = useState(false);
   const [guardianCreationLoading, setGuardianCreationLoading] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<User | null>(null);
@@ -314,9 +316,24 @@ const Users: React.FC = () => {
             label={`${field.name}${field.unit ? ` (${field.unit})` : ''}`}
             type="number"
             value={currentValue}
-            onChange={(e) => handleFieldChange(Number(e.target.value))}
+            onChange={(e) => {
+              const inputValue = Number(e.target.value);
+              const maxValue = field.maximum ? Number(field.maximum) : undefined;
+
+              // Enforce maximum: if value exceeds maximum, cap it at maximum
+              if (maxValue !== undefined && inputValue > maxValue) {
+                handleFieldChange(maxValue);
+              } else {
+                handleFieldChange(inputValue);
+              }
+            }}
             required={field.required}
-            helperText={field.description}
+            helperText={
+              field.maximum
+                ? `${field.description || ''}${field.description ? ' - ' : ''}Maximum: ${field.maximum}`
+                : field.description
+            }
+            max={field.maximum ? Number(field.maximum) : undefined}
           />
         );
       case 'date':
@@ -389,17 +406,69 @@ const Users: React.FC = () => {
     const tabParam = urlParams.get('tab');
     const newTab = tabParam ? parseInt(tabParam, 10) : 0;
     setActiveTab(newTab);
-    
+
     // Reset role filter when not on "All users" tab
     if (newTab !== 0) {
       setRoleFilter('all');
     }
-    
+
     // Clear search term when switching to guardians tab
     if (newTab === 3) {
       setSearchTerm('');
     }
   }, [location.search]);
+
+  // Handle optimistic UI update when a new user is created
+  useEffect(() => {
+    const state = location.state as any;
+    if (state?.newUser) {
+      // Add the newly created user to the local state immediately
+      const newUser = state.newUser;
+
+      // Convert Date objects to Timestamp format for consistency
+      const userWithTimestamp = {
+        ...newUser,
+        createdAt: newUser.createdAt ? {
+          toDate: () => newUser.createdAt,
+          seconds: Math.floor(newUser.createdAt.getTime() / 1000),
+          nanoseconds: 0,
+          toMillis: () => newUser.createdAt.getTime(),
+          isEqual: () => false,
+          toJSON: () => ({ seconds: Math.floor(newUser.createdAt.getTime() / 1000), nanoseconds: 0 })
+        } as any : undefined,
+        updatedAt: newUser.updatedAt ? {
+          toDate: () => newUser.updatedAt,
+          seconds: Math.floor(newUser.updatedAt.getTime() / 1000),
+          nanoseconds: 0,
+          toMillis: () => newUser.updatedAt.getTime(),
+          isEqual: () => false,
+          toJSON: () => ({ seconds: Math.floor(newUser.updatedAt.getTime() / 1000), nanoseconds: 0 })
+        } as any : undefined
+      };
+
+      // Add to the beginning of the users array for immediate visibility
+      setUsers(prevUsers => [userWithTimestamp, ...prevUsers]);
+
+      // Show success message if provided
+      if (state.successMessage) {
+        setSuccess(state.successMessage);
+
+        // Clear success message after 5 seconds
+        setTimeout(() => {
+          setSuccess('');
+        }, 5000);
+      }
+
+      // Clear the navigation state to prevent re-adding on refresh
+      window.history.replaceState({}, document.title);
+
+      // Trigger a background search after a short delay to sync with Algolia
+      // This will update the user list once Algolia has indexed the new user
+      setTimeout(() => {
+        performAlgoliaSearch(searchTerm, currentPage);
+      }, 2000);
+    }
+  }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (userData) {
@@ -494,18 +563,18 @@ const Users: React.FC = () => {
         email: record.email || '',
         phone: record.phone,
         roles: record.roleDetails || [],
-        createdAt: record.createdAt ? 
-          { 
-            toDate: () => new Date(record.createdAt!), 
+        createdAt: record.createdAt ?
+          {
+            toDate: () => new Date(record.createdAt!),
             seconds: Math.floor((record.createdAt || 0) / 1000),
             nanoseconds: 0,
             toMillis: () => record.createdAt || 0,
             isEqual: () => false,
             toJSON: () => ({ seconds: Math.floor((record.createdAt || 0) / 1000), nanoseconds: 0 })
           } as any : undefined,
-        updatedAt: record.updatedAt ? 
-          { 
-            toDate: () => new Date(record.updatedAt!), 
+        updatedAt: record.updatedAt ?
+          {
+            toDate: () => new Date(record.updatedAt!),
             seconds: Math.floor((record.updatedAt || 0) / 1000),
             nanoseconds: 0,
             toMillis: () => record.updatedAt || 0,
@@ -517,8 +586,34 @@ const Users: React.FC = () => {
         outstandingBalance: {},
         availableCredits: {}
       }));
-      
-      setUsers(algoliaUsers);
+
+      // Get cached users from localStorage (newly created users not yet synced to Algolia)
+      const cachedUsers = getCachedUsers(organizationId);
+      console.log('📦 Retrieved cached users from localStorage:', cachedUsers.length);
+
+      // Check which cached users are now in Algolia results and mark them as synced
+      cachedUsers.forEach(cachedUser => {
+        const foundInAlgolia = algoliaUsers.some(u => u.id === cachedUser.id);
+        if (foundInAlgolia) {
+          markUserAsSynced(cachedUser.id);
+          console.log('✅ User synced with Algolia:', cachedUser.id);
+        }
+      });
+
+      // Merge cached users with Algolia results
+      // Only include cached users that aren't already in Algolia results
+      const unseenCachedUsers = cachedUsers.filter(
+        cachedUser => !algoliaUsers.some(u => u.id === cachedUser.id)
+      );
+
+      // Prepend cached users to show them first (newly created users at top)
+      const mergedUsers = [...unseenCachedUsers, ...algoliaUsers];
+      console.log('🔄 Merged users - Cached:', unseenCachedUsers.length, 'Algolia:', algoliaUsers.length, 'Total:', mergedUsers.length);
+
+      setUsers(mergedUsers);
+
+      // Clean up expired and synced users from cache periodically
+      cleanupUserCache();
       setCurrentPage(results.currentPage);
       setTotalPages(results.totalPages);
       setTotalUsers(results.totalUsers);
@@ -689,10 +784,11 @@ const Users: React.FC = () => {
     setSelectedUser(null);
     setDialogMode('add');
     setActiveStep(0);
-    
+
     // Reset guardian search fields when opening add dialog
     setGuardianPhone('');
     setGuardianSearchResult(null);
+    setGuardianSearchPerformed(false);
     setShowCreateGuardian(false);
     setNewGuardianData({ name: '', email: '', phone: '' });
     
@@ -717,10 +813,11 @@ const Users: React.FC = () => {
     setSelectedUser(user);
     setDialogMode('edit');
     setActiveStep(0);
-    
+
     // Reset guardian search fields when opening edit dialog
     setGuardianPhone('');
     setGuardianSearchResult(null);
+    setGuardianSearchPerformed(false);
     setShowCreateGuardian(false);
     setNewGuardianData({ name: '', email: '', phone: '' });
     
@@ -752,17 +849,40 @@ const Users: React.FC = () => {
         ) || [],
         academyId: user.roles?.[0]?.academyId || [],
         dateOfBirth: (() => {
-          if (!playerData?.dob) return '';
+          if (!playerData?.dob) {
+            console.log('❌ No DOB found in player data');
+            return '';
+          }
           try {
-            const date = new Date(playerData.dob);
+            console.log('📅 Raw DOB from Firestore:', playerData.dob, 'Type:', typeof playerData.dob);
+
+            // Handle Firestore Timestamp object
+            let date: Date;
+            if (playerData.dob && typeof playerData.dob === 'object' && 'toDate' in playerData.dob) {
+              // It's a Firestore Timestamp
+              date = (playerData.dob as any).toDate();
+              console.log('✅ Converted Firestore Timestamp to Date:', date);
+            } else if (playerData.dob instanceof Date) {
+              // It's already a Date object
+              date = playerData.dob;
+              console.log('✅ Already a Date object:', date);
+            } else {
+              // Try to parse it as a string or number
+              date = new Date(playerData.dob);
+              console.log('✅ Parsed as Date:', date);
+            }
+
             // Check if date is valid
             if (isNaN(date.getTime())) {
-              console.warn('Invalid date in player data:', playerData.dob);
+              console.warn('⚠️ Invalid date after conversion:', playerData.dob);
               return '';
             }
-            return date.toISOString().split('T')[0];
+
+            const isoDate = date.toISOString().split('T')[0];
+            console.log('✅ Final ISO date for input:', isoDate);
+            return isoDate;
           } catch (error) {
-            console.error('Error converting date:', error, playerData.dob);
+            console.error('❌ Error converting date:', error, playerData.dob);
             return '';
           }
         })(),
@@ -1068,14 +1188,51 @@ const Users: React.FC = () => {
           name: formData.name,
           email: formData.email,
           phone: formData.phone,
-          roles: formData.roles.map(role => ({ 
+          roles: formData.roles.map(role => ({
             role: [role],
             organizationId: organizationId,
             academyId: formData.academyId
           }))
         });
       }
-      
+
+      // Build complete user data for cache
+      const newUserData: User = {
+        id: newUserId,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        roles: formData.roles.map(role => ({
+          role: [role],
+          organizationId: organizationId,
+          academyId: formData.academyId
+        })),
+        balance: 0,
+        outstandingBalance: {},
+        availableCredits: {},
+        createdAt: {
+          toDate: () => new Date(),
+          seconds: Math.floor(Date.now() / 1000),
+          nanoseconds: 0,
+          toMillis: () => Date.now(),
+          isEqual: () => false,
+          toJSON: () => ({ seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 })
+        } as any,
+        updatedAt: {
+          toDate: () => new Date(),
+          seconds: Math.floor(Date.now() / 1000),
+          nanoseconds: 0,
+          toMillis: () => Date.now(),
+          isEqual: () => false,
+          toJSON: () => ({ seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 })
+        } as any
+      };
+
+      // Save to localStorage cache for faster retrieval
+      const { addUserToCache } = await import('../../utils/userCache');
+      addUserToCache(newUserData);
+      console.log('✅ User saved to localStorage cache');
+
       // If creating a player, also create player record
       if (formData.roles.includes('player')) {
         const playerId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
@@ -2557,7 +2714,12 @@ const Users: React.FC = () => {
                           <Input
                             placeholder="Enter guardian's phone number or name"
                             value={guardianPhone}
-                            onChange={(e) => setGuardianPhone(e.target.value)}
+                            onChange={(e) => {
+                              setGuardianPhone(e.target.value);
+                              // Reset search state when user types to clear any previous search results/messages
+                              setGuardianSearchPerformed(false);
+                              setGuardianSearchResult(null);
+                            }}
                             className="flex-1"
                           />
                           <Button
@@ -2567,18 +2729,21 @@ const Users: React.FC = () => {
                                 setError('Please enter at least 2 characters to search');
                                 return;
                               }
-                              
+
                               try {
                                 console.log('🔍 Searching for guardian with query:', guardianPhone.trim());
                                 console.log('🔍 Dialog mode:', dialogMode);
-                                
+
+                                // Mark that a search has been performed
+                                setGuardianSearchPerformed(true);
+
                                 // Search for existing guardian using Algolia
                                 const organizationId = userData?.roles[0]?.organizationId;
                                 if (!organizationId) {
                                   console.error('No organization ID found');
                                   return;
                                 }
-                                
+
                                 const results = await searchUsersAlgolia({
                                   query: guardianPhone.trim(),
                                   organizationId,
@@ -2588,7 +2753,7 @@ const Users: React.FC = () => {
                                   page: 0,
                                   hitsPerPage: 10
                                 });
-                                
+
                                 console.log('🔍 Search results:', results.users.length, 'guardians found');
                                 
                                 if (results.users.length > 0) {
@@ -2659,8 +2824,11 @@ const Users: React.FC = () => {
                                       guardianId: [...formData.guardianId, guardianSearchResult.id]
                                     });
                                   }
+                                  // Reset all search state to allow adding another guardian
                                   setGuardianSearchResult(null);
                                   setGuardianPhone('');
+                                  setGuardianSearchPerformed(false);
+                                  setShowCreateGuardian(false);
                                 }}
                                 disabled={formData.guardianId.includes(guardianSearchResult.id)}
                               >
@@ -2670,7 +2838,7 @@ const Users: React.FC = () => {
                           </div>
                         )}
                         
-                        {guardianPhone.trim().length >= 2 && !guardianSearchResult && (
+                        {guardianSearchPerformed && !guardianSearchResult && guardianPhone.trim().length >= 2 && (
                           <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
                             <div className="flex items-center justify-between mb-4">
                               <div>
@@ -2752,11 +2920,13 @@ const Users: React.FC = () => {
                                             ...formData,
                                             guardianId: [...formData.guardianId, guardianUserId]
                                           });
-                                          
-                                          // Reset the creation form
+
+                                          // Reset the creation form and search state to allow adding another guardian
                                           setNewGuardianData({ name: '', email: '', phone: '' });
                                           setShowCreateGuardian(false);
                                           setGuardianPhone('');
+                                          setGuardianSearchResult(null);
+                                          setGuardianSearchPerformed(false);
                                           setSuccess('Guardian created and linked successfully!');
                                           
                                         } catch (error) {

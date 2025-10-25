@@ -722,13 +722,12 @@ const Products: React.FC = () => {
                           value={invoiceDate}
                           onChange={(e) => setInvoiceDate(e.target.value)}
                           required
-                          min={new Date().toISOString().split('T')[0]}
                         />
                         <div className="text-xs text-secondary-600 mt-1">
-                          Date when the invoice will be created
+                          Date when the invoice will be created (can be past date for legacy entries)
                         </div>
                       </div>
-                      
+
                       <div>
                         <Label htmlFor="deadlineDate">Payment Deadline</Label>
                         <Input
@@ -737,10 +736,10 @@ const Products: React.FC = () => {
                           value={deadlineDate}
                           onChange={(e) => setDeadlineDate(e.target.value)}
                           required
-                          min={invoiceDate || new Date().toISOString().split('T')[0]}
+                          min={invoiceDate || undefined}
                         />
                         <div className="text-xs text-secondary-600 mt-1">
-                          Payment must be made by this date
+                          Payment deadline (must be on or after invoice date)
                         </div>
                       </div>
                     </div>

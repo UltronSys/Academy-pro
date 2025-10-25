@@ -43,7 +43,7 @@ const Finance: React.FC = () => {
       case 1:
         return { title: 'Transactions', description: 'View and manage financial transactions' };
       case 2:
-        return { title: 'Players & Guardians', description: 'Financial overview for players and guardians' };
+        return { title: 'Players', description: 'Financial overview for players' };
       case 3:
         return { title: 'Financial Statistics', description: 'Analytics and financial reports' };
       default:
