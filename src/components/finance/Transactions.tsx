@@ -23,6 +23,12 @@ import {
   deleteTransactionFromAlgolia
 } from '../../services/algoliaTransactionService';
 import { searchUsers } from '../../services/algoliaService';
+import {
+  getCachedTransactions,
+  addTransactionToCache,
+  markTransactionAsSynced,
+  cleanupTransactionCache
+} from '../../utils/transactionCache';
 import { doc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getSettingsByOrganization } from '../../services/settingsService';
@@ -196,10 +202,10 @@ const Transactions: React.FC = () => {
   // Perform Algolia search
   const performAlgoliaSearch = async () => {
     if (!selectedOrganization?.id) return;
-    
+
     try {
       setAlgoliaSearching(true);
-      
+
       const searchResults = await searchTransactions({
         query: searchTerm,
         organizationId: selectedOrganization.id,
@@ -212,9 +218,9 @@ const Transactions: React.FC = () => {
         page: currentPage,
         hitsPerPage: 10
       });
-      
+
       // Convert Algolia records back to Transaction format
-      const transactionsData = searchResults.transactions.map(record => ({
+      const algoliaTransactions = searchResults.transactions.map(record => ({
         id: record.objectID,
         description: record.description,
         amount: record.amount,
@@ -237,11 +243,57 @@ const Transactions: React.FC = () => {
         createdAt: { toDate: () => new Date(record.createdAt) },
         updatedAt: record.updatedAt ? { toDate: () => new Date(record.updatedAt!) } : undefined
       } as Transaction));
-      
-      setTransactions(transactionsData);
-      setTotalTransactions(searchResults.totalTransactions);
+
+      // Get cached transactions (pending Algolia sync)
+      const cachedItems = getCachedTransactions(selectedOrganization.id);
+      console.log('📦 Retrieved cached transactions:', cachedItems.length);
+
+      // Mark cached transactions as synced if they appear in Algolia results
+      cachedItems.forEach(({ transaction, operation }) => {
+        const foundInAlgolia = algoliaTransactions.some(t => t.id === transaction.id);
+        if (foundInAlgolia) {
+          console.log('✅ Transaction found in Algolia, marking as synced:', transaction.id);
+          markTransactionAsSynced(transaction.id);
+        }
+      });
+
+      // Merge cached transactions with Algolia results
+      const mergedTransactions: Transaction[] = [...algoliaTransactions];
+
+      cachedItems.forEach(({ transaction, operation }) => {
+        const existsInAlgolia = algoliaTransactions.some(t => t.id === transaction.id);
+
+        if (!existsInAlgolia) {
+          if (operation === 'delete') {
+            // Remove from merged list if it's a delete operation
+            const index = mergedTransactions.findIndex(t => t.id === transaction.id);
+            if (index > -1) {
+              mergedTransactions.splice(index, 1);
+              console.log('🗑️ Removed cached deleted transaction:', transaction.id);
+            }
+          } else {
+            // Normalize cached transaction to match Algolia format
+            const normalizedTransaction: Transaction = {
+              ...transaction,
+              date: transaction.date ? { toDate: () => new Date(transaction.date as any) } as any : undefined,
+              createdAt: { toDate: () => new Date(transaction.createdAt as any) } as any,
+              updatedAt: transaction.updatedAt ? { toDate: () => new Date(transaction.updatedAt as any) } as any : undefined
+            };
+
+            // Add cached transaction (add/update operations)
+            mergedTransactions.unshift(normalizedTransaction); // Add to beginning for instant visibility
+            console.log(`➕ Added cached transaction (${operation}):`, transaction.id);
+          }
+        }
+      });
+
+      setTransactions(mergedTransactions);
+      setTotalTransactions(searchResults.totalTransactions + cachedItems.filter(c => c.operation !== 'delete').length);
       setTotalPages(searchResults.totalPages);
-      
+
+      // Clean up expired and synced transactions from cache
+      cleanupTransactionCache();
+
     } catch (error) {
       console.error('Algolia search error:', error);
       showToast('Search error. Please check your Algolia configuration.', 'error');
@@ -587,15 +639,19 @@ const Transactions: React.FC = () => {
         showToast('Internal transactions not yet implemented', 'error');
         return;
       }
-      setTransactions(prev => [newTransaction, ...prev]);
-      
-      // Sync new transaction to Algolia
-      syncTransactionToAlgolia(newTransaction).catch(console.error);
-      
-      // Summary refresh removed for cleaner UI
-      // const summaryData = await getTransactionSummary(selectedOrganization.id);
-      // setSummary(summaryData);
-      
+
+      // Add to localStorage cache for instant UI update
+      addTransactionToCache(newTransaction, 'add');
+
+      // Sync new transaction to Algolia (in background)
+      syncTransactionToAlgolia(newTransaction).catch(err => {
+        console.error('Failed to sync transaction to Algolia:', err);
+      });
+
+      // Trigger a new search to refresh the list with current filters
+      // This will merge the cached transaction with Algolia results
+      performAlgoliaSearch();
+
       handleCloseModal();
       showToast('Transaction added successfully!', 'success');
     } catch (error: any) {
@@ -617,20 +673,28 @@ const Transactions: React.FC = () => {
   const handleProcessTransaction = async (transactionId: string) => {
     try {
       await updateTransactionStatus(transactionId, 'completed');
-      setTransactions(prev => 
-        prev.map(transaction => 
-          transaction.id === transactionId 
-            ? { ...transaction, status: 'completed' as Transaction['status'] }
-            : transaction
-        )
-      );
-      
+
+      // Update transaction in cache for instant UI update
+      const updatedTransaction = transactions.find(t => t.id === transactionId);
+      if (updatedTransaction) {
+        const cachedTransaction = { ...updatedTransaction, status: 'completed' as const };
+        addTransactionToCache(cachedTransaction, 'update');
+
+        // Sync to Algolia in background
+        syncTransactionToAlgolia(cachedTransaction).catch(err => {
+          console.error('Failed to sync transaction update to Algolia:', err);
+        });
+      }
+
+      // Trigger a new search to refresh the list with current filters
+      performAlgoliaSearch();
+
       // Summary refresh removed for cleaner UI
       // if (selectedOrganization?.id) {
       //   const summaryData = await getTransactionSummary(selectedOrganization.id);
       //   setSummary(summaryData);
       // }
-      
+
       showToast('Transaction processed successfully', 'success');
     } catch (error) {
       console.error('Error processing transaction:', error);
@@ -659,20 +723,30 @@ const Transactions: React.FC = () => {
 
   const confirmDeleteTransaction = async (transactionId: string) => {
     if (!userData) return;
-    
+
     try {
       setDeleteLoading(true);
       const deletedBy = {
         name: userData.name,
         userRef: doc(db, 'users', userData.id)
       };
-      
+
       await softDeleteTransaction(transactionId, deletedBy);
-      setTransactions(prev => prev.filter(transaction => transaction.id !== transactionId));
-      
-      // Remove from Algolia
-      deleteTransactionFromAlgolia(transactionId).catch(console.error);
-      
+
+      // Add delete operation to cache for instant UI update
+      const deletedTransaction = transactions.find(t => t.id === transactionId);
+      if (deletedTransaction) {
+        addTransactionToCache(deletedTransaction, 'delete');
+      }
+
+      // Remove from Algolia in background
+      deleteTransactionFromAlgolia(transactionId).catch(err => {
+        console.error('Failed to delete transaction from Algolia:', err);
+      });
+
+      // Trigger a new search to refresh the list with current filters
+      performAlgoliaSearch();
+
       showToast('Transaction deleted successfully. You can restore it from the deleted transactions view.', 'success');
       setConfirmModal(null);
     } catch (error) {
@@ -699,10 +773,10 @@ const Transactions: React.FC = () => {
     try {
       setRestoreLoading(transactionId);
       await restoreTransaction(transactionId);
-      
-      // Remove from deleted list and reload active transactions
+
+      // Remove from deleted list
       setDeletedTransactions(prev => prev.filter(transaction => transaction.id !== transactionId));
-      
+
       // Reload active transactions to show the restored one
       if (selectedOrganization?.id) {
         let transactionsData: Transaction[];
@@ -711,15 +785,22 @@ const Transactions: React.FC = () => {
         } else {
           transactionsData = await getTransactionsByOrganization(selectedOrganization.id);
         }
-        setTransactions(transactionsData);
-        
-        // Re-sync restored transaction to Algolia
+
+        // Re-sync restored transaction to Algolia and add to cache for instant UI update
         const restoredTransaction = transactionsData.find(t => t.id === transactionId);
         if (restoredTransaction) {
-          syncTransactionToAlgolia(restoredTransaction).catch(console.error);
+          addTransactionToCache(restoredTransaction, 'add');
+
+          // Sync to Algolia in background
+          syncTransactionToAlgolia(restoredTransaction).catch(err => {
+            console.error('Failed to sync restored transaction to Algolia:', err);
+          });
         }
+
+        // Trigger a new search to refresh the list with current filters
+        performAlgoliaSearch();
       }
-      
+
       showToast('Transaction restored successfully', 'success');
       setConfirmModal(null);
     } catch (error) {

@@ -15,6 +15,7 @@ import { createUser, getUsersByOrganization, updateUser } from '../../services/u
 import { getAcademiesByOrganization } from '../../services/academyService';
 import { createPlayer } from '../../services/playerService';
 import { getSettingsByOrganization, getFieldCategoriesForAcademy } from '../../services/settingsService';
+import { addUserToCache } from '../../utils/userCache';
 
 // Icons (reusing from EditUser)
 const ArrowLeftIcon = () => (
@@ -194,55 +195,77 @@ const AddUser: React.FC = () => {
     try {
       setSubmitLoading(true);
       const organizationId = userData?.roles?.[0]?.organizationId || '';
-      
+
       let newUserId: string;
-      
+      let createdUserData: any;
+
       // Check if user has any roles that allow login (not just player/guardian)
-      const hasLoginRole = formData.roles.some(role => 
+      const hasLoginRole = formData.roles.some(role =>
         !['player', 'guardian'].includes(role)
       );
-      
+
+      // Build the user roles array
+      const userRoles = formData.roles.map(role => ({
+        role: [role],
+        organizationId: organizationId,
+        academyId: formData.academyId
+      }));
+
       // Create Firebase Auth account for users who can log in
       if (hasLoginRole) {
-        
+
         // Import and use createUserAsAdmin
         const { createUserAsAdmin } = await import('../../services/authService');
         const { uid } = await createUserAsAdmin(formData.email, formData.password, formData.name);
         newUserId = uid;
-        
+
         // Update user document with additional data and roles
         await updateUser(newUserId, {
           phone: formData.phone,
-          roles: formData.roles.map(role => ({ 
-            role: [role],
-            organizationId: organizationId,
-            academyId: formData.academyId
-          }))
+          roles: userRoles
         });
         console.log('User roles assigned');
-      } else {
-        // For users with only player/guardian roles, create Firestore document only (no login needed)
-        newUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        await createUser({
+
+        // Build complete user data for optimistic update
+        createdUserData = {
           id: newUserId,
           name: formData.name,
           email: formData.email,
           phone: formData.phone,
-          roles: formData.roles.map(role => ({ 
-            role: [role],
-            organizationId: organizationId,
-            academyId: formData.academyId
-          }))
-        });
+          roles: userRoles,
+          balance: 0,
+          outstandingBalance: {},
+          availableCredits: {},
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+      } else {
+        // For users with only player/guardian roles, create Firestore document only (no login needed)
+        newUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+
+        createdUserData = {
+          id: newUserId,
+          name: formData.name,
+          email: formData.email,
+          phone: formData.phone,
+          roles: userRoles,
+          balance: 0,
+          outstandingBalance: {},
+          availableCredits: {},
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+
+        await createUser(createdUserData);
       }
-      
+
       // If creating a player, also create player record
       if (formData.roles.includes('player')) {
-        const playerId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
+        const playerId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+
         const dobValue = formData.dateOfBirth;
         const genderValue = formData.gender;
-        
+
         await createPlayer({
           id: playerId,
           userId: newUserId,
@@ -254,8 +277,18 @@ const AddUser: React.FC = () => {
           playerParameters: formData.dynamicFields
         });
       }
-      
-      navigate('/users');
+
+      // Save to localStorage cache for faster retrieval while Algolia syncs
+      addUserToCache(createdUserData);
+      console.log('✅ User saved to localStorage cache for fast retrieval');
+
+      // Navigate back with the newly created user data for optimistic UI update
+      navigate('/users', {
+        state: {
+          newUser: createdUserData,
+          successMessage: 'User created successfully. Syncing with search index...'
+        }
+      });
     } catch (error) {
       console.error('Error creating user:', error);
       setError('Failed to create user');
@@ -297,9 +330,24 @@ const AddUser: React.FC = () => {
             label={`${field.name}${field.unit ? ` (${field.unit})` : ''}`}
             type="number"
             value={currentValue}
-            onChange={(e) => handleFieldChange(Number(e.target.value))}
+            onChange={(e) => {
+              const inputValue = Number(e.target.value);
+              const maxValue = field.maximum ? Number(field.maximum) : undefined;
+
+              // Enforce maximum: if value exceeds maximum, cap it at maximum
+              if (maxValue !== undefined && inputValue > maxValue) {
+                handleFieldChange(maxValue);
+              } else {
+                handleFieldChange(inputValue);
+              }
+            }}
             required={field.required}
-            helperText={field.description}
+            helperText={
+              field.maximum
+                ? `${field.description || ''}${field.description ? ' - ' : ''}Maximum: ${field.maximum}`
+                : field.description
+            }
+            max={field.maximum ? Number(field.maximum) : undefined}
           />
         );
       case 'date':

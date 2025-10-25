@@ -408,7 +408,7 @@ const PlayerDetails: React.FC = () => {
       key: 'date',
       header: 'Invoice Date',
       render: (receipt: Receipt) => (
-        <div className="text-sm">
+        <div className={`text-sm ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : ''}`}>
           {receipt.createdAt?.toDate().toLocaleDateString() || 'N/A'}
         </div>
       )
@@ -418,11 +418,11 @@ const PlayerDetails: React.FC = () => {
       header: 'Product/Service',
       render: (receipt: Receipt) => (
         <div>
-          <div className="font-medium text-secondary-900">
+          <div className={`font-medium ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : 'text-secondary-900'}`}>
             {receipt.product?.name || receipt.description || 'N/A'}
           </div>
           {receipt.product?.deadline && (
-            <div className="text-xs text-secondary-600">
+            <div className={`text-xs ${receipt.status === 'deleted' ? 'line-through text-secondary-300' : 'text-secondary-600'}`}>
               Due: {receipt.product.deadline.toDate().toLocaleDateString()}
             </div>
           )}
@@ -433,7 +433,7 @@ const PlayerDetails: React.FC = () => {
       key: 'amount',
       header: 'Amount Due',
       render: (receipt: Receipt) => (
-        <div className="font-medium text-error-600">
+        <div className={`font-medium ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : 'text-error-600'}`}>
           {currency} {receipt.amount.toFixed(2)}
         </div>
       )
@@ -444,6 +444,8 @@ const PlayerDetails: React.FC = () => {
       render: (receipt: Receipt) => {
         const getStatusColor = (status: string) => {
           switch (status) {
+            case 'deleted':
+              return 'secondary';
             case 'completed':
               return 'success';
             case 'paid':
@@ -458,9 +460,11 @@ const PlayerDetails: React.FC = () => {
               return 'secondary';
           }
         };
-        
+
         const getStatusText = (status: string) => {
           switch (status) {
+            case 'deleted':
+              return 'DELETED';
             case 'completed':
               return 'FULLY PAID';
             case 'paid':
@@ -475,7 +479,7 @@ const PlayerDetails: React.FC = () => {
               return status.toUpperCase();
           }
         };
-        
+
         return (
           <Badge variant={getStatusColor(receipt.status || 'active')}>
             {getStatusText(receipt.status || 'active')}
@@ -490,7 +494,7 @@ const PlayerDetails: React.FC = () => {
       key: 'date',
       header: 'Payment Date',
       render: (receipt: Receipt) => (
-        <div className="text-sm">
+        <div className={`text-sm ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : ''}`}>
           {receipt.createdAt?.toDate().toLocaleDateString() || 'N/A'}
         </div>
       )
@@ -500,12 +504,15 @@ const PlayerDetails: React.FC = () => {
       header: 'Description',
       render: (receipt: Receipt) => (
         <div>
-          <div className="font-medium text-secondary-900">
+          <div className={`font-medium ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : 'text-secondary-900'}`}>
             {receipt.description || receipt.product?.name || 'Payment'}
           </div>
           {/* Add context for payment types */}
-          <div className="text-xs text-secondary-500 mt-1">
+          <div className={`text-xs mt-1 ${receipt.status === 'deleted' ? 'line-through text-secondary-300' : 'text-secondary-500'}`}>
             {(() => {
+              if (receipt.status === 'deleted') {
+                return '🗑️ This payment was deleted';
+              }
               const description = receipt.description?.toLowerCase() || '';
               if (description.includes('excess') || description.includes('credit')) {
                 return '💳 Creates available credit for future use';
@@ -523,7 +530,7 @@ const PlayerDetails: React.FC = () => {
       key: 'amount',
       header: 'Amount Paid',
       render: (receipt: Receipt) => (
-        <div className="font-medium text-success-600">
+        <div className={`font-medium ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : 'text-success-600'}`}>
           {currency} {receipt.amount.toFixed(2)}
         </div>
       )
@@ -531,11 +538,21 @@ const PlayerDetails: React.FC = () => {
     {
       key: 'status',
       header: 'Status',
-      render: (receipt: Receipt) => (
-        <Badge variant={getPaymentStatusColor(receipt)}>
-          {getPaymentStatusText(receipt)}
-        </Badge>
-      )
+      render: (receipt: Receipt) => {
+        // Override status display for deleted receipts
+        if (receipt.status === 'deleted') {
+          return (
+            <Badge variant="secondary">
+              DELETED
+            </Badge>
+          );
+        }
+        return (
+          <Badge variant={getPaymentStatusColor(receipt)}>
+            {getPaymentStatusText(receipt)}
+          </Badge>
+        );
+      }
     }
   ];
 

@@ -285,9 +285,24 @@ const EditUser: React.FC = () => {
             label={`${field.name}${field.unit ? ` (${field.unit})` : ''}`}
             type="number"
             value={currentValue}
-            onChange={(e) => handleFieldChange(Number(e.target.value))}
+            onChange={(e) => {
+              const inputValue = Number(e.target.value);
+              const maxValue = field.maximum ? Number(field.maximum) : undefined;
+
+              // Enforce maximum: if value exceeds maximum, cap it at maximum
+              if (maxValue !== undefined && inputValue > maxValue) {
+                handleFieldChange(maxValue);
+              } else {
+                handleFieldChange(inputValue);
+              }
+            }}
             required={field.required}
-            helperText={field.description}
+            helperText={
+              field.maximum
+                ? `${field.description || ''}${field.description ? ' - ' : ''}Maximum: ${field.maximum}`
+                : field.description
+            }
+            max={field.maximum ? Number(field.maximum) : undefined}
           />
         );
       case 'date':

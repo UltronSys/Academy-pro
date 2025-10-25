@@ -126,12 +126,20 @@ const Settings: React.FC = () => {
     loadOrganization();
   }, [selectedOrganization, selectedAcademy]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Debug: Log when fieldForm changes
+  useEffect(() => {
+    console.log('🔄 fieldForm changed:', fieldForm);
+    console.log('🔄 fieldForm.maximum:', fieldForm.maximum);
+  }, [fieldForm]);
+
   const loadSettings = async () => {
     try {
       setLoading(true);
       const organizationId = userData?.roles[0]?.organizationId;
       if (organizationId) {
         const loadedSettings = await getSettingsByOrganization(organizationId);
+        console.log('📥 loadSettings - Loaded from Firestore:', loadedSettings);
+
         if (loadedSettings) {
           // Ensure all categories have fields arrays
           const settingsWithFields = {
@@ -141,6 +149,14 @@ const Settings: React.FC = () => {
               fields: Array.isArray(cat.fields) ? cat.fields : []
             }))
           };
+
+          console.log('📥 loadSettings - Field categories with maximum:',
+            settingsWithFields.fieldCategories?.map(cat => ({
+              category: cat.name,
+              fields: cat.fields?.map(f => ({ name: f.name, maximum: f.maximum }))
+            }))
+          );
+
           setSettings(settingsWithFields);
         } else {
           // Create default settings structure if none exist
@@ -359,6 +375,9 @@ const Settings: React.FC = () => {
         return;
       }
       
+      console.log('📝 handleSaveField - fieldForm:', fieldForm);
+      console.log('📝 handleSaveField - fieldForm.maximum:', fieldForm.maximum);
+
       const newField: ParameterField = {
         name: fieldForm.name || '',
         type: fieldForm.type || 'text',
@@ -366,10 +385,13 @@ const Settings: React.FC = () => {
         order: fieldForm.order || 1,
         description: fieldForm.description || '',
         unit: fieldForm.unit || '',
-        maximum: fieldForm.maximum || '',
-        defaultValue: fieldForm.defaultValue || '',
+        maximum: fieldForm.maximum !== undefined && fieldForm.maximum !== null ? fieldForm.maximum : '',
+        defaultValue: fieldForm.defaultValue !== undefined && fieldForm.defaultValue !== null ? fieldForm.defaultValue : '',
         options: fieldForm.options || []
       };
+
+      console.log('📝 handleSaveField - newField created:', newField);
+      console.log('📝 handleSaveField - newField.maximum:', newField.maximum);
 
       const updatedCategories = (settings.fieldCategories || []).map(category => {
         if (category.id === selectedCategoryId) {
@@ -394,18 +416,27 @@ const Settings: React.FC = () => {
         ...settings,
         fieldCategories: updatedCategories
       };
-      
+
+      console.log('📝 About to save to Firebase - updatedSettings:', updatedSettings);
+      console.log('📝 Field categories with maximum:',
+        updatedSettings.fieldCategories?.map(cat => ({
+          category: cat.name,
+          fields: cat.fields?.map(f => ({ name: f.name, maximum: f.maximum }))
+        }))
+      );
+
       // Force a complete new object to ensure React detects the change
       setSettings({
         ...updatedSettings,
         // Add a timestamp to force re-render
         lastUpdated: Date.now()
       } as any);
-      
+
       // Save to Firebase
       const organizationId = userData?.roles[0]?.organizationId;
       if (organizationId) {
         try {
+          console.log('📝 Calling updateSettings with organizationId:', organizationId);
           await updateSettings(organizationId, updatedSettings);
           // Add a small delay to ensure Firebase has processed the update
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -1209,12 +1240,13 @@ const Settings: React.FC = () => {
                             size="sm"
                             variant="outline"
                             onClick={() => {
+                              console.log('➕ Opening Add Field dialog');
                               setSelectedField(null);
                               setSelectedCategoryId(category.id);
                               setFieldDialogMode('add');
-                              setFieldForm({
+                              const newFieldForm: Partial<ParameterField> = {
                                 name: '',
-                                type: 'text',
+                                type: 'text' as const,
                                 defaultValue: '',
                                 required: false,
                                 order: (category.fields?.length || 0) + 1,
@@ -1222,7 +1254,9 @@ const Settings: React.FC = () => {
                                 unit: '',
                                 maximum: '',
                                 options: []
-                              });
+                              };
+                              console.log('➕ Setting fieldForm to:', newFieldForm);
+                              setFieldForm(newFieldForm);
                               setOpenFieldDialog(true);
                             }}
                             icon={<AddIcon />}
@@ -1261,10 +1295,24 @@ const Settings: React.FC = () => {
                                   {canWrite('settings') && (
                                     <button
                                       onClick={() => {
+                                        console.log('📝 Editing field:', field);
+                                        console.log('📝 Field maximum value:', field.maximum);
                                         setSelectedField(field);
                                         setSelectedCategoryId(category.id);
                                         setFieldDialogMode('edit');
-                                        setFieldForm(field);
+                                        // Ensure all properties are properly copied including maximum
+                                        setFieldForm({
+                                          name: field.name,
+                                          type: field.type,
+                                          required: field.required,
+                                          order: field.order,
+                                          description: field.description,
+                                          unit: field.unit,
+                                          maximum: field.maximum,
+                                          defaultValue: field.defaultValue,
+                                          options: field.options
+                                        });
+                                        console.log('📝 fieldForm set with maximum:', field.maximum);
                                         setOpenFieldDialog(true);
                                       }}
                                       className="p-1 text-secondary-400 hover:text-primary-600 transition-colors"
@@ -1654,8 +1702,11 @@ const Settings: React.FC = () => {
               
               <Input
                 label="Maximum Number (optional)"
-                value={fieldForm.maximum || ''}
-                onChange={(e) => setFieldForm({ ...fieldForm, maximum: e.target.value })}
+                value={fieldForm.maximum !== undefined ? fieldForm.maximum : ''}
+                onChange={(e) => {
+                  console.log('📝 Maximum field changed to:', e.target.value);
+                  setFieldForm({ ...fieldForm, maximum: e.target.value });
+                }}
                 placeholder="Enter maximum value for numbers"
                 type="number"
               />

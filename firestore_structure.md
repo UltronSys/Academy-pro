@@ -148,6 +148,12 @@ Collection for storing financial transactions.
 - `status` (string) - Transaction status: 'pending' | 'completed' | 'failed' | 'cancelled'
 - `organizationId` (string) - Organization ID
 - `academyId` (string, optional) - Academy ID (if academy-specific)
+- `isDeleted` (boolean, optional) - Soft delete flag (default: false)
+- `deletedAt` (Timestamp, optional) - When transaction was deleted (for audit trail)
+- `deletedBy` (object, optional) - Who deleted the transaction (for audit trail)
+  - `name` (string) - Name of person who deleted
+  - `userRef` (DocumentReference) - Reference to user who deleted
+- `deletionStateBackup` (string, optional) - JSON backup of transaction state before deletion
 - `createdAt` (Timestamp) - Creation timestamp
 - `updatedAt` (Timestamp) - Last update timestamp
 
@@ -169,7 +175,11 @@ Subcollection under users for storing receipt records linked to transactions.
 - `parentTransactionRef` (DocumentReference, optional) - Reference to parent transaction
 - `userRef` (DocumentReference) - Reference to user (player/guardian) document
 - `siblingReceiptRefs` (array of DocumentReferences) - Related receipt references
-- `status` (string) - Receipt status: 'pending' | 'paid' | 'overdue' | 'cancelled'
+- `status` (string) - Receipt status: 'active' | 'paid' | 'completed' | 'deleted'
+- `deletedAt` (Timestamp, optional) - When receipt was deleted (for audit trail)
+- `deletedBy` (object, optional) - Who deleted the receipt (for audit trail)
+  - `name` (string) - Name of person who deleted
+  - `userRef` (DocumentReference) - Reference to user who deleted
 - `organizationId` (string) - Organization ID
 - `academyId` (string, optional) - Academy ID (if academy-specific)
 - `createdAt` (Timestamp) - Creation timestamp
@@ -274,6 +284,13 @@ type ResourceType = 'users' | 'players' | 'academies' | 'settings' | 'finance' |
   status: 'pending' | 'completed' | 'failed' | 'cancelled';
   organizationId: string;
   academyId?: string;
+  isDeleted?: boolean;
+  deletedAt?: Timestamp;
+  deletedBy?: {
+    name: string;
+    userRef: DocumentReference;
+  };
+  deletionStateBackup?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -295,7 +312,12 @@ type ResourceType = 'users' | 'players' | 'academies' | 'settings' | 'finance' |
   parentTransactionRef?: DocumentReference;
   userRef: DocumentReference;
   siblingReceiptRefs: DocumentReference[];
-  status: 'pending' | 'paid' | 'overdue' | 'cancelled';
+  status: 'active' | 'paid' | 'completed' | 'deleted';
+  deletedAt?: Timestamp;
+  deletedBy?: {
+    name: string;
+    userRef: DocumentReference;
+  };
   organizationId: string;
   academyId?: string;
   createdAt: Timestamp;

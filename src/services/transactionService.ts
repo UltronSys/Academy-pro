@@ -532,19 +532,45 @@ export const softDeleteTransaction = async (
                     receiptPath: siblingRef.path,
                     receiptData: siblingReceipt
                   });
-                  
+
                   // For sibling receipts, we need to remove this receipt from their sibling list
                   // to properly break the financial relationship
                   const updatedSiblingRefs = siblingReceipt.siblingReceiptRefs?.filter(
                     ref => ref.id !== receipt.id
                   ) || [];
-                  
-                  // Update sibling receipt to remove the relationship (but don't delete the sibling)
-                  batch.update(siblingRef, {
+
+                  // If this is a credit receipt being deleted and the sibling is a debit receipt,
+                  // we need to update the debit receipt's status back to 'active' or 'paid' based on remaining payments
+                  const siblingUpdateData: any = {
                     siblingReceiptRefs: updatedSiblingRefs,
                     updatedAt: Timestamp.now()
-                  });
-                  
+                  };
+
+                  // If the current receipt being deleted is a credit (payment) and sibling is a debit (invoice)
+                  if (receipt.type === 'credit' && siblingReceipt.type === 'debit') {
+                    // Check if there are other credit receipts still linked to this debit
+                    const remainingCredits = updatedSiblingRefs;
+
+                    if (remainingCredits.length === 0) {
+                      // No more payments linked - mark as active (unpaid)
+                      siblingUpdateData.status = 'active';
+                      console.log(`📋 Reverting debit receipt ${siblingReceipt.id} status to 'active' (no remaining payments)`);
+                    } else {
+                      // Some payments still linked - mark as paid (partially paid)
+                      siblingUpdateData.status = 'paid';
+                      console.log(`📋 Updating debit receipt ${siblingReceipt.id} status to 'paid' (partial payments remain)`);
+                    }
+                  }
+
+                  // If the current receipt being deleted is a debit (invoice) and sibling is a credit (payment)
+                  // The credit becomes an unlinked payment (general credit)
+                  if (receipt.type === 'debit' && siblingReceipt.type === 'credit') {
+                    console.log(`💳 Credit receipt ${siblingReceipt.id} is now unlinked (general payment) due to debit deletion`);
+                  }
+
+                  // Update sibling receipt to remove the relationship (and update status if needed)
+                  batch.update(siblingRef, siblingUpdateData);
+
                   console.log(`🔗 Removed relationship from sibling receipt: ${siblingReceipt.id}`);
                 }
               } catch (error) {

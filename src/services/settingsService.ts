@@ -70,16 +70,26 @@ export const updateSettings = async (organizationId: string, updates: Partial<Se
     const docRef = doc(db, COLLECTION_NAME, organizationId);
     
     // Clean up undefined values and ensure proper data structure
-    const cleanField = (field: any) => ({
-      name: field.name || '',
-      type: field.type || 'text',
-      required: field.required === true,
-      order: field.order || 0,
-      description: field.description || '',
-      ...(field.unit && { unit: field.unit }),
-      defaultValue: field.defaultValue || '',
-      options: Array.isArray(field.options) ? field.options : []
-    });
+    const cleanField = (field: any) => {
+      const cleaned = {
+        name: field.name || '',
+        type: field.type || 'text',
+        required: field.required === true,
+        order: field.order || 0,
+        description: field.description || '',
+        ...(field.unit && { unit: field.unit }),
+        ...(field.maximum !== undefined && field.maximum !== null && field.maximum !== '' && { maximum: field.maximum }),
+        defaultValue: field.defaultValue || '',
+        options: Array.isArray(field.options) ? field.options : []
+      };
+
+      // Log if maximum is being saved
+      if (field.maximum !== undefined && field.maximum !== null && field.maximum !== '') {
+        console.log('💾 Saving field with maximum:', field.name, 'maximum:', field.maximum);
+      }
+
+      return cleaned;
+    };
     
     // Ensure field categories are properly serialized with fields arrays
     const dataToSave = {

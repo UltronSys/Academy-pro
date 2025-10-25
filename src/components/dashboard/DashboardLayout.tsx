@@ -235,7 +235,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
       subItems: [
         { text: 'Products', path: '/finance?tab=0', icon: <ProductsIcon /> },
         { text: 'Transactions', path: '/finance?tab=1', icon: <TransactionsIcon /> },
-        { text: 'Players/Guardians', path: '/finance?tab=2', icon: <PaymentsIcon /> },
+        { text: 'Players', path: '/finance?tab=2', icon: <PaymentsIcon /> },
         { text: 'Stats', path: '/finance?tab=3', icon: <StatsIcon /> }
       ]
     },
