@@ -5,6 +5,7 @@ export interface User {
   email: string;
   name: string;
   phone?: string;
+  photoURL?: string; // Profile picture URL
   roles: UserRole[];
   balance?: number; // Amount owed by user (negative = owes money, positive = has credit)
   outstandingBalance?: Record<string, number>; // Outstanding balance per organization

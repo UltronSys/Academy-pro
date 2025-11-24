@@ -362,11 +362,21 @@ const Settings: React.FC = () => {
     try {
       setLoading(true);
       setError('');
-      
+
       if (!fieldForm.name || !fieldForm.type) {
         setError('Field name and type are required');
         setLoading(false);
         return;
+      }
+
+      // Validate that select/multiselect fields have at least one non-empty option
+      if ((fieldForm.type === 'select' || fieldForm.type === 'multiselect')) {
+        const validOptions = (fieldForm.options || []).filter(opt => opt.trim() !== '');
+        if (validOptions.length === 0) {
+          setError('Please add at least one option for select/multiselect fields');
+          setLoading(false);
+          return;
+        }
       }
 
       if (!settings) {
@@ -378,6 +388,11 @@ const Settings: React.FC = () => {
       console.log('📝 handleSaveField - fieldForm:', fieldForm);
       console.log('📝 handleSaveField - fieldForm.maximum:', fieldForm.maximum);
 
+      // Clean up options for select/multiselect fields (remove empty options)
+      const cleanedOptions = (fieldForm.type === 'select' || fieldForm.type === 'multiselect')
+        ? (fieldForm.options || []).filter(opt => opt.trim() !== '')
+        : (fieldForm.options || []);
+
       const newField: ParameterField = {
         name: fieldForm.name || '',
         type: fieldForm.type || 'text',
@@ -387,7 +402,7 @@ const Settings: React.FC = () => {
         unit: fieldForm.unit || '',
         maximum: fieldForm.maximum !== undefined && fieldForm.maximum !== null ? fieldForm.maximum : '',
         defaultValue: fieldForm.defaultValue !== undefined && fieldForm.defaultValue !== null ? fieldForm.defaultValue : '',
-        options: fieldForm.options || []
+        options: cleanedOptions
       };
 
       console.log('📝 handleSaveField - newField created:', newField);
@@ -1290,6 +1305,11 @@ const Settings: React.FC = () => {
                                   {field.maximum && (
                                     <p className="text-xs text-secondary-500 font-normal">Maximum: {field.maximum}</p>
                                   )}
+                                  {(field.type === 'select' || field.type === 'multiselect') && field.options && field.options.length > 0 && (
+                                    <p className="text-xs text-secondary-500 font-normal">
+                                      Options: {field.options.join(', ')}
+                                    </p>
+                                  )}
                                 </div>
                                 <div className="flex gap-2">
                                   {canWrite('settings') && (
@@ -1676,7 +1696,18 @@ const Settings: React.FC = () => {
               <Select
                 label="Field Type"
                 value={fieldForm.type || 'text'}
-                onChange={(e) => setFieldForm({ ...fieldForm, type: e.target.value as any })}
+                onChange={(e) => {
+                  const newType = e.target.value as ParameterField['type'];
+                  const updatedForm = { ...fieldForm, type: newType };
+
+                  // Initialize options array with one empty option when switching to select/multiselect
+                  if ((newType === 'select' || newType === 'multiselect') &&
+                      (!fieldForm.options || fieldForm.options.length === 0)) {
+                    updatedForm.options = [''];
+                  }
+
+                  setFieldForm(updatedForm);
+                }}
               >
                 <option value="text">Text</option>
                 <option value="number">Number</option>
@@ -1717,7 +1748,59 @@ const Settings: React.FC = () => {
                 onChange={(e) => setFieldForm({ ...fieldForm, defaultValue: e.target.value })}
                 placeholder="Enter default value"
               />
-              
+
+              {/* Options for Select and Multiselect fields */}
+              {(fieldForm.type === 'select' || fieldForm.type === 'multiselect') && (
+                <div className="space-y-3">
+                  <label className="block text-sm font-semibold text-secondary-900">
+                    Options {(fieldForm.type === 'select' || fieldForm.type === 'multiselect') && <span className="text-error-600">*</span>}
+                  </label>
+
+                  <div className="space-y-2">
+                    {(fieldForm.options || []).map((option, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <Input
+                          value={option}
+                          onChange={(e) => {
+                            const newOptions = [...(fieldForm.options || [])];
+                            newOptions[index] = e.target.value;
+                            setFieldForm({ ...fieldForm, options: newOptions });
+                          }}
+                          placeholder={`Option ${index + 1}`}
+                        />
+                        <button
+                          onClick={() => {
+                            const newOptions = (fieldForm.options || []).filter((_, i) => i !== index);
+                            setFieldForm({ ...fieldForm, options: newOptions });
+                          }}
+                          className="p-2 text-error-600 hover:bg-error-50 rounded-lg transition-colors"
+                        >
+                          <DeleteIcon />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const newOptions = [...(fieldForm.options || []), ''];
+                      setFieldForm({ ...fieldForm, options: newOptions });
+                    }}
+                    icon={<AddIcon />}
+                  >
+                    Add Option
+                  </Button>
+
+                  {(!fieldForm.options || fieldForm.options.length === 0) && (
+                    <p className="text-sm text-error-600">
+                      Please add at least one option for this field type
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="flex items-center gap-3 p-4 bg-secondary-50 rounded-lg">
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
@@ -1746,7 +1829,12 @@ const Settings: React.FC = () => {
               <Button
                 onClick={handleSaveField}
                 loading={loading}
-                disabled={!fieldForm.name || !fieldForm.type}
+                disabled={
+                  !fieldForm.name ||
+                  !fieldForm.type ||
+                  ((fieldForm.type === 'select' || fieldForm.type === 'multiselect') &&
+                   (!fieldForm.options || fieldForm.options.filter(opt => opt.trim() !== '').length === 0))
+                }
                 className="bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800"
               >
                 {fieldDialogMode === 'add' ? 'Create Field' : 'Update Field'}
