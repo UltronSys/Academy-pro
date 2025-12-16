@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Card, Input, Label, Select, DataTable, Toast, ConfirmModal, PlayerMultiSelect } from '../ui';
+import { Button, Card, Input, Label, Select, DataTable, Toast, ConfirmModal } from '../ui';
 import { useApp } from '../../contexts/AppContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { 
-  createProduct, 
+import {
+  createProduct,
   getProductsByOrganization,
   getProductsByAcademy,
   updateProduct,
@@ -11,9 +11,15 @@ import {
   linkPlayersToProduct,
   unlinkPlayersFromProduct
 } from '../../services/productService';
-import { Product } from '../../types';
+import { Product, Player } from '../../types';
 import { getPlayersByOrganization } from '../../services/playerService';
+import { getUserById } from '../../services/userService';
 import { getSettingsByOrganization } from '../../services/settingsService';
+
+interface PlayerWithUserInfo {
+  player: Player;
+  userName: string;
+}
 
 const Products: React.FC = () => {
   const { selectedAcademy, selectedOrganization } = useApp();
@@ -42,6 +48,9 @@ const Products: React.FC = () => {
   const [invoiceDate, setInvoiceDate] = useState<string>('');
   const [deadlineDate, setDeadlineDate] = useState<string>('');
   const [invoiceGeneration, setInvoiceGeneration] = useState<'immediate' | 'scheduled'>('immediate');
+  const [allPlayers, setAllPlayers] = useState<PlayerWithUserInfo[]>([]);
+  const [loadingPlayers, setLoadingPlayers] = useState(false);
+  const [playerSearchQuery, setPlayerSearchQuery] = useState('');
 
   const typeOptions = [
     { value: 'all', label: 'All Types' },
@@ -228,26 +237,97 @@ const Products: React.FC = () => {
     }
   };
 
-  const handleLinkPlayers = (product: Product) => {
+  const handleLinkPlayers = async (product: Product) => {
     setSelectedProductForLinking(product);
     setLinkingPlayerIds(product.linkedPlayerIds || []);
     setLinkingPlayerNames(product.linkedPlayerNames || []);
-    
+
     // Set default dates
     const today = new Date();
     const defaultDeadline = new Date();
     defaultDeadline.setDate(today.getDate() + 30); // Default 30 days for deadline
-    
+
     setInvoiceDate(today.toISOString().split('T')[0]);
     setDeadlineDate(defaultDeadline.toISOString().split('T')[0]);
     setInvoiceGeneration('immediate');
-    
+    setPlayerSearchQuery('');
+
     setShowLinkPlayersModal(true);
+
+    // Load all players
+    if (!selectedOrganization?.id) return;
+
+    try {
+      setLoadingPlayers(true);
+      const players = await getPlayersByOrganization(selectedOrganization.id);
+
+      // Get user info for each player
+      const playersWithUserInfo: PlayerWithUserInfo[] = await Promise.all(
+        players.map(async (player) => {
+          try {
+            const user = await getUserById(player.userId);
+            return {
+              player,
+              userName: user?.name || 'Unknown Player'
+            };
+          } catch {
+            return {
+              player,
+              userName: 'Unknown Player'
+            };
+          }
+        })
+      );
+
+      setAllPlayers(playersWithUserInfo);
+    } catch (error) {
+      console.error('Error loading players:', error);
+      showToast('Failed to load players', 'error');
+    } finally {
+      setLoadingPlayers(false);
+    }
   };
 
-  const handlePlayerLinkingChange = (playerIds: string[], playerNames: string[]) => {
-    setLinkingPlayerIds(playerIds);
-    setLinkingPlayerNames(playerNames);
+  const handlePlayerToggle = (playerId: string, playerName: string) => {
+    if (linkingPlayerIds.includes(playerId)) {
+      // Remove player
+      setLinkingPlayerIds(prev => prev.filter(id => id !== playerId));
+      setLinkingPlayerNames(prev => prev.filter(name => name !== playerName));
+    } else {
+      // Add player
+      setLinkingPlayerIds(prev => [...prev, playerId]);
+      setLinkingPlayerNames(prev => [...prev, playerName]);
+    }
+  };
+
+  const handleSelectAllPlayers = () => {
+    // Get filtered players based on search
+    const filteredPlayers = allPlayers.filter(({ userName }) =>
+      playerSearchQuery === '' ||
+      userName.toLowerCase().includes(playerSearchQuery.toLowerCase())
+    );
+
+    // Check if all filtered players are already selected
+    const allFilteredIds = filteredPlayers.map(({ player }) => player.userId);
+    const allSelected = allFilteredIds.every(id => linkingPlayerIds.includes(id));
+
+    if (allSelected) {
+      // Deselect all filtered players
+      setLinkingPlayerIds(prev => prev.filter(id => !allFilteredIds.includes(id)));
+      setLinkingPlayerNames(prev => {
+        const filteredNames = filteredPlayers.map(({ userName }) => userName);
+        return prev.filter(name => !filteredNames.includes(name));
+      });
+    } else {
+      // Select all filtered players (add those not already selected)
+      const newIds = allFilteredIds.filter(id => !linkingPlayerIds.includes(id));
+      const newNames = filteredPlayers
+        .filter(({ player }) => !linkingPlayerIds.includes(player.userId))
+        .map(({ userName }) => userName);
+
+      setLinkingPlayerIds(prev => [...prev, ...newIds]);
+      setLinkingPlayerNames(prev => [...prev, ...newNames]);
+    }
   };
 
   const handleCloseLinkingModal = () => {
@@ -259,6 +339,8 @@ const Products: React.FC = () => {
     setInvoiceDate('');
     setDeadlineDate('');
     setInvoiceGeneration('immediate');
+    setPlayerSearchQuery('');
+    setAllPlayers([]);
   };
 
   const handleSubmitPlayerLinking = async () => {
@@ -682,7 +764,7 @@ const Products: React.FC = () => {
 
       {/* Link Players Modal */}
       {showLinkPlayersModal && selectedProductForLinking && (
-        <div 
+        <div
           className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"
           onClick={(e) => {
             if (e.target === e.currentTarget && !linkingSubmitting) {
@@ -690,100 +772,317 @@ const Products: React.FC = () => {
             }
           }}
         >
-          <div className="w-full max-w-lg my-8">
+          <div className="w-full max-w-4xl my-8">
             <Card className="w-full">
-              <div className="p-6 max-h-[80vh] overflow-y-auto">
-                <h3 className="text-lg font-semibold text-secondary-900 mb-4">
-                  Link Players to Product
-                </h3>
-                <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                  <div className="text-sm font-medium text-gray-700">
-                    Product: <span className="text-gray-900">{selectedProductForLinking.name}</span>
-                  </div>
-                </div>
-                
-                <div className="space-y-4">
+              <div className="p-6 max-h-[85vh] overflow-y-auto">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-6">
                   <div>
-                    <Label>Select Players</Label>
-                    <PlayerMultiSelect
-                      selectedPlayerIds={linkingPlayerIds}
-                      onSelectionChange={handlePlayerLinkingChange}
-                      placeholder="Search and select players for this product..."
+                    <h3 className="text-xl font-semibold text-secondary-900">
+                      Link Players to Product
+                    </h3>
+                    <p className="text-sm text-secondary-500 mt-1">
+                      Select players to assign to <span className="font-medium text-secondary-700">{selectedProductForLinking.name}</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleCloseLinkingModal}
+                    disabled={linkingSubmitting}
+                    className="p-2 hover:bg-secondary-100 rounded-lg transition-colors"
+                  >
+                    <svg className="w-5 h-5 text-secondary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Product Info Banner */}
+                <div className="mb-5 p-4 bg-primary-50 border border-primary-200 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+                      <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="font-medium text-primary-900">{selectedProductForLinking.name}</div>
+                      <div className="text-sm text-primary-700">
+                        {defaultCurrency} {selectedProductForLinking.price.toFixed(2)}
+                        {selectedProductForLinking.productType === 'recurring' && selectedProductForLinking.recurringDuration && (
+                          <span> / {selectedProductForLinking.recurringDuration.value} {selectedProductForLinking.recurringDuration.unit}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                    selectedProductForLinking.productType === 'recurring'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'bg-green-100 text-green-800'
+                  }`}>
+                    {selectedProductForLinking.productType === 'recurring' ? 'Recurring' : 'One-time'}
+                  </span>
+                </div>
+
+                {/* Search Bar and Select All */}
+                <div className="flex gap-3 mb-4">
+                  <div className="relative flex-1">
+                    <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-secondary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input
+                      type="text"
+                      placeholder="Search players by name..."
+                      value={playerSearchQuery}
+                      onChange={(e) => setPlayerSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 border border-secondary-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     />
                   </div>
-                  
-                  {invoiceGeneration === 'scheduled' && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="invoiceDate">Invoice Date</Label>
-                        <Input
-                          id="invoiceDate"
-                          type="date"
-                          value={invoiceDate}
-                          onChange={(e) => setInvoiceDate(e.target.value)}
-                          required
-                        />
-                        <div className="text-xs text-secondary-600 mt-1">
-                          Date when the invoice will be created (can be past date for legacy entries)
-                        </div>
-                      </div>
+                  {!loadingPlayers && allPlayers.length > 0 && (
+                    <button
+                      onClick={handleSelectAllPlayers}
+                      className="px-4 py-2.5 bg-secondary-100 hover:bg-secondary-200 text-secondary-700 rounded-lg font-medium text-sm transition-colors whitespace-nowrap flex items-center gap-2"
+                    >
+                      {(() => {
+                        const filteredPlayers = allPlayers.filter(({ userName }) =>
+                          playerSearchQuery === '' ||
+                          userName.toLowerCase().includes(playerSearchQuery.toLowerCase())
+                        );
+                        const allFilteredIds = filteredPlayers.map(({ player }) => player.userId);
+                        const allSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => linkingPlayerIds.includes(id));
 
-                      <div>
-                        <Label htmlFor="deadlineDate">Payment Deadline</Label>
-                        <Input
-                          id="deadlineDate"
-                          type="date"
-                          value={deadlineDate}
-                          onChange={(e) => setDeadlineDate(e.target.value)}
-                          required
-                          min={invoiceDate || undefined}
-                        />
-                        <div className="text-xs text-secondary-600 mt-1">
-                          Payment deadline (must be on or after invoice date)
-                        </div>
+                        return allSelected ? (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            Deselect All
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Select All {playerSearchQuery && `(${filteredPlayers.length})`}
+                          </>
+                        );
+                      })()}
+                    </button>
+                  )}
+                </div>
+
+                {/* Selection Summary Bar */}
+                {linkingPlayerIds.length > 0 && (
+                  <div className="mb-4 p-3 bg-primary-50 border border-primary-200 rounded-lg flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center">
+                        <span className="text-white font-semibold text-sm">{linkingPlayerIds.length}</span>
+                      </div>
+                      <span className="text-primary-800 font-medium">
+                        {linkingPlayerIds.length} player{linkingPlayerIds.length !== 1 ? 's' : ''} selected
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setLinkingPlayerIds([]);
+                        setLinkingPlayerNames([]);
+                      }}
+                      className="text-sm text-primary-600 hover:text-primary-800 font-medium"
+                    >
+                      Clear selection
+                    </button>
+                  </div>
+                )}
+
+                {/* Player Cards Grid */}
+                {loadingPlayers ? (
+                  <div className="flex flex-col items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-600 mb-3"></div>
+                    <p className="text-secondary-500">Loading players...</p>
+                  </div>
+                ) : allPlayers.length === 0 ? (
+                  <div className="text-center py-12 bg-secondary-50 rounded-lg">
+                    <svg className="w-12 h-12 text-secondary-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    <p className="text-secondary-600 font-medium">No players found</p>
+                    <p className="text-sm text-secondary-500 mt-1">There are no players in this organization</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6 max-h-[300px] overflow-y-auto pr-1">
+                    {allPlayers
+                      .filter(({ userName }) =>
+                        playerSearchQuery === '' ||
+                        userName.toLowerCase().includes(playerSearchQuery.toLowerCase())
+                      )
+                      .map(({ player, userName }) => {
+                        const isSelected = linkingPlayerIds.includes(player.userId);
+                        const wasAlreadyLinked = selectedProductForLinking.linkedPlayerIds?.includes(player.userId);
+                        return (
+                          <div
+                            key={player.id}
+                            onClick={() => handlePlayerToggle(player.userId, userName)}
+                            className={`
+                              relative p-4 rounded-lg border-2 cursor-pointer transition-all
+                              ${isSelected
+                                ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-200'
+                                : 'border-secondary-200 hover:border-secondary-300 hover:bg-secondary-50'
+                              }
+                            `}
+                          >
+                            {/* Selected checkmark */}
+                            {isSelected && (
+                              <div className="absolute top-2 right-2 w-6 h-6 bg-primary-500 rounded-full flex items-center justify-center">
+                                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </div>
+                            )}
+
+                            {/* Already linked badge */}
+                            {wasAlreadyLinked && (
+                              <div className="absolute top-2 left-2">
+                                <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
+                                  Linked
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Player avatar and info */}
+                            <div className="flex items-center gap-3">
+                              <div className={`
+                                w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold
+                                ${isSelected ? 'bg-primary-200 text-primary-800' : 'bg-secondary-200 text-secondary-700'}
+                              `}>
+                                {userName.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h4 className={`font-medium truncate ${isSelected ? 'text-primary-900' : 'text-secondary-900'}`}>
+                                  {userName}
+                                </h4>
+                                <p className="text-xs text-secondary-500 truncate">
+                                  {player.gender || 'Player'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+
+                {/* Invoice Settings - Only show if players are selected */}
+                {linkingPlayerIds.length > 0 && (
+                  <div className="border-t border-secondary-200 pt-5 mt-2">
+                    <h4 className="text-sm font-medium text-secondary-700 mb-4">Invoice Settings</h4>
+
+                    <div className="mb-4">
+                      <Label>Invoice Generation</Label>
+                      <div className="flex flex-wrap gap-3 mt-2">
+                        <label className={`
+                          flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                          ${invoiceGeneration === 'immediate'
+                            ? 'border-primary-500 bg-primary-50 text-primary-700'
+                            : 'border-secondary-200 hover:border-secondary-300'
+                          }
+                        `}>
+                          <input
+                            type="radio"
+                            value="immediate"
+                            checked={invoiceGeneration === 'immediate'}
+                            onChange={(e) => setInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
+                            className="sr-only"
+                          />
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                          </svg>
+                          <span className="text-sm font-medium">Create immediately</span>
+                        </label>
+                        <label className={`
+                          flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                          ${invoiceGeneration === 'scheduled'
+                            ? 'border-primary-500 bg-primary-50 text-primary-700'
+                            : 'border-secondary-200 hover:border-secondary-300'
+                          }
+                        `}>
+                          <input
+                            type="radio"
+                            value="scheduled"
+                            checked={invoiceGeneration === 'scheduled'}
+                            onChange={(e) => setInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
+                            className="sr-only"
+                          />
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="text-sm font-medium">Schedule for later</span>
+                        </label>
                       </div>
                     </div>
-                  )}
-                  
-                  <div>
-                    <Label>Invoice Generation</Label>
-                    <div className="space-y-2 mt-2">
-                      <label className="flex items-center space-x-2">
-                        <input
-                          type="radio"
-                          value="immediate"
-                          checked={invoiceGeneration === 'immediate'}
-                          onChange={(e) => setInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
-                          className="form-radio text-primary-600"
-                        />
-                        <span className="text-sm">Create invoice immediately</span>
-                      </label>
-                      <label className="flex items-center space-x-2">
-                        <input
-                          type="radio"
-                          value="scheduled"
-                          checked={invoiceGeneration === 'scheduled'}
-                          onChange={(e) => setInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
-                          className="form-radio text-primary-600"
-                        />
-                        <span className="text-sm">
-                          {selectedProductForLinking?.productType === 'recurring' 
-                            ? 'Wait for next billing cycle' 
-                            : 'Wait until invoice date'}
+
+                    {invoiceGeneration === 'scheduled' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <Label htmlFor="invoiceDate">Invoice Date</Label>
+                          <Input
+                            id="invoiceDate"
+                            type="date"
+                            value={invoiceDate}
+                            onChange={(e) => setInvoiceDate(e.target.value)}
+                            required
+                          />
+                          <p className="text-xs text-secondary-500 mt-1">
+                            When the invoice will be created
+                          </p>
+                        </div>
+                        <div>
+                          <Label htmlFor="deadlineDate">Payment Deadline</Label>
+                          <Input
+                            id="deadlineDate"
+                            type="date"
+                            value={deadlineDate}
+                            onChange={(e) => setDeadlineDate(e.target.value)}
+                            required
+                            min={invoiceDate || undefined}
+                          />
+                          <p className="text-xs text-secondary-500 mt-1">
+                            Payment must be made by this date
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Summary */}
+                    <div className="p-4 bg-secondary-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm text-secondary-600">Players to link:</span>
+                        <span className="font-semibold text-secondary-900">{linkingPlayerIds.length}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-secondary-600">Amount per player:</span>
+                        <span className="font-semibold text-secondary-900">
+                          {defaultCurrency} {selectedProductForLinking.price.toFixed(2)}
                         </span>
-                      </label>
-                    </div>
-                    <div className="text-xs text-secondary-600 mt-2">
-                      {invoiceGeneration === 'immediate' 
-                        ? 'A debit receipt will be created immediately for the selected players.'
-                        : selectedProductForLinking?.productType === 'recurring'
-                        ? `Receipt will be created at the end of the billing cycle (${selectedProductForLinking.recurringDuration?.value} ${selectedProductForLinking.recurringDuration?.unit}).`
-                        : 'Receipt will be created on the invoice date specified above.'}
+                      </div>
+                      <div className="border-t border-secondary-200 mt-3 pt-3 flex items-center justify-between">
+                        <span className="text-sm font-medium text-secondary-700">Total invoices:</span>
+                        <span className="text-lg font-bold text-primary-600">
+                          {defaultCurrency} {(selectedProductForLinking.price * linkingPlayerIds.length).toFixed(2)}
+                        </span>
+                      </div>
+                      {invoiceGeneration === 'immediate' && (
+                        <p className="text-xs text-primary-600 mt-3 flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Invoices will be created once you confirm
+                        </p>
+                      )}
                     </div>
                   </div>
-                </div>
-                
-                <div className="flex justify-end space-x-3 pt-6">
+                )}
+
+                {/* Footer Actions */}
+                <div className="flex justify-end gap-3 pt-6 mt-4 border-t border-secondary-200">
                   <Button
                     type="button"
                     variant="outline"
@@ -792,17 +1091,17 @@ const Products: React.FC = () => {
                   >
                     Cancel
                   </Button>
-                  <Button 
+                  <Button
                     onClick={handleSubmitPlayerLinking}
-                    disabled={linkingSubmitting}
+                    disabled={linkingSubmitting || linkingPlayerIds.length === 0}
                   >
                     {linkingSubmitting && (
-                      <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
                     )}
-                    {linkingSubmitting ? 'Linking Players...' : 'Link Players'}
+                    {linkingSubmitting ? 'Linking...' : `Link ${linkingPlayerIds.length} Player${linkingPlayerIds.length !== 1 ? 's' : ''}`}
                   </Button>
                 </div>
               </div>

@@ -8,6 +8,7 @@ export interface AlgoliaUserRecord {
   name: string;
   email?: string;
   phone?: string;
+  photoURL?: string; // Profile picture URL
   organizationId: string;
   roles: string[]; // Flattened array of role names
   roleDetails: UserRole[]; // Full role details for filtering
@@ -127,6 +128,7 @@ class AlgoliaService {
           'name',
           'email',
           'phone',
+          'photoURL',
           'roles',
           'roleDetails',
           'academies',
@@ -183,6 +185,7 @@ class AlgoliaService {
       name: user.name,
       email: user.email,
       phone: user.phone,
+      photoURL: user.photoURL, // Profile picture URL
       organizationId: user.roles?.[0]?.organizationId || '',
       roles,
       roleDetails: user.roles || [],
@@ -230,7 +233,13 @@ class AlgoliaService {
       const filterParts = [`organizationId:${organizationId}`];
       
       if (filters.role && filters.role !== 'all') {
-        filterParts.push(`roles:${filters.role}`);
+        // Support multiple roles separated by comma (e.g., "admin,owner")
+        if (filters.role.includes(',')) {
+          const roles = filters.role.split(',').map((r: string) => `roles:${r.trim()}`);
+          filterParts.push(`(${roles.join(' OR ')})`);
+        } else {
+          filterParts.push(`roles:${filters.role}`);
+        }
       }
       
       if (filters.academyId) {
@@ -270,6 +279,7 @@ class AlgoliaService {
           'name',
           'email',
           'phone',
+          'photoURL',
           'roles',
           'roleDetails',
           'academies',

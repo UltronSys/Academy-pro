@@ -10,11 +10,14 @@ import {
   Badge
 } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
+import { useUsers } from '../../contexts/UsersContext';
 import { User, Academy, Settings, ParameterField, FieldCategory } from '../../types';
 import { getUserById, updateUser } from '../../services/userService';
 import { getAcademiesByOrganization } from '../../services/academyService';
 import { getPlayerByUserId, updatePlayer } from '../../services/playerService';
 import { getSettingsByOrganization, getFieldCategoriesForAcademy } from '../../services/settingsService';
+import { storage } from '../../firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // Icons
 const ArrowLeftIcon = () => (
@@ -64,8 +67,14 @@ const EditUser: React.FC = () => {
     dynamicFields: {} as Record<string, any>
   });
   const [submitLoading, setSubmitLoading] = useState(false);
+  const [multiselectStates, setMultiselectStates] = useState<Record<string, boolean>>({});
+  const dropdownRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+  const [profileImage, setProfileImage] = useState<File | null>(null);
+  const [profileImagePreview, setProfileImagePreview] = useState<string>('');
+  const [imageUploading, setImageUploading] = useState(false);
 
   const { userData } = useAuth();
+  const { updateUser: updateUserInContext } = useUsers();
 
   const steps = ['Full Name', 'Role Assignment', 'Contact Information', 'Player Details'];
   const isPlayerRole = formData.roles.includes('player');
@@ -80,22 +89,137 @@ const EditUser: React.FC = () => {
     }
   }, [userData, userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Handle click outside for multiselect dropdowns
   useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      Object.keys(dropdownRefs.current).forEach(key => {
+        const ref = dropdownRefs.current[key];
+        if (ref && !ref.contains(event.target as Node)) {
+          setMultiselectStates(prev => ({ ...prev, [key]: false }));
+        }
+      });
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    let sortedCategories: FieldCategory[] = [];
+
     if (organizationSettings && formData.academyId.length > 0) {
       const academyId = formData.academyId[0];
       const categories = getFieldCategoriesForAcademy(organizationSettings, academyId);
-      setFieldCategories((categories || []).sort((a, b) => a.order - b.order));
+      sortedCategories = (categories || []).sort((a, b) => a.order - b.order);
     } else if (organizationSettings && organizationSettings.fieldCategories) {
-      setFieldCategories(organizationSettings.fieldCategories.sort((a, b) => a.order - b.order));
-    } else {
-      setFieldCategories([]);
+      sortedCategories = organizationSettings.fieldCategories.sort((a, b) => a.order - b.order);
     }
+
+    setFieldCategories(sortedCategories);
   }, [organizationSettings, formData.academyId]);
+
+  // Initialize default values when fieldCategories change (for new fields not in player data)
+  useEffect(() => {
+    if (fieldCategories.length === 0) return;
+
+    console.log('🔄 EditUser: Initializing default values for fieldCategories:', fieldCategories.length);
+
+    const newDynamicFields: Record<string, any> = { ...formData.dynamicFields };
+    let hasChanges = false;
+
+    fieldCategories.forEach(category => {
+      if (category.type === 'parameter' || category.type === 'mixed') {
+        category.fields?.forEach(field => {
+          const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+
+          console.log(`🔍 EditUser: Checking field "${field.name}":`, {
+            fieldKey,
+            currentValue: newDynamicFields[fieldKey],
+            defaultValue: field.defaultValue,
+            type: field.type
+          });
+
+          // Only set default if field doesn't have a value AND defaultValue exists
+          // For arrays (multiselect), also check if array has elements
+          const hasDefaultValue = field.defaultValue !== undefined &&
+                                  field.defaultValue !== null &&
+                                  field.defaultValue !== '' &&
+                                  !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
+          const fieldNotSet = newDynamicFields[fieldKey] === undefined;
+
+          if (fieldNotSet && hasDefaultValue) {
+            let defaultVal: any = field.defaultValue;
+
+            switch (field.type) {
+              case 'number':
+                defaultVal = Number(field.defaultValue) || 0;
+                break;
+              case 'boolean':
+                if (typeof field.defaultValue === 'boolean') {
+                  defaultVal = field.defaultValue;
+                } else if (typeof field.defaultValue === 'string') {
+                  const lowerVal = field.defaultValue.toLowerCase();
+                  if (lowerVal === 'true' || lowerVal === 'yes') {
+                    defaultVal = true;
+                  } else if (lowerVal === 'false' || lowerVal === 'no') {
+                    defaultVal = false;
+                  }
+                }
+                break;
+              case 'date':
+                if (field.defaultValue === '__CURRENT_DATE__') {
+                  const today = new Date();
+                  defaultVal = today.toISOString().split('T')[0];
+                } else {
+                  defaultVal = String(field.defaultValue);
+                }
+                break;
+              case 'multiselect':
+                if (Array.isArray(field.defaultValue)) {
+                  defaultVal = field.defaultValue;
+                } else if (typeof field.defaultValue === 'string' && field.defaultValue) {
+                  defaultVal = [field.defaultValue];
+                } else {
+                  defaultVal = [];
+                }
+                break;
+              default:
+                defaultVal = String(field.defaultValue);
+            }
+
+            newDynamicFields[fieldKey] = defaultVal;
+            hasChanges = true;
+            console.log(`✅ EditUser: Set default for "${field.name}":`, defaultVal);
+          }
+        });
+      }
+    });
+
+    if (hasChanges) {
+      console.log('📝 EditUser: Updating formData.dynamicFields with defaults:', newDynamicFields);
+      setFormData(prev => ({
+        ...prev,
+        dynamicFields: newDynamicFields
+      }));
+    }
+  }, [fieldCategories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadUser = async () => {
     try {
       setLoading(true);
       const userDataResult = await getUserById(userId!);
+
+      if (!userDataResult) {
+        console.error('❌ User not found');
+        setError('User not found');
+        return;
+      }
+
+      console.log('🔍 EditUser - Loaded user data:', {
+        userId: userDataResult.id,
+        name: userDataResult.name,
+        photoURL: userDataResult.photoURL,
+        hasPhotoURL: !!userDataResult.photoURL
+      });
       setUser(userDataResult);
 
       let playerData = null;
@@ -149,6 +273,20 @@ const EditUser: React.FC = () => {
           guardianId: playerData?.guardianId || [],
           dynamicFields: dynamicFields
         });
+
+        // Set existing profile picture preview
+        console.log('🖼️ EditUser - Setting profile image preview:', {
+          hasPhotoURL: !!userDataResult.photoURL,
+          photoURL: userDataResult.photoURL
+        });
+
+        if (userDataResult.photoURL) {
+          setProfileImagePreview(userDataResult.photoURL);
+          console.log('✅ Profile picture preview set to:', userDataResult.photoURL);
+        } else {
+          setProfileImagePreview('');
+          console.log('ℹ️ No profile picture found, clearing preview');
+        }
       }
     } catch (error) {
       console.error('Error loading user:', error);
@@ -210,40 +348,118 @@ const EditUser: React.FC = () => {
     setActiveStep((prevStep) => prevStep - 1);
   };
 
+  const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      // Check file size (5MB limit)
+      if (file.size > 5 * 1024 * 1024) {
+        setError('Image size must be less than 5MB');
+        return;
+      }
+
+      setProfileImage(file);
+
+      // Create preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfileImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const uploadProfileImage = async (userId: string): Promise<string> => {
+    if (!profileImage) {
+      throw new Error('No image selected');
+    }
+
+    try {
+      setImageUploading(true);
+
+      // Create a unique filename
+      const fileExtension = profileImage.name.split('.').pop();
+      const fileName = `profile_${userId}_${Date.now()}.${fileExtension}`;
+      const storageRef = ref(storage, `users/${userId}/${fileName}`);
+
+      // Upload the file
+      await uploadBytes(storageRef, profileImage);
+
+      // Get the download URL
+      const downloadURL = await getDownloadURL(storageRef);
+
+      return downloadURL;
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      throw error;
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!user) return;
 
     try {
       setSubmitLoading(true);
       const organizationId = userData?.roles?.[0]?.organizationId || '';
-      
+
+      // Upload profile image if a new one was selected
+      let profilePictureURL = user.photoURL; // Keep existing photo if no new one selected
+      if (profileImage) {
+        profilePictureURL = await uploadProfileImage(user.id);
+      }
+
+      // Prepare updated user roles
+      const updatedRoles = formData.roles.map(role => ({
+        role: [role],
+        organizationId: organizationId,
+        academyId: formData.academyId
+      }));
+
+      // Update user in Firestore
       await updateUser(user.id, {
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
-        roles: formData.roles.map(role => ({ 
-          role: [role],
-          organizationId: organizationId,
-          academyId: formData.academyId
-        }))
+        roles: updatedRoles,
+        ...(profilePictureURL && { photoURL: profilePictureURL })
       });
-      
+
       if (formData.roles.includes('player')) {
         const existingPlayer = await getPlayerByUserId(user.id);
         if (existingPlayer) {
           const dobValue = formData.dateOfBirth;
           const genderValue = formData.gender;
-          
+
           await updatePlayer(existingPlayer.id, {
             guardianId: formData.guardianId,
             playerParameters: formData.dynamicFields,
             dob: dobValue ? new Date(dobValue) : existingPlayer.dob,
-            gender: genderValue || existingPlayer.gender
+            gender: genderValue || existingPlayer.gender,
+            ...(profilePictureURL && { photoURL: profilePictureURL })
           });
         }
       }
-      
-      navigate('/users');
+
+      // Build updated user object for context (optimistic UI update)
+      const updatedUser: User = {
+        ...user,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        roles: updatedRoles,
+        ...(profilePictureURL && { photoURL: profilePictureURL })
+      };
+
+      // Update in context for instant UI update
+      updateUserInContext(updatedUser);
+      console.log('✅ Updated user in context');
+
+      navigate('/users', {
+        state: {
+          successMessage: 'User updated successfully!'
+        }
+      });
     } catch (error) {
       console.error('Error saving user:', error);
       setError('Failed to save user');
@@ -254,7 +470,10 @@ const EditUser: React.FC = () => {
 
   const renderParameterField = (field: ParameterField) => {
     const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
-    const currentValue = formData.dynamicFields[fieldKey] || field.defaultValue;
+    // Use !== undefined to properly handle false and 0 values
+    const currentValue = formData.dynamicFields[fieldKey] !== undefined
+      ? formData.dynamicFields[fieldKey]
+      : field.defaultValue;
     
     const handleFieldChange = (value: any) => {
       setFormData({
@@ -317,9 +536,10 @@ const EditUser: React.FC = () => {
             helperText={field.description}
           />
         );
+      case 'select':
       case 'dropdown':
-        const dropdownOptions = field.options || ['No options configured'];
-        
+        const selectOptions = field.options || [];
+
         return (
           <Select
             key={fieldKey}
@@ -330,12 +550,173 @@ const EditUser: React.FC = () => {
             disabled={!field.options || field.options.length === 0}
             helperText={field.description || (!field.options || field.options.length === 0 ? 'No options configured for this field. Please update in settings.' : '')}
           >
-            {dropdownOptions.map((option) => (
+            <option value="">Select {field.name.toLowerCase()}</option>
+            {selectOptions.map((option) => (
               <option key={option} value={option}>
                 {option.charAt(0).toUpperCase() + option.slice(1)}
               </option>
             ))}
           </Select>
+        );
+      case 'multiselect':
+        const multiselectOptions = Array.isArray(field.options) ? field.options.filter(opt => opt && opt.trim() !== '') : [];
+        const selectedValues = Array.isArray(currentValue) ? currentValue : (currentValue ? [currentValue] : []);
+        const isOpen = multiselectStates[fieldKey] || false;
+
+        return (
+          <div key={fieldKey}>
+            <label className="block text-sm font-semibold text-gray-800 mb-1">
+              {field.name}
+              {field.required && <span className="text-red-500 ml-1">*</span>}
+            </label>
+            {field.description && (
+              <p className="text-xs text-gray-600 mb-1">{field.description}</p>
+            )}
+            {multiselectOptions.length > 0 ? (
+              <div>
+                {/* Selected items chips */}
+                {selectedValues.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 p-1.5 bg-gray-50 rounded-md border border-gray-200 mb-1.5">
+                    {selectedValues.map((value, idx) => (
+                      <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-600 text-white text-xs font-medium rounded shadow-sm">
+                        <span>{value}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleFieldChange(selectedValues.filter(v => v !== value));
+                          }}
+                          className="hover:bg-primary-700 rounded-full p-0.5 transition-colors"
+                          title="Remove"
+                        >
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                          </svg>
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Dropdown */}
+                <div ref={(el) => { dropdownRefs.current[fieldKey] = el; }} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setMultiselectStates(prev => ({ ...prev, [fieldKey]: !prev[fieldKey] }))}
+                    className="w-full px-4 py-2.5 text-left bg-white border-2 border-gray-300 rounded-lg shadow-sm hover:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-700">
+                        {selectedValues.length === 0
+                          ? `Select ${field.name.toLowerCase()}...`
+                          : `${selectedValues.length} selected`}
+                      </span>
+                      <svg className={`w-5 h-5 text-gray-400 transition-transform ${isOpen ? 'transform rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </button>
+
+                  {/* Dropdown menu */}
+                  {isOpen && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-xl max-h-60 overflow-auto">
+                      {multiselectOptions.map((option, optionIndex) => {
+                        const isSelected = selectedValues.includes(option);
+                        return (
+                          <button
+                            key={`${option}-${optionIndex}`}
+                            type="button"
+                            onClick={() => {
+                              let newValues;
+                              if (isSelected) {
+                                newValues = selectedValues.filter(v => v !== option);
+                              } else {
+                                newValues = [...selectedValues, option];
+                              }
+                              handleFieldChange(newValues);
+                            }}
+                            className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 hover:bg-primary-50 transition-colors ${
+                              isSelected ? 'bg-primary-50' : ''
+                            }`}
+                          >
+                            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                              isSelected
+                                ? 'bg-primary-600 border-primary-600'
+                                : 'border-gray-300'
+                            }`}>
+                              {isSelected && (
+                                <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </div>
+                            <span className={isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}>
+                              {option}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 border border-orange-300 rounded-lg bg-orange-50">
+                <p className="text-sm text-orange-800 font-medium">No options configured</p>
+                <p className="text-xs text-orange-600 mt-1">Please go to Settings and add options for the "{field.name}" field.</p>
+              </div>
+            )}
+          </div>
+        );
+      case 'boolean':
+        return (
+          <div key={fieldKey} className="space-y-2">
+            <label className="block text-sm font-medium text-gray-700">
+              {field.name}
+              {field.required && <span className="text-red-500 ml-1">*</span>}
+            </label>
+            <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => handleFieldChange(true)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
+                  currentValue === true
+                    ? 'bg-green-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentValue === true && (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  Yes
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFieldChange(false)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
+                  currentValue === false
+                    ? 'bg-red-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentValue === false && (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                  No
+                </span>
+              </button>
+            </div>
+            {field.description && (
+              <p className="text-sm text-gray-500 mt-1">{field.description}</p>
+            )}
+          </div>
         );
       default:
         return null;
@@ -417,6 +798,9 @@ const EditUser: React.FC = () => {
       </div>
     );
   }
+
+  // Debug log on every render
+  console.log('🔄 EditUser render - profileImagePreview:', profileImagePreview, 'user photoURL:', user?.photoURL);
 
   return (
     <div className="space-y-6">
@@ -500,6 +884,52 @@ const EditUser: React.FC = () => {
                 <h2 className="text-2xl font-bold text-secondary-900 mb-2">Personal Information</h2>
                 <p className="text-secondary-600 font-normal">Update the user's basic information</p>
               </div>
+
+              {/* Profile Picture Upload */}
+              <div className="flex flex-col items-center space-y-4 mb-6">
+                <div className="relative">
+                  {profileImagePreview ? (
+                    <>
+                      {console.log('🎨 Rendering profile image:', profileImagePreview)}
+                      <img
+                        src={profileImagePreview}
+                        alt="Profile preview"
+                        className="w-24 h-24 rounded-full object-cover border-4 border-primary-600 shadow-lg"
+                        onLoad={() => console.log('✅ Profile image loaded successfully')}
+                        onError={(e) => console.error('❌ Profile image failed to load:', e)}
+                      />
+                    </>
+                  ) : (
+                    <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 border-4 border-primary-600 shadow-lg flex items-center justify-center">
+                      <svg className="w-12 h-12 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                  )}
+                  <label
+                    htmlFor="profile-picture"
+                    className="absolute bottom-0 right-0 bg-primary-600 text-white p-2 rounded-full cursor-pointer hover:bg-primary-700 transition-colors shadow-lg"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <input
+                      id="profile-picture"
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageSelect}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-medium text-gray-700">Profile Picture</p>
+                  <p className="text-xs text-gray-500 mt-1">Click the camera icon to {profileImagePreview ? 'change' : 'upload'} (optional)</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Max size: 5MB</p>
+                </div>
+              </div>
+
               <div className="bg-secondary-50 rounded-xl p-6">
                 <Input
                   label="Full Name"
@@ -670,7 +1100,7 @@ const EditUser: React.FC = () => {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-2">
                   <Input
                     label={formData.roles.includes('player') ? "Email Address (Optional)" : "Email Address"}
                     type="email"
@@ -762,13 +1192,13 @@ const EditUser: React.FC = () => {
                       const categoryFields = category.fields || [];
                       
                       return categoryFields.length > 0 && (
-                        <Card key={category.id}>
+                        <Card key={category.id} className="overflow-visible">
                           <CardBody>
                             <h4 className="text-base font-semibold text-secondary-900 mb-2">{category.name}</h4>
                             {category.description && (
                               <p className="text-sm text-secondary-700 mb-4 font-normal">{category.description}</p>
                             )}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-2">
                               {categoryFields
                                 .sort((a, b) => a.order - b.order)
                                 .map(field => (

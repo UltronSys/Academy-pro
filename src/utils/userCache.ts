@@ -1,7 +1,19 @@
 /**
- * User Cache Utility
- * Manages localStorage caching of newly created users for faster retrieval
- * while waiting for Algolia to sync
+ * @deprecated This file is deprecated. Use UserCacheContext instead.
+ *
+ * DEPRECATED: User Cache Utility (localStorage-based)
+ *
+ * This utility has been replaced by UserCacheContext for security reasons.
+ * localStorage can be vulnerable to XSS attacks and should not store sensitive data.
+ *
+ * New implementation: src/contexts/UserCacheContext.tsx
+ *
+ * Migration notes:
+ * - Replace import from './utils/userCache' with 'useUserCache' hook
+ * - Use context-based caching instead of localStorage
+ * - All functionality has been migrated to the context
+ *
+ * This file is kept for reference only and should be removed in a future cleanup.
  */
 
 import { User } from '../types';
