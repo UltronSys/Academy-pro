@@ -387,6 +387,7 @@ const Settings: React.FC = () => {
       
       console.log('📝 handleSaveField - fieldForm:', fieldForm);
       console.log('📝 handleSaveField - fieldForm.maximum:', fieldForm.maximum);
+      console.log('📝 handleSaveField - fieldForm.defaultValue:', fieldForm.defaultValue, typeof fieldForm.defaultValue);
 
       // Clean up options for select/multiselect fields (remove empty options)
       const cleanedOptions = (fieldForm.type === 'select' || fieldForm.type === 'multiselect')
@@ -1302,7 +1303,7 @@ const Settings: React.FC = () => {
                                   {field.unit && (
                                     <p className="text-xs text-secondary-500 font-normal">Unit: {field.unit}</p>
                                   )}
-                                  {field.maximum && (
+                                  {field.type === 'number' && field.maximum && (
                                     <p className="text-xs text-secondary-500 font-normal">Maximum: {field.maximum}</p>
                                   )}
                                   {(field.type === 'select' || field.type === 'multiselect') && field.options && field.options.length > 0 && (
@@ -1731,23 +1732,125 @@ const Settings: React.FC = () => {
                 placeholder="e.g., kg, cm, years"
               />
               
-              <Input
-                label="Maximum Number (optional)"
-                value={fieldForm.maximum !== undefined ? fieldForm.maximum : ''}
-                onChange={(e) => {
-                  console.log('📝 Maximum field changed to:', e.target.value);
-                  setFieldForm({ ...fieldForm, maximum: e.target.value });
-                }}
-                placeholder="Enter maximum value for numbers"
-                type="number"
-              />
-              
-              <Input
-                label="Default Value (optional)"
-                value={fieldForm.defaultValue || ''}
-                onChange={(e) => setFieldForm({ ...fieldForm, defaultValue: e.target.value })}
-                placeholder="Enter default value"
-              />
+              {/* Maximum Number - only for number type fields */}
+              {fieldForm.type === 'number' && (
+                <Input
+                  label="Maximum Number (optional)"
+                  value={fieldForm.maximum !== undefined ? fieldForm.maximum : ''}
+                  onChange={(e) => {
+                    console.log('📝 Maximum field changed to:', e.target.value);
+                    setFieldForm({ ...fieldForm, maximum: e.target.value });
+                  }}
+                  placeholder="Enter maximum value"
+                  type="number"
+                />
+              )}
+
+              {/* Default Value - type-aware input */}
+              {fieldForm.type === 'boolean' ? (
+                <Select
+                  label="Default Value (optional)"
+                  value={
+                    fieldForm.defaultValue === true || fieldForm.defaultValue === 'true' || fieldForm.defaultValue === 'yes'
+                      ? 'true'
+                      : fieldForm.defaultValue === false || fieldForm.defaultValue === 'false' || fieldForm.defaultValue === 'no'
+                      ? 'false'
+                      : ''
+                  }
+                  onChange={(e) => setFieldForm({ ...fieldForm, defaultValue: e.target.value === '' ? '' : e.target.value === 'true' })}
+                >
+                  <option value="">No default</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </Select>
+              ) : fieldForm.type === 'date' ? (
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={fieldForm.defaultValue === '__CURRENT_DATE__'}
+                      onChange={(e) => setFieldForm({ ...fieldForm, defaultValue: e.target.checked ? '__CURRENT_DATE__' : '' })}
+                      className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                    />
+                    <span className="text-sm font-medium text-secondary-700">Default to current date</span>
+                  </label>
+                  <p className="text-xs text-secondary-500">When checked, this field will automatically be set to today's date when creating a new player</p>
+                </div>
+              ) : fieldForm.type === 'number' ? (
+                <Input
+                  label="Default Value (optional)"
+                  type="number"
+                  value={fieldForm.defaultValue || ''}
+                  onChange={(e) => setFieldForm({ ...fieldForm, defaultValue: e.target.value })}
+                  placeholder="Enter default number"
+                />
+              ) : (fieldForm.type === 'select' || fieldForm.type === 'dropdown') ? (
+                (fieldForm.options || []).filter(opt => opt.trim() !== '').length > 0 ? (
+                  <Select
+                    label="Default Value (optional)"
+                    value={fieldForm.defaultValue || ''}
+                    onChange={(e) => setFieldForm({ ...fieldForm, defaultValue: e.target.value })}
+                  >
+                    <option value="">No default</option>
+                    {(fieldForm.options || []).filter(opt => opt.trim() !== '').map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="block text-sm font-semibold text-secondary-900">Default Value (optional)</label>
+                    <p className="text-xs text-secondary-500">Add options below first, then you can select a default</p>
+                  </div>
+                )
+              ) : fieldForm.type === 'multiselect' ? (
+                (fieldForm.options || []).filter(opt => opt.trim() !== '').length > 0 ? (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-semibold text-secondary-900">Default Values (optional)</label>
+                    <p className="text-xs text-secondary-500 mb-2">Select which options should be pre-selected by default</p>
+                    <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                      {(fieldForm.options || []).filter(opt => opt.trim() !== '').map((option) => {
+                        const currentDefaults = Array.isArray(fieldForm.defaultValue)
+                          ? fieldForm.defaultValue
+                          : (fieldForm.defaultValue ? [fieldForm.defaultValue] : []);
+                        const isChecked = currentDefaults.includes(option);
+                        return (
+                          <label key={option} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                let newDefaults: string[];
+                                if (e.target.checked) {
+                                  newDefaults = [...currentDefaults, option];
+                                } else {
+                                  newDefaults = currentDefaults.filter(d => d !== option);
+                                }
+                                setFieldForm({ ...fieldForm, defaultValue: newDefaults.length > 0 ? newDefaults : '' });
+                              }}
+                              className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                            />
+                            <span className="text-sm text-secondary-700">{option}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="block text-sm font-semibold text-secondary-900">Default Values (optional)</label>
+                    <p className="text-xs text-secondary-500">Add options below first, then you can select defaults</p>
+                  </div>
+                )
+              ) : (
+                <Input
+                  label="Default Value (optional)"
+                  value={fieldForm.defaultValue || ''}
+                  onChange={(e) => setFieldForm({ ...fieldForm, defaultValue: e.target.value })}
+                  placeholder="Enter default value"
+                />
+              )}
 
               {/* Options for Select and Multiselect fields */}
               {(fieldForm.type === 'select' || fieldForm.type === 'multiselect') && (

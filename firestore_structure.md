@@ -64,6 +64,10 @@ Collection for storing player information across all organizations.
   - `deadlineDate` (Timestamp) - Payment deadline for the invoice
   - `nextReceiptDate` (Timestamp, optional) - For recurring products - when next receipt should be generated
   - `receiptStatus` (string, optional) - Status of receipt generation: 'immediate' | 'scheduled' | 'generated'
+  - `discount` (object, optional) - Discount applied to this product assignment
+    - `type` (string) - Discount type: 'percentage' | 'fixed'
+    - `value` (number) - Discount value (percentage 0-100 or fixed amount)
+    - `reason` (string, optional) - Reason for the discount
 - `createdAt` (Timestamp) - Creation timestamp
 - `updatedAt` (Timestamp) - Last update timestamp
 
@@ -187,6 +191,59 @@ Subcollection under users for storing receipt records linked to transactions.
 
 **Note:** Receipts are stored as a subcollection under each user document to enable better organization and querying. Use `collectionGroup('receipts')` for organization-wide queries across all users.
 
+### 10. **conversations**
+Collection for storing WhatsApp messaging conversations.
+
+**Fields:**
+- `id` (string) - Conversation's unique identifier
+- `organizationId` (string) - Organization ID
+- `participantUserId` (string) - User ID of the conversation participant (player/guardian)
+- `participantName` (string) - Participant's name (cached for display)
+- `participantPhone` (string) - Participant's phone number in E.164 format (e.g., +1234567890)
+- `participantType` (string) - Participant type: 'player' | 'guardian'
+- `status` (string) - Conversation status: 'active' | 'archived'
+- `lastMessageAt` (Timestamp) - Timestamp of the last message
+- `lastMessagePreview` (string) - Preview text of the last message
+- `unreadCount` (number) - Count of unread messages
+- `sessionActive` (boolean) - Whether WhatsApp 24-hour messaging window is active
+- `sessionExpiresAt` (Timestamp, optional) - When the 24-hour session expires
+- `createdAt` (Timestamp) - Creation timestamp
+- `updatedAt` (Timestamp) - Last update timestamp
+
+### 11. **conversations/{conversationId}/messages**
+Subcollection for storing messages within a conversation.
+
+**Path:** `conversations/{conversationId}/messages/{messageId}`
+
+**Fields:**
+- `id` (string) - Message's unique identifier
+- `direction` (string) - Message direction: 'inbound' | 'outbound'
+- `body` (string) - Message text content
+- `senderUserId` (string, optional) - User ID of the sender (for outbound messages)
+- `senderName` (string, optional) - Sender's name (cached for display)
+- `twilioMessageSid` (string, optional) - Twilio message SID for tracking
+- `twilioStatus` (string) - Message status: 'queued' | 'sent' | 'delivered' | 'read' | 'failed' | 'received'
+- `twilioErrorCode` (string, optional) - Twilio error code if failed
+- `twilioErrorMessage` (string, optional) - Twilio error message if failed
+- `mediaUrl` (string, optional) - URL of attached media
+- `mediaType` (string, optional) - MIME type of attached media
+- `sentAt` (Timestamp) - When the message was sent
+- `createdAt` (Timestamp) - Creation timestamp
+
+### 12. **messagingSettings/{organizationId}**
+Collection for storing messaging configuration per organization.
+
+**Fields:**
+- `id` (string) - Document ID (same as organizationId)
+- `organizationId` (string) - Organization ID
+- `twilioAccountSid` (string) - Twilio Account SID
+- `twilioAuthToken` (string) - Twilio Auth Token (should be stored in Secret Manager in production)
+- `twilioWhatsAppNumber` (string) - Twilio WhatsApp-enabled number (format: whatsapp:+14155238886)
+- `enabled` (boolean) - Whether messaging is enabled for the organization
+- `autoReplyEnabled` (boolean, optional) - Whether auto-reply is enabled
+- `autoReplyMessage` (string, optional) - Auto-reply message text
+- `createdAt` (Timestamp) - Creation timestamp
+- `updatedAt` (Timestamp) - Last update timestamp
 
 ## Data Types Used in the Project
 
@@ -260,7 +317,7 @@ type PermissionAction = 'read' | 'write' | 'delete';
 
 ### 9. **ResourceType** (type)
 ```typescript
-type ResourceType = 'users' | 'players' | 'academies' | 'settings' | 'finance' | 'events' | 'training' | 'reports';
+type ResourceType = 'users' | 'players' | 'academies' | 'settings' | 'finance' | 'events' | 'training' | 'reports' | 'messaging';
 ```
 
 ### 10. **Transaction** (interface)
@@ -346,7 +403,62 @@ type ResourceType = 'users' | 'players' | 'academies' | 'settings' | 'finance' |
 }
 ```
 
-### 13. **Basic Types**
+### 13. **Conversation** (interface)
+```typescript
+{
+  id: string;
+  organizationId: string;
+  participantUserId: string;
+  participantName: string;
+  participantPhone: string;
+  participantType: 'player' | 'guardian';
+  status: 'active' | 'archived';
+  lastMessageAt: Timestamp;
+  lastMessagePreview: string;
+  unreadCount: number;
+  sessionActive: boolean;
+  sessionExpiresAt?: Timestamp;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+```
+
+### 14. **Message** (interface)
+```typescript
+{
+  id: string;
+  direction: 'inbound' | 'outbound';
+  body: string;
+  senderUserId?: string;
+  senderName?: string;
+  twilioMessageSid?: string;
+  twilioStatus: 'queued' | 'sent' | 'delivered' | 'read' | 'failed' | 'received';
+  twilioErrorCode?: string;
+  twilioErrorMessage?: string;
+  mediaUrl?: string;
+  mediaType?: string;
+  sentAt: Timestamp;
+  createdAt: Timestamp;
+}
+```
+
+### 15. **MessagingSettings** (interface)
+```typescript
+{
+  id: string;
+  organizationId: string;
+  twilioAccountSid: string;
+  twilioAuthToken: string;
+  twilioWhatsAppNumber: string;
+  enabled: boolean;
+  autoReplyEnabled?: boolean;
+  autoReplyMessage?: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+```
+
+### 16. **Basic Types**
 - `string` - Text data
 - `number` - Numeric values
 - `boolean` - True/false values

@@ -115,6 +115,25 @@ service cloud.firestore {
       allow read: if isOrganizationMember(orgId);
       allow write: if isOrganizationOwner(orgId) || hasOrgRole(orgId, 'admin');
     }
+
+    // Messaging Settings
+    match /messagingSettings/{orgId} {
+      allow read: if isOrganizationMember(orgId);
+      allow write: if isOrganizationOwner(orgId) || hasOrgRole(orgId, 'admin');
+    }
+
+    // Conversations (WhatsApp messaging)
+    match /conversations/{conversationId} {
+      allow read: if isOrganizationMember(resource.data.organizationId);
+      allow create: if isOrganizationMember(request.resource.data.organizationId);
+      allow update, delete: if isOrganizationMember(resource.data.organizationId);
+
+      // Messages subcollection
+      match /messages/{messageId} {
+        allow read: if isOrganizationMember(get(/databases/$(database)/documents/conversations/$(conversationId)).data.organizationId);
+        allow write: if isOrganizationMember(get(/databases/$(database)/documents/conversations/$(conversationId)).data.organizationId);
+      }
+    }
     
     // Role Permissions
     match /rolePermissions/{permissionId} {

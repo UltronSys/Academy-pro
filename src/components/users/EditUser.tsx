@@ -10,6 +10,7 @@ import {
   Badge
 } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
+import { useUsers } from '../../contexts/UsersContext';
 import { User, Academy, Settings, ParameterField, FieldCategory } from '../../types';
 import { getUserById, updateUser } from '../../services/userService';
 import { getAcademiesByOrganization } from '../../services/academyService';
@@ -73,6 +74,7 @@ const EditUser: React.FC = () => {
   const [imageUploading, setImageUploading] = useState(false);
 
   const { userData } = useAuth();
+  const { updateUser: updateUserInContext } = useUsers();
 
   const steps = ['Full Name', 'Role Assignment', 'Contact Information', 'Player Details'];
   const isPlayerRole = formData.roles.includes('player');
@@ -102,21 +104,122 @@ const EditUser: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    let sortedCategories: FieldCategory[] = [];
+
     if (organizationSettings && formData.academyId.length > 0) {
       const academyId = formData.academyId[0];
       const categories = getFieldCategoriesForAcademy(organizationSettings, academyId);
-      setFieldCategories((categories || []).sort((a, b) => a.order - b.order));
+      sortedCategories = (categories || []).sort((a, b) => a.order - b.order);
     } else if (organizationSettings && organizationSettings.fieldCategories) {
-      setFieldCategories(organizationSettings.fieldCategories.sort((a, b) => a.order - b.order));
-    } else {
-      setFieldCategories([]);
+      sortedCategories = organizationSettings.fieldCategories.sort((a, b) => a.order - b.order);
     }
+
+    setFieldCategories(sortedCategories);
   }, [organizationSettings, formData.academyId]);
+
+  // Initialize default values when fieldCategories change (for new fields not in player data)
+  useEffect(() => {
+    if (fieldCategories.length === 0) return;
+
+    console.log('🔄 EditUser: Initializing default values for fieldCategories:', fieldCategories.length);
+
+    const newDynamicFields: Record<string, any> = { ...formData.dynamicFields };
+    let hasChanges = false;
+
+    fieldCategories.forEach(category => {
+      if (category.type === 'parameter' || category.type === 'mixed') {
+        category.fields?.forEach(field => {
+          const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+
+          console.log(`🔍 EditUser: Checking field "${field.name}":`, {
+            fieldKey,
+            currentValue: newDynamicFields[fieldKey],
+            defaultValue: field.defaultValue,
+            type: field.type
+          });
+
+          // Only set default if field doesn't have a value AND defaultValue exists
+          // For arrays (multiselect), also check if array has elements
+          const hasDefaultValue = field.defaultValue !== undefined &&
+                                  field.defaultValue !== null &&
+                                  field.defaultValue !== '' &&
+                                  !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
+          const fieldNotSet = newDynamicFields[fieldKey] === undefined;
+
+          if (fieldNotSet && hasDefaultValue) {
+            let defaultVal: any = field.defaultValue;
+
+            switch (field.type) {
+              case 'number':
+                defaultVal = Number(field.defaultValue) || 0;
+                break;
+              case 'boolean':
+                if (typeof field.defaultValue === 'boolean') {
+                  defaultVal = field.defaultValue;
+                } else if (typeof field.defaultValue === 'string') {
+                  const lowerVal = field.defaultValue.toLowerCase();
+                  if (lowerVal === 'true' || lowerVal === 'yes') {
+                    defaultVal = true;
+                  } else if (lowerVal === 'false' || lowerVal === 'no') {
+                    defaultVal = false;
+                  }
+                }
+                break;
+              case 'date':
+                if (field.defaultValue === '__CURRENT_DATE__') {
+                  const today = new Date();
+                  defaultVal = today.toISOString().split('T')[0];
+                } else {
+                  defaultVal = String(field.defaultValue);
+                }
+                break;
+              case 'multiselect':
+                if (Array.isArray(field.defaultValue)) {
+                  defaultVal = field.defaultValue;
+                } else if (typeof field.defaultValue === 'string' && field.defaultValue) {
+                  defaultVal = [field.defaultValue];
+                } else {
+                  defaultVal = [];
+                }
+                break;
+              default:
+                defaultVal = String(field.defaultValue);
+            }
+
+            newDynamicFields[fieldKey] = defaultVal;
+            hasChanges = true;
+            console.log(`✅ EditUser: Set default for "${field.name}":`, defaultVal);
+          }
+        });
+      }
+    });
+
+    if (hasChanges) {
+      console.log('📝 EditUser: Updating formData.dynamicFields with defaults:', newDynamicFields);
+      setFormData(prev => ({
+        ...prev,
+        dynamicFields: newDynamicFields
+      }));
+    }
+  }, [fieldCategories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadUser = async () => {
     try {
       setLoading(true);
       const userDataResult = await getUserById(userId!);
+
+      if (!userDataResult) {
+        console.error('❌ User not found');
+        setError('User not found');
+        return;
+      }
+
+      console.log('🔍 EditUser - Loaded user data:', {
+        userId: userDataResult.id,
+        name: userDataResult.name,
+        photoURL: userDataResult.photoURL,
+        hasPhotoURL: !!userDataResult.photoURL
+      });
       setUser(userDataResult);
 
       let playerData = null;
@@ -172,8 +275,17 @@ const EditUser: React.FC = () => {
         });
 
         // Set existing profile picture preview
+        console.log('🖼️ EditUser - Setting profile image preview:', {
+          hasPhotoURL: !!userDataResult.photoURL,
+          photoURL: userDataResult.photoURL
+        });
+
         if (userDataResult.photoURL) {
           setProfileImagePreview(userDataResult.photoURL);
+          console.log('✅ Profile picture preview set to:', userDataResult.photoURL);
+        } else {
+          setProfileImagePreview('');
+          console.log('ℹ️ No profile picture found, clearing preview');
         }
       }
     } catch (error) {
@@ -297,15 +409,19 @@ const EditUser: React.FC = () => {
         profilePictureURL = await uploadProfileImage(user.id);
       }
 
+      // Prepare updated user roles
+      const updatedRoles = formData.roles.map(role => ({
+        role: [role],
+        organizationId: organizationId,
+        academyId: formData.academyId
+      }));
+
+      // Update user in Firestore
       await updateUser(user.id, {
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
-        roles: formData.roles.map(role => ({
-          role: [role],
-          organizationId: organizationId,
-          academyId: formData.academyId
-        })),
+        roles: updatedRoles,
         ...(profilePictureURL && { photoURL: profilePictureURL })
       });
 
@@ -325,7 +441,25 @@ const EditUser: React.FC = () => {
         }
       }
 
-      navigate('/users');
+      // Build updated user object for context (optimistic UI update)
+      const updatedUser: User = {
+        ...user,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        roles: updatedRoles,
+        ...(profilePictureURL && { photoURL: profilePictureURL })
+      };
+
+      // Update in context for instant UI update
+      updateUserInContext(updatedUser);
+      console.log('✅ Updated user in context');
+
+      navigate('/users', {
+        state: {
+          successMessage: 'User updated successfully!'
+        }
+      });
     } catch (error) {
       console.error('Error saving user:', error);
       setError('Failed to save user');
@@ -336,7 +470,10 @@ const EditUser: React.FC = () => {
 
   const renderParameterField = (field: ParameterField) => {
     const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
-    const currentValue = formData.dynamicFields[fieldKey] || field.defaultValue;
+    // Use !== undefined to properly handle false and 0 values
+    const currentValue = formData.dynamicFields[fieldKey] !== undefined
+      ? formData.dynamicFields[fieldKey]
+      : field.defaultValue;
     
     const handleFieldChange = (value: any) => {
       setFormData({
@@ -538,17 +675,46 @@ const EditUser: React.FC = () => {
               {field.name}
               {field.required && <span className="text-red-500 ml-1">*</span>}
             </label>
-            <Select
-              value={currentValue === true ? 'true' : currentValue === false ? 'false' : ''}
-              onChange={(e) => handleFieldChange(e.target.value === 'true' ? true : e.target.value === 'false' ? false : '')}
-              required={field.required}
-            >
-              <option value="">Select yes/no</option>
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </Select>
+            <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => handleFieldChange(true)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
+                  currentValue === true
+                    ? 'bg-green-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentValue === true && (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  Yes
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFieldChange(false)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
+                  currentValue === false
+                    ? 'bg-red-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentValue === false && (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                  No
+                </span>
+              </button>
+            </div>
             {field.description && (
-              <p className="text-sm text-gray-500">{field.description}</p>
+              <p className="text-sm text-gray-500 mt-1">{field.description}</p>
             )}
           </div>
         );
@@ -632,6 +798,9 @@ const EditUser: React.FC = () => {
       </div>
     );
   }
+
+  // Debug log on every render
+  console.log('🔄 EditUser render - profileImagePreview:', profileImagePreview, 'user photoURL:', user?.photoURL);
 
   return (
     <div className="space-y-6">
@@ -720,11 +889,16 @@ const EditUser: React.FC = () => {
               <div className="flex flex-col items-center space-y-4 mb-6">
                 <div className="relative">
                   {profileImagePreview ? (
-                    <img
-                      src={profileImagePreview}
-                      alt="Profile preview"
-                      className="w-24 h-24 rounded-full object-cover border-4 border-primary-600 shadow-lg"
-                    />
+                    <>
+                      {console.log('🎨 Rendering profile image:', profileImagePreview)}
+                      <img
+                        src={profileImagePreview}
+                        alt="Profile preview"
+                        className="w-24 h-24 rounded-full object-cover border-4 border-primary-600 shadow-lg"
+                        onLoad={() => console.log('✅ Profile image loaded successfully')}
+                        onError={(e) => console.error('❌ Profile image failed to load:', e)}
+                      />
+                    </>
                   ) : (
                     <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 border-4 border-primary-600 shadow-lg flex items-center justify-center">
                       <svg className="w-12 h-12 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

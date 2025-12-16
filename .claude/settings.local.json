@@ -24,7 +24,8 @@
       "Bash(npx eslint:*)",
       "Bash(mkdir:*)",
       "Read(//home/nasser/vijaro/**)",
-      "Bash(npx create-next-app@latest:*)"
+      "Bash(npx create-next-app@latest:*)",
+      "Bash(firebase deploy:*)"
     ],
     "deny": []
   }

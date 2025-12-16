@@ -156,7 +156,8 @@ const PlayersGuardians: React.FC = () => {
 
       // Generate basic guardian summaries
       const guardianMap = new Map<string, GuardianFinancialSummary>();
-      
+      const processedPlayersByGuardian = new Map<string, Set<string>>();
+
       playerSummaries.forEach(playerSummary => {
         playerSummary.guardians.forEach(guardian => {
           if (!guardianMap.has(guardian.id)) {
@@ -170,11 +171,47 @@ const PlayersGuardians: React.FC = () => {
               allReceipts: [],
               totalTransactionAmount: 0
             });
+            processedPlayersByGuardian.set(guardian.id, new Set());
           }
-          
+
           const guardianSummary = guardianMap.get(guardian.id)!;
-          guardianSummary.linkedPlayers.push(playerSummary);
+          const processedPlayers = processedPlayersByGuardian.get(guardian.id)!;
+
+          // Prevent double-counting the same player
+          if (!processedPlayers.has(playerSummary.player.userId)) {
+            processedPlayers.add(playerSummary.player.userId);
+            guardianSummary.linkedPlayers.push(playerSummary);
+          }
         });
+      });
+
+      // Check if any guardian is also a player and add them to their own linked players list
+      guardianMap.forEach((guardianSummary, guardianId) => {
+        const processedPlayers = processedPlayersByGuardian.get(guardianId) || new Set();
+
+        // Find if this guardian is also a player - check multiple possible matches
+        const guardianAsPlayer = playerSummaries.find(
+          ps => ps.player.userId === guardianId || ps.user.id === guardianId
+        );
+
+        if (guardianAsPlayer) {
+          const alreadyIncluded = processedPlayers.has(guardianAsPlayer.player.userId) ||
+            guardianSummary.linkedPlayers.some(
+              lp => lp.player.userId === guardianAsPlayer.player.userId || lp.player.id === guardianAsPlayer.player.id
+            );
+
+          if (!alreadyIncluded) {
+            // Add to linked players with a flag to identify it's their own account
+            guardianSummary.linkedPlayers.unshift({
+              ...guardianAsPlayer,
+              user: {
+                ...guardianAsPlayer.user,
+                name: `${guardianAsPlayer.user.name} (Own Account)`
+              }
+            });
+            processedPlayers.add(guardianAsPlayer.player.userId);
+          }
+        }
       });
 
       setGuardianFinancials(Array.from(guardianMap.values()));
@@ -288,7 +325,10 @@ const PlayersGuardians: React.FC = () => {
 
       // Update guardian summaries with detailed data
       const guardianMap = new Map<string, GuardianFinancialSummary>();
-      
+
+      // Track which player userIds have been processed for each guardian to prevent double-counting
+      const processedPlayersByGuardian = new Map<string, Set<string>>();
+
       updatedSummaries.forEach(playerSummary => {
         playerSummary.guardians.forEach(guardian => {
           if (!guardianMap.has(guardian.id)) {
@@ -302,17 +342,75 @@ const PlayersGuardians: React.FC = () => {
               allReceipts: [],
               totalTransactionAmount: 0
             });
+            processedPlayersByGuardian.set(guardian.id, new Set());
           }
-          
+
           const guardianSummary = guardianMap.get(guardian.id)!;
-          guardianSummary.linkedPlayers.push(playerSummary);
-          guardianSummary.totalOutstanding += playerSummary.outstandingDebits;
-          guardianSummary.totalCredits += playerSummary.availableCredits;
-          guardianSummary.totalNetBalance += playerSummary.netBalance;
-          guardianSummary.totalTransactionAmount += playerSummary.totalTransactionAmount;
-          guardianSummary.allTransactions.push(...playerSummary.recentTransactions);
-          guardianSummary.allReceipts.push(...playerSummary.receipts);
+          const processedPlayers = processedPlayersByGuardian.get(guardian.id)!;
+
+          // Prevent double-counting the same player
+          if (!processedPlayers.has(playerSummary.player.userId)) {
+            processedPlayers.add(playerSummary.player.userId);
+            guardianSummary.linkedPlayers.push(playerSummary);
+            guardianSummary.totalOutstanding += playerSummary.outstandingDebits;
+            guardianSummary.totalCredits += playerSummary.availableCredits;
+            guardianSummary.totalNetBalance += playerSummary.netBalance;
+            guardianSummary.totalTransactionAmount += playerSummary.totalTransactionAmount;
+            guardianSummary.allTransactions.push(...playerSummary.recentTransactions);
+            guardianSummary.allReceipts.push(...playerSummary.receipts);
+          }
         });
+      });
+
+      // Check if any guardian is also a player and add their own financial data
+      guardianMap.forEach((guardianSummary, guardianId) => {
+        const processedPlayers = processedPlayersByGuardian.get(guardianId) || new Set();
+
+        // Find if this guardian is also a player - check multiple possible matches
+        const guardianAsPlayer = updatedSummaries.find(
+          ps => ps.player.userId === guardianId || ps.user.id === guardianId
+        );
+
+        if (guardianAsPlayer) {
+          // Check if we haven't already counted this player
+          const alreadyIncluded = processedPlayers.has(guardianAsPlayer.player.userId) ||
+            guardianSummary.linkedPlayers.some(
+              lp => lp.player.userId === guardianAsPlayer.player.userId || lp.player.id === guardianAsPlayer.player.id
+            );
+
+          if (!alreadyIncluded) {
+            console.log(`📊 Guardian ${guardianSummary.guardian.name} is also a player - adding their own financial data`);
+            console.log(`📊 Guardian own data - Outstanding: ${guardianAsPlayer.outstandingDebits}, Credits: ${guardianAsPlayer.availableCredits}, NetBalance: ${guardianAsPlayer.netBalance}`);
+
+            // Add guardian's own financial data to totals
+            guardianSummary.totalOutstanding += guardianAsPlayer.outstandingDebits;
+            guardianSummary.totalCredits += guardianAsPlayer.availableCredits;
+            guardianSummary.totalNetBalance += guardianAsPlayer.netBalance;
+            guardianSummary.totalTransactionAmount += guardianAsPlayer.totalTransactionAmount;
+            guardianSummary.allTransactions.push(...guardianAsPlayer.recentTransactions);
+            guardianSummary.allReceipts.push(...guardianAsPlayer.receipts);
+
+            // Add to linked players with a flag to identify it's their own account
+            guardianSummary.linkedPlayers.unshift({
+              ...guardianAsPlayer,
+              // Mark this as the guardian's own account (for UI display purposes)
+              user: {
+                ...guardianAsPlayer.user,
+                name: `${guardianAsPlayer.user.name} (Own Account)`
+              }
+            });
+
+            // Mark as processed
+            processedPlayers.add(guardianAsPlayer.player.userId);
+          } else {
+            console.log(`📊 Guardian ${guardianSummary.guardian.name} already has their own data included`);
+          }
+        }
+      });
+
+      // Log final guardian totals for debugging
+      guardianMap.forEach((guardianSummary) => {
+        console.log(`📊 Guardian ${guardianSummary.guardian.name} final totals - Outstanding: ${guardianSummary.totalOutstanding}, Credits: ${guardianSummary.totalCredits}, NetBalance: ${guardianSummary.totalNetBalance}, LinkedPlayers: ${guardianSummary.linkedPlayers.length}`);
       });
 
       setGuardianFinancials(Array.from(guardianMap.values()));

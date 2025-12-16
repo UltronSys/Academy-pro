@@ -15,13 +15,13 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useSettingsContext } from '../../contexts/SettingsContext';
+import { useUsers } from '../../contexts/UsersContext';
 import { User, UserRole, Academy, ParameterField, FieldCategory } from '../../types';
-import { updateUser, deleteUser, createUser } from '../../services/userService';
+import { updateUser as updateUserService, deleteUser as deleteUserService, createUser } from '../../services/userService';
 import { getAcademiesByOrganization } from '../../services/academyService';
 import { createPlayer, getPlayerByUserId, updatePlayer, getPlayersByOrganization, getPlayersByGuardianId } from '../../services/playerService';
 import { getFieldCategoriesForAcademy } from '../../services/settingsService';
 import { searchUsers as searchUsersAlgolia } from '../../services/algoliaService';
-import { getCachedUsers, markUserAsSynced, cleanupUserCache } from '../../utils/userCache';
 import PlayerGuardiansDialog from './PlayerGuardiansDialog';
 import GuardianPlayersDialog from './GuardianPlayersDialog';
 import { storage } from '../../firebase';
@@ -207,9 +207,9 @@ const Users: React.FC = () => {
   const navigate = useNavigate();
   const { canWrite, canDelete } = usePermissions();
   const { organizationSettings } = useSettingsContext();
-  const [users, setUsers] = useState<User[]>([]);
+  const { users, loading: usersLoading, error: usersError, searchUsers, totalPages, totalUsers, currentPage, removeUser: removeUserFromContext } = useUsers();
   const [academies, setAcademies] = useState<Academy[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -235,11 +235,7 @@ const Users: React.FC = () => {
   const [availablePlayersForLinking, setAvailablePlayersForLinking] = useState<User[]>([]);
   const [success, setSuccess] = useState('');
 
-  // Algolia search states
-  // Always use Algolia for search
-  const [currentPage, setCurrentPage] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const [totalUsers, setTotalUsers] = useState(0);
+  // Search debounce timer
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchDebounceTimer, setSearchDebounceTimer] = useState<NodeJS.Timeout | null>(null);
   const [newGuardianData, setNewGuardianData] = useState({
@@ -292,7 +288,10 @@ const Users: React.FC = () => {
 
   const renderParameterField = (field: ParameterField) => {
     const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
-    const currentValue = formData.dynamicFields[fieldKey] || field.defaultValue;
+    // Use !== undefined to properly handle false and 0 values
+    const currentValue = formData.dynamicFields[fieldKey] !== undefined
+      ? formData.dynamicFields[fieldKey]
+      : field.defaultValue;
     
     const handleFieldChange = (value: any) => {
       setFormData({
@@ -494,17 +493,46 @@ const Users: React.FC = () => {
               {field.name}
               {field.required && <span className="text-red-500 ml-1">*</span>}
             </label>
-            <Select
-              value={currentValue === true ? 'true' : currentValue === false ? 'false' : ''}
-              onChange={(e) => handleFieldChange(e.target.value === 'true' ? true : e.target.value === 'false' ? false : '')}
-              required={field.required}
-            >
-              <option value="">Select yes/no</option>
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </Select>
+            <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => handleFieldChange(true)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
+                  currentValue === true
+                    ? 'bg-green-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentValue === true && (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  Yes
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFieldChange(false)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
+                  currentValue === false
+                    ? 'bg-red-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentValue === false && (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                  No
+                </span>
+              </button>
+            </div>
             {field.description && (
-              <p className="text-sm text-gray-500">{field.description}</p>
+              <p className="text-sm text-gray-500 mt-1">{field.description}</p>
             )}
           </div>
         );
@@ -576,34 +604,7 @@ const Users: React.FC = () => {
   useEffect(() => {
     const state = location.state as any;
     if (state?.newUser) {
-      // Add the newly created user to the local state immediately
-      const newUser = state.newUser;
-
-      // Convert Date objects to Timestamp format for consistency
-      const userWithTimestamp = {
-        ...newUser,
-        createdAt: newUser.createdAt ? {
-          toDate: () => newUser.createdAt,
-          seconds: Math.floor(newUser.createdAt.getTime() / 1000),
-          nanoseconds: 0,
-          toMillis: () => newUser.createdAt.getTime(),
-          isEqual: () => false,
-          toJSON: () => ({ seconds: Math.floor(newUser.createdAt.getTime() / 1000), nanoseconds: 0 })
-        } as any : undefined,
-        updatedAt: newUser.updatedAt ? {
-          toDate: () => newUser.updatedAt,
-          seconds: Math.floor(newUser.updatedAt.getTime() / 1000),
-          nanoseconds: 0,
-          toMillis: () => newUser.updatedAt.getTime(),
-          isEqual: () => false,
-          toJSON: () => ({ seconds: Math.floor(newUser.updatedAt.getTime() / 1000), nanoseconds: 0 })
-        } as any : undefined
-      };
-
-      // Add to the beginning of the users array for immediate visibility
-      setUsers(prevUsers => [userWithTimestamp, ...prevUsers]);
-
-      // Show success message if provided
+      // Show success message if provided (user already added to context)
       if (state.successMessage) {
         setSuccess(state.successMessage);
 
@@ -613,31 +614,28 @@ const Users: React.FC = () => {
         }, 5000);
       }
 
-      // Clear the navigation state to prevent re-adding on refresh
+      // Clear the navigation state
       window.history.replaceState({}, document.title);
-
-      // Trigger a background search after a short delay to sync with Algolia
-      // This will update the user list once Algolia has indexed the new user
-      setTimeout(() => {
-        performAlgoliaSearch(searchTerm, currentPage);
-      }, 2000);
     }
   }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (userData) {
-      // Search normally for all tabs including guardians
-      performAlgoliaSearch(searchTerm, 0);
-
       loadAcademies();
     }
-  }, [userData, selectedAcademy, activeTab, searchTerm, roleFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-  
-  // Algolia search function
-  const performAlgoliaSearch = async (query: string = searchTerm, page: number = 0) => {
-    const organizationId = userData?.roles[0]?.organizationId;
-    if (!organizationId) return;
-    
+  }, [userData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trigger search when search term, filters, or tab changes
+  useEffect(() => {
+    if (userData) {
+      // Always perform search when tab changes (even with empty search term)
+      // This ensures the role filter is applied based on the active tab
+      performSearch(searchTerm, 0);
+    }
+  }, [searchTerm, roleFilter, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Search function using UsersContext
+  const performSearch = async (query: string = searchTerm, page: number = 0) => {
     setSearchLoading(true);
     try {
       // Determine role filter based on active tab and dropdown selection
@@ -645,133 +643,14 @@ const Users: React.FC = () => {
       if (activeTab === 1) roleFilterValue = 'player';
       else if (activeTab === 2) roleFilterValue = 'coach';
       else if (activeTab === 3) roleFilterValue = 'guardian';
+      else if (activeTab === 4) roleFilterValue = 'admin,owner'; // Admin tab includes owners
       else if (activeTab === 0) {
         // For "All Users" tab, use the dropdown filter value
         roleFilterValue = roleFilter;
       }
-      
-      
-      let results;
-      
-      if (activeTab === 4) {
-        // For admin tab, we need to search for both admin and owner roles
-        // Since Algolia can only filter by one role at a time, we'll do two searches and combine results
-        
-        const [adminResults, ownerResults] = await Promise.all([
-          searchUsersAlgolia({
-            query,
-            organizationId,
-            filters: {
-              role: 'admin',
-              academyId: selectedAcademy?.id
-            },
-            page,
-            hitsPerPage: 10
-          }),
-          searchUsersAlgolia({
-            query,
-            organizationId,
-            filters: {
-              role: 'owner',
-              academyId: selectedAcademy?.id
-            },
-            page,
-            hitsPerPage: 10
-          })
-        ]);
-        
-        
-        // Combine results and remove duplicates
-        const combinedUsers = [...adminResults.users, ...ownerResults.users];
-        const uniqueUsers = combinedUsers.filter((user, index, self) => 
-          index === self.findIndex(u => u.objectID === user.objectID)
-        );
-        
-        results = {
-          users: uniqueUsers,
-          totalUsers: adminResults.totalUsers + ownerResults.totalUsers,
-          currentPage: page,
-          totalPages: Math.ceil((adminResults.totalUsers + ownerResults.totalUsers) / 10),
-          processingTimeMS: Math.max(adminResults.processingTimeMS, ownerResults.processingTimeMS)
-        };
-      } else {
-        const searchFilters = {
-          role: roleFilterValue !== 'all' ? roleFilterValue : undefined,
-          academyId: selectedAcademy?.id
-        };
-        
-        results = await searchUsersAlgolia({
-          query,
-          organizationId,
-          filters: searchFilters,
-          page,
-          hitsPerPage: 10
-        });
-        
-      }
-      
-      // Convert Algolia records back to User format
-      const algoliaUsers: User[] = results.users.map(record => ({
-        id: record.objectID,
-        name: record.name,
-        email: record.email || '',
-        phone: record.phone,
-        photoURL: record.photoURL, // Include profile picture URL
-        roles: record.roleDetails || [],
-        createdAt: record.createdAt ?
-          {
-            toDate: () => new Date(record.createdAt!),
-            seconds: Math.floor((record.createdAt || 0) / 1000),
-            nanoseconds: 0,
-            toMillis: () => record.createdAt || 0,
-            isEqual: () => false,
-            toJSON: () => ({ seconds: Math.floor((record.createdAt || 0) / 1000), nanoseconds: 0 })
-          } as any : undefined,
-        updatedAt: record.updatedAt ?
-          {
-            toDate: () => new Date(record.updatedAt!),
-            seconds: Math.floor((record.updatedAt || 0) / 1000),
-            nanoseconds: 0,
-            toMillis: () => record.updatedAt || 0,
-            isEqual: () => false,
-            toJSON: () => ({ seconds: Math.floor((record.updatedAt || 0) / 1000), nanoseconds: 0 })
-          } as any : undefined,
-        // Add other required User properties with defaults
-        balance: 0,
-        outstandingBalance: {},
-        availableCredits: {}
-      }));
 
-      // Get cached users from localStorage (newly created users not yet synced to Algolia)
-      const cachedUsers = getCachedUsers(organizationId);
-      console.log('📦 Retrieved cached users from localStorage:', cachedUsers.length);
-
-      // Check which cached users are now in Algolia results and mark them as synced
-      cachedUsers.forEach(cachedUser => {
-        const foundInAlgolia = algoliaUsers.some(u => u.id === cachedUser.id);
-        if (foundInAlgolia) {
-          markUserAsSynced(cachedUser.id);
-          console.log('✅ User synced with Algolia:', cachedUser.id);
-        }
-      });
-
-      // Merge cached users with Algolia results
-      // Only include cached users that aren't already in Algolia results
-      const unseenCachedUsers = cachedUsers.filter(
-        cachedUser => !algoliaUsers.some(u => u.id === cachedUser.id)
-      );
-
-      // Prepend cached users to show them first (newly created users at top)
-      const mergedUsers = [...unseenCachedUsers, ...algoliaUsers];
-      console.log('🔄 Merged users - Cached:', unseenCachedUsers.length, 'Algolia:', algoliaUsers.length, 'Total:', mergedUsers.length);
-
-      setUsers(mergedUsers);
-
-      // Clean up expired and synced users from cache periodically
-      cleanupUserCache();
-      setCurrentPage(results.currentPage);
-      setTotalPages(results.totalPages);
-      setTotalUsers(results.totalUsers);
+      // Call context search function
+      await searchUsers(query, roleFilterValue, page);
       
       // Load guardian mapping after setting users
       // if (algoliaUsers.length > 0) {
@@ -937,28 +816,40 @@ const Users: React.FC = () => {
 
   // Handle profile image selection
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('🖼️ handleImageSelect triggered');
     const file = e.target.files?.[0];
+    console.log('📁 Selected file:', file ? { name: file.name, size: file.size, type: file.type } : 'No file');
+
     if (file) {
       // Validate file type
       if (!file.type.startsWith('image/')) {
+        console.error('❌ Invalid file type:', file.type);
         setError('Please select a valid image file');
         return;
       }
 
       // Validate file size (5MB max)
       if (file.size > 5 * 1024 * 1024) {
+        console.error('❌ File too large:', file.size, 'bytes');
         setError('Image size must be less than 5MB');
         return;
       }
 
+      console.log('✅ File validation passed, setting profile image');
       setProfileImage(file);
 
       // Create preview
       const reader = new FileReader();
       reader.onloadend = () => {
+        console.log('✅ Preview created successfully');
         setProfileImagePreview(reader.result as string);
       };
+      reader.onerror = () => {
+        console.error('❌ Error reading file');
+      };
       reader.readAsDataURL(file);
+    } else {
+      console.log('⚠️ No file selected');
     }
   };
 
@@ -1145,6 +1036,16 @@ service firebase.storage {
       return;
     }
 
+    // Set profile picture preview if user has one
+    setProfileImage(null); // Reset file selection
+    if (user.photoURL) {
+      setProfileImagePreview(user.photoURL);
+      console.log('✅ Profile picture preview set for edit dialog:', user.photoURL);
+    } else {
+      setProfileImagePreview(null);
+      console.log('ℹ️ No profile picture to display');
+    }
+
     setOpenDialog(true);
   };
 
@@ -1155,11 +1056,14 @@ service firebase.storage {
 
   const confirmDeleteUser = async () => {
     if (!userToDelete) return;
-    
+
     try {
       setDeleteLoading(true);
-      await deleteUser(userToDelete.id);
-      await performAlgoliaSearch(searchTerm, 0);
+      // Delete from Firestore
+      await deleteUserService(userToDelete.id);
+      // Remove from context for instant UI update
+      removeUserFromContext(userToDelete.id);
+      console.log('✅ Deleted user from context');
       setOpenDeleteDialog(false);
       setUserToDelete(null);
     } catch (error) {
@@ -1211,23 +1115,48 @@ service firebase.storage {
 
   const handleUserUpdate = async () => {
     if (!selectedUser) return;
-    
+
     try {
-      console.log('🔄 Updating user data...');
-      
+      console.log('🔄 Updating user data...', {
+        userId: selectedUser.id,
+        hasProfileImage: !!profileImage,
+        profileImageName: profileImage?.name,
+        currentPhotoURL: selectedUser.photoURL
+      });
+
+      // Upload profile image if one was selected
+      let photoURL = selectedUser.photoURL; // Keep existing photo by default
+      if (profileImage) {
+        console.log('📸 New profile image detected, uploading...', {
+          fileName: profileImage.name,
+          fileSize: profileImage.size,
+          fileType: profileImage.type
+        });
+        const uploadedURL = await uploadProfileImage(selectedUser.id);
+        if (uploadedURL) {
+          photoURL = uploadedURL;
+          console.log('✅ Profile image uploaded successfully:', uploadedURL);
+        } else {
+          console.error('❌ Profile image upload returned null');
+        }
+      } else {
+        console.log('ℹ️ No new profile image to upload, keeping existing:', selectedUser.photoURL);
+      }
+
       // Update user document
       const updatedUserData = {
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
-        roles: formData.roles.map(role => ({ 
+        roles: formData.roles.map(role => ({
           role: [role],
           organizationId: userData?.roles?.[0]?.organizationId || '',
           academyId: formData.academyId
-        }))
+        })),
+        ...(photoURL && { photoURL }) // Include photoURL if it exists
       };
-      
-      await updateUser(selectedUser.id, updatedUserData);
+
+      await updateUserService(selectedUser.id, updatedUserData);
       
       // Sync updated user to Algolia
       try {
@@ -1291,9 +1220,11 @@ service firebase.storage {
       }
       
       // Reload users and close dialog
-      await performAlgoliaSearch(searchTerm, 0);
+      await performSearch(searchTerm, 0);
       setOpenDialog(false);
       setActiveStep(0);
+      setProfileImage(null); // Reset profile image
+      setProfileImagePreview(null); // Reset profile image preview
       setFormData({
         name: '',
         email: '',
@@ -1309,56 +1240,8 @@ service firebase.storage {
       });
       
       // Update local state immediately for instant UI feedback
-      console.log('🔄 BEFORE UPDATE - Current users state:', {
-        selectedUserId: selectedUser.id,
-        selectedUserName: selectedUser.name,
-        newName: formData.name,
-        usersArrayLength: users.length,
-        userInArray: users.find(u => u.id === selectedUser.id)?.name,
-        allUserNames: users.map(u => ({ id: u.id, name: u.name }))
-      });
-      
-      setUsers(prevUsers => {
-        
-        const updatedUsers = prevUsers.map(user => {
-          if (user.id === selectedUser.id) {
-            const updatedUser = { 
-              ...user, 
-              name: formData.name, 
-              email: formData.email, 
-              phone: formData.phone 
-            };
-            console.log('✅ INSIDE MAP - Updating user:', {
-              userId: user.id,
-              oldName: user.name,
-              newName: updatedUser.name,
-              formDataName: formData.name
-            });
-            return updatedUser;
-          }
-          return user;
-        });
-        
-        return updatedUsers;
-      });
-      
-      // Force table re-render
-      setTableRenderKey(Date.now());
-      
-      // Check state immediately after setting (this might not show the updated state due to async nature)
-      setTimeout(() => {
-      }, 100);
-      
-      // Refresh the search results to show updated data in the table
-      // TEMPORARILY COMMENTED OUT TO TEST IF THIS IS OVERRIDING LOCAL STATE
-      console.log('🔄 SKIPPING search refresh to test local state update...', {
-        searchTerm,
-        currentPage,
-        activeTab,
-        userId: selectedUser.id
-      });
-      // await performAlgoliaSearch(searchTerm, currentPage);
-      // console.log('✅ Search results refreshed');
+      // User state is managed by context, no need for local updates
+      console.log('✅ User updated in Firestore and synced to Algolia');
       
       console.log('✅ User update completed successfully');
     } catch (error: any) {
@@ -1417,9 +1300,9 @@ service firebase.storage {
         
         // Update user document with additional data and roles
         console.log('Updating user with roles and organization data...');
-        await updateUser(newUserId, {
+        await updateUserService(newUserId, {
           phone: formData.phone,
-          roles: formData.roles.map(role => ({ 
+          roles: formData.roles.map(role => ({
             role: [role],
             organizationId: organizationId,
             academyId: formData.academyId
@@ -1450,7 +1333,7 @@ service firebase.storage {
         if (photoURL) {
           console.log('✅ Profile image uploaded:', photoURL);
           // Update user document with photoURL
-          await updateUser(newUserId, { photoURL });
+          await updateUserService(newUserId, { photoURL });
 
           // Re-sync to Algolia with the photoURL
           try {
@@ -1536,9 +1419,11 @@ service firebase.storage {
       }
       
       // Reload users and close dialog
-      await performAlgoliaSearch(searchTerm, 0);
+      await performSearch(searchTerm, 0);
       setOpenDialog(false);
       setActiveStep(0);
+      setProfileImage(null); // Reset profile image
+      setProfileImagePreview(null); // Reset profile image preview
       setFormData({
         name: '',
         email: '',
@@ -1859,7 +1744,7 @@ service firebase.storage {
                 
                 const timer = setTimeout(() => {
                   // Search normally for all tabs including guardians
-                  performAlgoliaSearch(query, 0);
+                  performSearch(query, 0);
                 }, 300); // 300ms debounce
                 
                 setSearchDebounceTimer(timer);
@@ -1966,7 +1851,7 @@ service firebase.storage {
               <div className="flex items-center space-x-2">
                 <Button
                   variant="outline"
-                  onClick={() => performAlgoliaSearch(searchTerm, currentPage - 1)}
+                  onClick={() => performSearch(searchTerm, currentPage - 1)}
                   disabled={currentPage === 0 || searchLoading}
                   className="px-3 py-1 text-sm"
                 >
@@ -1981,7 +1866,7 @@ service firebase.storage {
                       <Button
                         key={pageIndex}
                         variant={pageIndex === currentPage ? "primary" : "outline"}
-                        onClick={() => performAlgoliaSearch(searchTerm, pageIndex)}
+                        onClick={() => performSearch(searchTerm, pageIndex)}
                         disabled={searchLoading}
                         className="px-3 py-1 text-sm w-10"
                       >
@@ -1993,7 +1878,7 @@ service firebase.storage {
 
                 <Button
                   variant="outline"
-                  onClick={() => performAlgoliaSearch(searchTerm, currentPage + 1)}
+                  onClick={() => performSearch(searchTerm, currentPage + 1)}
                   disabled={currentPage >= totalPages - 1 || searchLoading}
                   className="px-3 py-1 text-sm"
                 >
@@ -2417,48 +2302,8 @@ service firebase.storage {
                       }
                       
                       // Reload the entire user list and guardian mapping to refresh UI
-                      if (organizationId) {
-                        await performAlgoliaSearch(searchTerm, currentPage);
-                        // Force reload guardian mapping with fresh user data
-                        const freshSearchResults = await searchUsersAlgolia({
-                          query: searchTerm,
-                          organizationId,
-                          filters: activeTab === 1 ? { role: 'player' } : 
-                                  activeTab === 2 ? { role: 'coach' } :
-                                  activeTab === 3 ? { role: 'guardian' } : {},
-                          page: currentPage,
-                          hitsPerPage: 20
-                        });
-                        
-                        const freshUsers: User[] = freshSearchResults.users.map(record => ({
-                          id: record.objectID,
-                          name: record.name,
-                          email: record.email || '',
-                          phone: record.phone,
-                          roles: record.roleDetails || [],
-                          createdAt: record.createdAt ? 
-                            { 
-                              toDate: () => new Date(record.createdAt!), 
-                              seconds: Math.floor((record.createdAt || 0) / 1000),
-                              nanoseconds: 0,
-                              toMillis: () => record.createdAt || 0,
-                              isEqual: () => false,
-                              toJSON: () => ({ seconds: Math.floor((record.createdAt || 0) / 1000), nanoseconds: 0 })
-                            } as any : undefined,
-                          updatedAt: record.updatedAt ? 
-                            { 
-                              toDate: () => new Date(record.updatedAt!), 
-                              seconds: Math.floor((record.updatedAt || 0) / 1000),
-                              nanoseconds: 0,
-                              toMillis: () => record.updatedAt || 0,
-                              isEqual: () => false,
-                              toJSON: () => ({ seconds: Math.floor((record.updatedAt || 0) / 1000), nanoseconds: 0 })
-                            } as any : undefined
-                        }));
-                        
-                        setUsers(freshUsers);
-                        // await loadGuardianMapping(freshUsers);
-                      }
+                      // Users are already updated in context, no need for fresh search
+                      console.log('✅ Players linked to guardian');
                     } catch (error) {
                       console.error('Error linking players:', error);
                       setError('Failed to link players to guardian');
@@ -2534,7 +2379,11 @@ service firebase.storage {
                   </div>
                 </div>
                 <button
-                  onClick={() => setOpenDialog(false)}
+                  onClick={() => {
+                    setOpenDialog(false);
+                    setProfileImage(null);
+                    setProfileImagePreview(null);
+                  }}
                   className="text-secondary-400 hover:text-secondary-600 transition-colors duration-200 p-2 hover:bg-secondary-100 rounded-lg"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3414,9 +3263,13 @@ service firebase.storage {
             {/* Enhanced Action Buttons */}
             <div className="bg-secondary-50 border-t border-secondary-200 p-6">
               <div className="flex justify-between items-center">
-                <Button 
+                <Button
                   variant="secondary"
-                  onClick={() => setOpenDialog(false)}
+                  onClick={() => {
+                    setOpenDialog(false);
+                    setProfileImage(null);
+                    setProfileImagePreview(null);
+                  }}
                   className="px-6 py-3"
                 >
                   Cancel

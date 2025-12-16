@@ -10,6 +10,10 @@ export interface User {
   balance?: number; // Amount owed by user (negative = owes money, positive = has credit)
   outstandingBalance?: Record<string, number>; // Outstanding balance per organization
   availableCredits?: Record<string, number>; // Available credits per organization
+  // WhatsApp messaging fields
+  whatsappPhone?: string; // E.164 format phone number for WhatsApp
+  whatsappOptIn?: boolean; // User consent for WhatsApp messaging
+  whatsappOptInDate?: Timestamp; // When user opted in
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -60,6 +64,11 @@ export interface Player {
     deadlineDate: Timestamp; // Payment deadline for the invoice
     nextReceiptDate?: Timestamp; // For recurring products - when next receipt should be generated
     receiptStatus?: 'immediate' | 'scheduled' | 'generated'; // Status of receipt generation
+    discount?: {
+      type: 'percentage' | 'fixed'; // Type of discount
+      value: number; // Discount value (percentage 0-100 or fixed amount)
+      reason?: string; // Optional reason for the discount
+    };
   }[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -120,7 +129,7 @@ export type RoleType = 'owner' | 'admin' | 'coach' | 'player' | 'guardian';
 
 export type PermissionAction = 'read' | 'write' | 'delete';
 
-export type ResourceType = 'users' | 'players' | 'academies' | 'settings' | 'finance' | 'events' | 'training' | 'reports';
+export type ResourceType = 'users' | 'players' | 'academies' | 'settings' | 'finance' | 'events' | 'training' | 'reports' | 'messaging';
 
 export interface Permission {
   resource: ResourceType;
@@ -225,6 +234,85 @@ export interface Receipt {
     name: string;
     userRef: DocumentReference;
   };
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+// ==================== MESSAGING TYPES ====================
+
+export interface Conversation {
+  id: string;
+  organizationId: string;
+  academyId?: string;
+
+  // Participant info
+  participantUserId: string | null; // null for unknown contacts
+  participantName: string;
+  participantPhone: string; // E.164 format
+  participantType: 'player' | 'guardian' | 'unknown';
+  participantUserRef: DocumentReference | null; // null for unknown contacts
+
+  // Player context (for guardians)
+  relatedPlayerId?: string;
+  relatedPlayerName?: string;
+
+  // Conversation state
+  status: 'active' | 'archived' | 'blocked';
+  lastMessageAt: Timestamp;
+  lastMessagePreview: string;
+  lastMessageDirection: 'inbound' | 'outbound';
+  unreadCount: number;
+
+  // WhatsApp session state (24-hour window)
+  sessionActive: boolean;
+  sessionExpiresAt?: Timestamp;
+
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface Message {
+  id: string;
+  conversationId: string;
+
+  // Message content
+  direction: 'inbound' | 'outbound';
+  body: string;
+  mediaUrl?: string;
+  mediaType?: string;
+
+  // Sender info
+  senderUserId?: string;
+  senderName?: string;
+  senderPhone?: string;
+
+  // Twilio metadata
+  twilioMessageSid?: string;
+  twilioStatus: 'queued' | 'sent' | 'delivered' | 'read' | 'failed' | 'received';
+  twilioErrorCode?: string;
+  twilioErrorMessage?: string;
+
+  // Timestamps
+  sentAt: Timestamp;
+  deliveredAt?: Timestamp;
+  readAt?: Timestamp;
+  createdAt: Timestamp;
+}
+
+export interface MessagingSettings {
+  id: string;
+  organizationId: string;
+
+  // Twilio Configuration
+  twilioAccountSid: string;
+  twilioAuthToken: string;
+  twilioWhatsAppNumber: string;
+
+  // Settings
+  enabled: boolean;
+  autoReplyEnabled: boolean;
+  autoReplyMessage?: string;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

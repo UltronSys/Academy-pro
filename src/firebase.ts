@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { getFunctions } from 'firebase/functions';
 
 // Check if required environment variables are present
 const requiredEnvVars = [
@@ -38,4 +39,5 @@ export const auth = getAuth(app);
 export const adminAuth = getAuth(adminApp);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const functions = getFunctions(app);
 export default app;

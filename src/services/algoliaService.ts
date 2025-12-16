@@ -233,7 +233,13 @@ class AlgoliaService {
       const filterParts = [`organizationId:${organizationId}`];
       
       if (filters.role && filters.role !== 'all') {
-        filterParts.push(`roles:${filters.role}`);
+        // Support multiple roles separated by comma (e.g., "admin,owner")
+        if (filters.role.includes(',')) {
+          const roles = filters.role.split(',').map((r: string) => `roles:${r.trim()}`);
+          filterParts.push(`(${roles.join(' OR ')})`);
+        } else {
+          filterParts.push(`roles:${filters.role}`);
+        }
       }
       
       if (filters.academyId) {

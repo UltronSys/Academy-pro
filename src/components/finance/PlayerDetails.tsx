@@ -5,7 +5,7 @@ import { useApp } from '../../contexts/AppContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { getPlayerById, updatePlayer, assignProductToPlayer, removeProductFromPlayer } from '../../services/playerService';
 import { getUserById } from '../../services/userService';
-import { getReceiptsByUser } from '../../services/receiptService';
+import { getReceiptsByUser, updateReceipt } from '../../services/receiptService';
 import { getProductsByOrganization } from '../../services/productService';
 import { getSettingsByOrganization } from '../../services/settingsService';
 import { Player, User, Receipt, Product } from '../../types';
@@ -44,6 +44,15 @@ const PlayerDetails: React.FC = () => {
   const [linkingProduct, setLinkingProduct] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [unlinkingProductId, setUnlinkingProductId] = useState<string | null>(null);
+  const [productSearchQuery, setProductSearchQuery] = useState<string>('');
+
+  // Discount states
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const [discountProductId, setDiscountProductId] = useState<string | null>(null);
+  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [discountValue, setDiscountValue] = useState<string>('');
+  const [discountReason, setDiscountReason] = useState<string>('');
+  const [savingDiscount, setSavingDiscount] = useState(false);
 
   useEffect(() => {
     if (playerId && selectedOrganization?.id) {
@@ -266,6 +275,7 @@ const PlayerDetails: React.FC = () => {
     setLinkingInvoiceDate('');
     setLinkingDeadlineDate('');
     setLinkingInvoiceGeneration('immediate');
+    setProductSearchQuery('');
   };
 
   const handleSubmitProductLink = async () => {
@@ -401,6 +411,252 @@ const PlayerDetails: React.FC = () => {
     } finally {
       setUnlinkingProductId(null);
     }
+  };
+
+  const handleOpenDiscountModal = (productId: string) => {
+    const assignedProduct = player?.assignedProducts?.find(ap => ap.productId === productId);
+    if (assignedProduct?.discount) {
+      // If discount already exists, pre-fill the form
+      setDiscountType(assignedProduct.discount.type);
+      setDiscountValue(assignedProduct.discount.value.toString());
+      setDiscountReason(assignedProduct.discount.reason || '');
+    } else {
+      // Reset form for new discount
+      setDiscountType('percentage');
+      setDiscountValue('');
+      setDiscountReason('');
+    }
+    setDiscountProductId(productId);
+    setShowDiscountModal(true);
+  };
+
+  const handleCloseDiscountModal = () => {
+    setShowDiscountModal(false);
+    setDiscountProductId(null);
+    setDiscountType('percentage');
+    setDiscountValue('');
+    setDiscountReason('');
+  };
+
+  const handleSaveDiscount = async () => {
+    if (!player || !discountProductId || !canWrite('finance')) return;
+
+    const numericValue = parseFloat(discountValue);
+    if (isNaN(numericValue) || numericValue < 0) {
+      showToast('Please enter a valid discount value', 'error');
+      return;
+    }
+
+    // Validate percentage is between 0 and 100
+    if (discountType === 'percentage' && numericValue > 100) {
+      showToast('Percentage discount cannot exceed 100%', 'error');
+      return;
+    }
+
+    // Validate fixed discount doesn't exceed product price
+    const assignedProduct = player.assignedProducts?.find(ap => ap.productId === discountProductId);
+    if (discountType === 'fixed' && assignedProduct && numericValue > assignedProduct.price) {
+      showToast('Fixed discount cannot exceed product price', 'error');
+      return;
+    }
+
+    try {
+      setSavingDiscount(true);
+
+      // Update the assigned product with discount
+      const updatedProducts = player.assignedProducts?.map(ap => {
+        // Clean any undefined values from the original object first
+        const cleanedAp = Object.fromEntries(
+          Object.entries(ap).filter(([_, v]) => v !== undefined)
+        ) as typeof ap;
+
+        if (cleanedAp.productId === discountProductId) {
+          if (numericValue > 0) {
+            // Create discount object, only include reason if it has a value
+            const discountObj: { type: 'percentage' | 'fixed'; value: number; reason?: string } = {
+              type: discountType,
+              value: numericValue
+            };
+            if (discountReason.trim()) {
+              discountObj.reason = discountReason.trim();
+            }
+            return {
+              ...cleanedAp,
+              discount: discountObj
+            };
+          } else {
+            // Remove discount if value is 0 - need to explicitly delete the field
+            const { discount, ...rest } = cleanedAp;
+            return rest;
+          }
+        }
+        return cleanedAp;
+      });
+
+      // Update player in database
+      await updatePlayer(player.id, {
+        assignedProducts: updatedProducts
+      });
+
+      // Update unpaid debit receipts for this product with the new discounted price
+      if (assignedProduct) {
+        try {
+          const receipts = await getReceiptsByUser(player.userId);
+          const unpaidProductReceipts = receipts.filter(r =>
+            r.type === 'debit' &&
+            r.status === 'active' && // Only update unpaid receipts
+            r.organizationId === selectedOrganization?.id &&
+            r.product?.productRef?.id === discountProductId
+          );
+
+          // Calculate the new price
+          const originalPrice = assignedProduct.price;
+          let newPrice = originalPrice;
+          if (numericValue > 0) {
+            if (discountType === 'percentage') {
+              newPrice = originalPrice - (originalPrice * numericValue / 100);
+            } else {
+              newPrice = originalPrice - numericValue;
+            }
+          }
+
+          // Update each unpaid receipt
+          for (const receipt of unpaidProductReceipts) {
+            await updateReceipt(player.userId, receipt.id, {
+              amount: newPrice,
+              product: {
+                ...receipt.product!,
+                price: newPrice
+              }
+            });
+          }
+
+          if (unpaidProductReceipts.length > 0) {
+            console.log(`Updated ${unpaidProductReceipts.length} unpaid receipt(s) with new discounted price: ${newPrice}`);
+          }
+        } catch (receiptError) {
+          console.error('Error updating receipts with discount:', receiptError);
+          // Don't fail the whole operation if receipt update fails
+        }
+      }
+
+      // Update local state
+      setPlayer({
+        ...player,
+        assignedProducts: updatedProducts
+      });
+
+      // Reload receipts to reflect the updated amounts
+      await loadPlayerDetails();
+
+      handleCloseDiscountModal();
+      showToast(numericValue > 0 ? 'Discount applied successfully' : 'Discount removed successfully', 'success');
+
+    } catch (error) {
+      console.error('Error saving discount:', error);
+      showToast('Failed to save discount', 'error');
+    } finally {
+      setSavingDiscount(false);
+    }
+  };
+
+  const handleRemoveDiscount = async (productId: string) => {
+    if (!player || !canWrite('finance')) return;
+
+    const confirmed = window.confirm('Are you sure you want to remove the discount from this product?');
+    if (!confirmed) return;
+
+    try {
+      setSavingDiscount(true);
+
+      // Update the assigned product to remove discount
+      const updatedProducts = player.assignedProducts?.map(ap => {
+        // Clean any undefined values from the original object first
+        const cleanedAp = Object.fromEntries(
+          Object.entries(ap).filter(([_, v]) => v !== undefined)
+        ) as typeof ap;
+
+        if (cleanedAp.productId === productId) {
+          const { discount, ...rest } = cleanedAp;
+          return rest;
+        }
+        return cleanedAp;
+      });
+
+      // Update player in database
+      await updatePlayer(player.id, {
+        assignedProducts: updatedProducts
+      });
+
+      // Restore original prices on unpaid debit receipts for this product
+      const assignedProduct = player.assignedProducts?.find(ap => ap.productId === productId);
+      if (assignedProduct) {
+        try {
+          const receipts = await getReceiptsByUser(player.userId);
+          const unpaidProductReceipts = receipts.filter(r =>
+            r.type === 'debit' &&
+            r.status === 'active' && // Only update unpaid receipts
+            r.organizationId === selectedOrganization?.id &&
+            r.product?.productRef?.id === productId
+          );
+
+          // Restore to original price (without discount)
+          const originalPrice = assignedProduct.price;
+
+          // Update each unpaid receipt
+          for (const receipt of unpaidProductReceipts) {
+            await updateReceipt(player.userId, receipt.id, {
+              amount: originalPrice,
+              product: {
+                ...receipt.product!,
+                price: originalPrice
+              }
+            });
+          }
+
+          if (unpaidProductReceipts.length > 0) {
+            console.log(`Restored ${unpaidProductReceipts.length} unpaid receipt(s) to original price: ${originalPrice}`);
+          }
+        } catch (receiptError) {
+          console.error('Error restoring receipt prices:', receiptError);
+          // Don't fail the whole operation if receipt update fails
+        }
+      }
+
+      // Update local state
+      setPlayer({
+        ...player,
+        assignedProducts: updatedProducts
+      });
+
+      // Reload receipts to reflect the updated amounts
+      await loadPlayerDetails();
+
+      showToast('Discount removed successfully', 'success');
+
+    } catch (error) {
+      console.error('Error removing discount:', error);
+      showToast('Failed to remove discount', 'error');
+    } finally {
+      setSavingDiscount(false);
+    }
+  };
+
+  // Helper function to calculate discounted price
+  const getDiscountedPrice = (price: number, discount?: { type: 'percentage' | 'fixed'; value: number }) => {
+    if (!discount) return price;
+    if (discount.type === 'percentage') {
+      return price - (price * discount.value / 100);
+    }
+    return price - discount.value;
+  };
+
+  // Helper function to format discount display
+  const formatDiscount = (discount: { type: 'percentage' | 'fixed'; value: number }) => {
+    if (discount.type === 'percentage') {
+      return `${discount.value}%`;
+    }
+    return `${currency} ${discount.value.toFixed(2)}`;
   };
 
   const invoiceColumns = [
@@ -648,13 +904,37 @@ const PlayerDetails: React.FC = () => {
                 const currentInvoiceDate = assignedProduct.invoiceDate?.toDate().toISOString().split('T')[0] || '';
                 const currentDeadlineDate = assignedProduct.deadlineDate?.toDate().toISOString().split('T')[0] || '';
                 
+                const discountedPrice = getDiscountedPrice(assignedProduct.price, assignedProduct.discount);
+                const hasDiscount = assignedProduct.discount && assignedProduct.discount.value > 0;
+
                 return (
                   <div key={assignedProduct.productId} className="border rounded-lg p-4">
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
                         <div className="font-medium text-secondary-900">{assignedProduct.productName}</div>
-                        <div className="text-sm text-secondary-600">Price: {currency} {assignedProduct.price}</div>
-                        
+                        <div className="text-sm text-secondary-600">
+                          {hasDiscount ? (
+                            <div className="flex items-center gap-2">
+                              <span className="line-through text-secondary-400">
+                                {currency} {assignedProduct.price.toFixed(2)}
+                              </span>
+                              <span className="text-success-600 font-medium">
+                                {currency} {discountedPrice.toFixed(2)}
+                              </span>
+                              <Badge variant="success" className="text-xs">
+                                -{formatDiscount(assignedProduct.discount!)}
+                              </Badge>
+                            </div>
+                          ) : (
+                            <span>Price: {currency} {assignedProduct.price.toFixed(2)}</span>
+                          )}
+                        </div>
+                        {hasDiscount && assignedProduct.discount?.reason && (
+                          <div className="text-xs text-secondary-500 mt-1">
+                            Discount reason: {assignedProduct.discount.reason}
+                          </div>
+                        )}
+
                         {isEditing ? (
                           <div className="mt-3 grid grid-cols-2 gap-4 max-w-md">
                             <div>
@@ -715,6 +995,14 @@ const PlayerDetails: React.FC = () => {
                               </>
                             ) : (
                               <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleOpenDiscountModal(assignedProduct.productId)}
+                                  className="text-primary-600 hover:text-primary-700 border-primary-300 hover:border-primary-400"
+                                >
+                                  {hasDiscount ? 'Edit Discount' : 'Add Discount'}
+                                </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -837,7 +1125,7 @@ const PlayerDetails: React.FC = () => {
 
       {/* Link New Product Modal */}
       {showLinkProductModal && (
-        <div 
+        <div
           className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"
           onClick={(e) => {
             if (e.target === e.currentTarget && !linkingProduct) {
@@ -845,108 +1133,243 @@ const PlayerDetails: React.FC = () => {
             }
           }}
         >
-          <div className="w-full max-w-lg my-8">
+          <div className="w-full max-w-3xl my-8">
             <Card className="w-full">
-              <div className="p-6 max-h-[80vh] overflow-y-auto">
-                <h3 className="text-lg font-semibold text-secondary-900 mb-4">
-                  Link New Product to {user?.name}
-                </h3>
-                
-                <div className="space-y-4">
+              <div className="p-6 max-h-[85vh] overflow-y-auto">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-6">
                   <div>
-                    <Label htmlFor="product-select">Select Product</Label>
-                    <select
-                      id="product-select"
-                      value={selectedProductId}
-                      onChange={(e) => setSelectedProductId(e.target.value)}
-                      className="mt-1 w-full px-3 py-2 border border-secondary-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      required
-                    >
-                      <option value="">Choose a product...</option>
-                      {availableProducts.map(product => (
-                        <option key={product.id} value={product.id}>
-                          {product.name} - {currency} {product.price.toFixed(2)} ({product.productType})
-                        </option>
-                      ))}
-                    </select>
-                    {availableProducts.length === 0 && (
-                      <p className="text-sm text-secondary-500 mt-1">
-                        No unassigned products available
-                      </p>
-                    )}
+                    <h3 className="text-xl font-semibold text-secondary-900">
+                      Link Product to {user?.name}
+                    </h3>
+                    <p className="text-sm text-secondary-500 mt-1">
+                      Select a product to assign to this player
+                    </p>
                   </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="linking-invoice-date">Invoice Date</Label>
-                      <Input
-                        id="linking-invoice-date"
-                        type="date"
-                        value={linkingInvoiceDate}
-                        onChange={(e) => setLinkingInvoiceDate(e.target.value)}
-                        required
-                        min={new Date().toISOString().split('T')[0]}
-                      />
-                      <div className="text-xs text-secondary-600 mt-1">
-                        Date when the invoice will be created
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
-                      <Input
-                        id="linking-deadline-date"
-                        type="date"
-                        value={linkingDeadlineDate}
-                        onChange={(e) => setLinkingDeadlineDate(e.target.value)}
-                        required
-                        min={linkingInvoiceDate || new Date().toISOString().split('T')[0]}
-                      />
-                      <div className="text-xs text-secondary-600 mt-1">
-                        Payment must be made by this date
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <Label>Invoice Generation</Label>
-                    <div className="space-y-2 mt-2">
-                      <label className="flex items-center space-x-2">
-                        <input
-                          type="radio"
-                          value="immediate"
-                          checked={linkingInvoiceGeneration === 'immediate'}
-                          onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
-                          className="form-radio text-primary-600"
-                        />
-                        <span className="text-sm">Create invoice immediately</span>
-                      </label>
-                      <label className="flex items-center space-x-2">
-                        <input
-                          type="radio"
-                          value="scheduled"
-                          checked={linkingInvoiceGeneration === 'scheduled'}
-                          onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
-                          className="form-radio text-primary-600"
-                        />
-                        <span className="text-sm">
-                          {selectedProductId && availableProducts.find(p => p.id === selectedProductId)?.productType === 'recurring'
-                            ? 'Wait for next billing cycle' 
-                            : 'Wait until invoice date'}
-                        </span>
-                      </label>
-                    </div>
-                    <div className="text-xs text-secondary-600 mt-2">
-                      {linkingInvoiceGeneration === 'immediate' 
-                        ? 'A debit receipt will be created immediately for this product.'
-                        : selectedProductId && availableProducts.find(p => p.id === selectedProductId)?.productType === 'recurring'
-                        ? `Receipt will be created at the end of the billing cycle.`
-                        : 'Receipt will be created on the invoice date specified above.'}
-                    </div>
-                  </div>
+                  <button
+                    onClick={handleCloseLinkProductModal}
+                    disabled={linkingProduct}
+                    className="p-2 hover:bg-secondary-100 rounded-lg transition-colors"
+                  >
+                    <svg className="w-5 h-5 text-secondary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
-                
-                <div className="flex justify-end space-x-3 pt-6">
+
+                {/* Search Bar */}
+                <div className="relative mb-4">
+                  <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-secondary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    placeholder="Search products..."
+                    value={productSearchQuery}
+                    onChange={(e) => setProductSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 border border-secondary-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+
+                {/* Product Cards Grid */}
+                {availableProducts.length === 0 ? (
+                  <div className="text-center py-12 bg-secondary-50 rounded-lg">
+                    <svg className="w-12 h-12 text-secondary-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
+                    <p className="text-secondary-600 font-medium">No products available</p>
+                    <p className="text-sm text-secondary-500 mt-1">All products are already assigned to this player</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6 max-h-[280px] overflow-y-auto pr-1">
+                    {availableProducts
+                      .filter(product =>
+                        productSearchQuery === '' ||
+                        product.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+                        product.description?.toLowerCase().includes(productSearchQuery.toLowerCase())
+                      )
+                      .map(product => {
+                        const isSelected = selectedProductId === product.id;
+                        return (
+                          <div
+                            key={product.id}
+                            onClick={() => setSelectedProductId(product.id)}
+                            className={`
+                              relative p-4 rounded-lg border-2 cursor-pointer transition-all
+                              ${isSelected
+                                ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-200'
+                                : 'border-secondary-200 hover:border-secondary-300 hover:bg-secondary-50'
+                              }
+                            `}
+                          >
+                            {/* Selected checkmark */}
+                            {isSelected && (
+                              <div className="absolute top-2 right-2 w-6 h-6 bg-primary-500 rounded-full flex items-center justify-center">
+                                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </div>
+                            )}
+
+                            {/* Product info */}
+                            <div className="flex items-start justify-between pr-6">
+                              <div className="flex-1 min-w-0">
+                                <h4 className={`font-medium truncate ${isSelected ? 'text-primary-900' : 'text-secondary-900'}`}>
+                                  {product.name}
+                                </h4>
+                                {product.description && (
+                                  <p className="text-sm text-secondary-500 mt-0.5 line-clamp-2">
+                                    {product.description}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Price and type */}
+                            <div className="flex items-center justify-between mt-3">
+                              <span className={`text-lg font-semibold ${isSelected ? 'text-primary-700' : 'text-secondary-900'}`}>
+                                {currency} {product.price.toFixed(2)}
+                              </span>
+                              <Badge variant={product.productType === 'recurring' ? 'primary' : 'default'}>
+                                {product.productType === 'recurring' ? (
+                                  <span className="flex items-center gap-1">
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                    Recurring
+                                  </span>
+                                ) : 'One-time'}
+                              </Badge>
+                            </div>
+
+                            {/* Recurring duration info */}
+                            {product.productType === 'recurring' && product.recurringDuration && (
+                              <p className="text-xs text-secondary-500 mt-2">
+                                Billed every {product.recurringDuration.value} {product.recurringDuration.unit}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+
+                {/* Selected Product Configuration */}
+                {selectedProductId && (
+                  <div className="border-t border-secondary-200 pt-5 mt-2">
+                    <h4 className="text-sm font-medium text-secondary-700 mb-4">Configure Invoice Settings</h4>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="linking-invoice-date">Invoice Date</Label>
+                        <Input
+                          id="linking-invoice-date"
+                          type="date"
+                          value={linkingInvoiceDate}
+                          onChange={(e) => setLinkingInvoiceDate(e.target.value)}
+                          required
+                          min={new Date().toISOString().split('T')[0]}
+                        />
+                        <p className="text-xs text-secondary-500 mt-1">
+                          When the invoice will be created
+                        </p>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
+                        <Input
+                          id="linking-deadline-date"
+                          type="date"
+                          value={linkingDeadlineDate}
+                          onChange={(e) => setLinkingDeadlineDate(e.target.value)}
+                          required
+                          min={linkingInvoiceDate || new Date().toISOString().split('T')[0]}
+                        />
+                        <p className="text-xs text-secondary-500 mt-1">
+                          Payment must be made by this date
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <Label>Invoice Generation</Label>
+                      <div className="flex flex-wrap gap-3 mt-2">
+                        <label className={`
+                          flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                          ${linkingInvoiceGeneration === 'immediate'
+                            ? 'border-primary-500 bg-primary-50 text-primary-700'
+                            : 'border-secondary-200 hover:border-secondary-300'
+                          }
+                        `}>
+                          <input
+                            type="radio"
+                            value="immediate"
+                            checked={linkingInvoiceGeneration === 'immediate'}
+                            onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
+                            className="sr-only"
+                          />
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                          </svg>
+                          <span className="text-sm font-medium">Create immediately</span>
+                        </label>
+                        <label className={`
+                          flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                          ${linkingInvoiceGeneration === 'scheduled'
+                            ? 'border-primary-500 bg-primary-50 text-primary-700'
+                            : 'border-secondary-200 hover:border-secondary-300'
+                          }
+                        `}>
+                          <input
+                            type="radio"
+                            value="scheduled"
+                            checked={linkingInvoiceGeneration === 'scheduled'}
+                            onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
+                            className="sr-only"
+                          />
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="text-sm font-medium">Schedule for later</span>
+                        </label>
+                      </div>
+                      <p className="text-xs text-secondary-500 mt-2">
+                        {linkingInvoiceGeneration === 'immediate'
+                          ? 'A debit receipt will be created immediately for this product.'
+                          : availableProducts.find(p => p.id === selectedProductId)?.productType === 'recurring'
+                          ? 'Receipt will be created at the start of the billing cycle.'
+                          : 'Receipt will be created on the invoice date.'}
+                      </p>
+                    </div>
+
+                    {/* Summary */}
+                    {(() => {
+                      const selectedProduct = availableProducts.find(p => p.id === selectedProductId);
+                      if (!selectedProduct) return null;
+                      return (
+                        <div className="mt-5 p-4 bg-secondary-50 rounded-lg">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-secondary-600">Amount to be invoiced:</span>
+                            <span className="text-lg font-bold text-secondary-900">
+                              {currency} {selectedProduct.price.toFixed(2)}
+                            </span>
+                          </div>
+                          {linkingInvoiceGeneration === 'immediate' && (
+                            <p className="text-xs text-primary-600 mt-2 flex items-center gap-1">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              Invoice will be created once you confirm
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Footer Actions */}
+                <div className="flex justify-end gap-3 pt-6 mt-4 border-t border-secondary-200">
                   <Button
                     type="button"
                     variant="outline"
@@ -955,18 +1378,161 @@ const PlayerDetails: React.FC = () => {
                   >
                     Cancel
                   </Button>
-                  <Button 
+                  <Button
                     onClick={handleSubmitProductLink}
                     disabled={linkingProduct || !selectedProductId || availableProducts.length === 0}
                   >
                     {linkingProduct && (
-                      <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
                     )}
-                    {linkingProduct ? 'Linking Product...' : 'Link Product'}
+                    {linkingProduct ? 'Linking...' : 'Link Product'}
                   </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Discount Modal */}
+      {showDiscountModal && discountProductId && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !savingDiscount) {
+              handleCloseDiscountModal();
+            }
+          }}
+        >
+          <div className="w-full max-w-md">
+            <Card className="w-full">
+              <div className="p-6">
+                <h3 className="text-lg font-semibold text-secondary-900 mb-4">
+                  {player?.assignedProducts?.find(ap => ap.productId === discountProductId)?.discount
+                    ? 'Edit Discount'
+                    : 'Add Discount'}
+                </h3>
+
+                {(() => {
+                  const selectedProduct = player?.assignedProducts?.find(ap => ap.productId === discountProductId);
+                  if (!selectedProduct) return null;
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Product Info */}
+                      <div className="bg-secondary-50 rounded-lg p-3">
+                        <div className="font-medium text-secondary-900">{selectedProduct.productName}</div>
+                        <div className="text-sm text-secondary-600">Original Price: {currency} {selectedProduct.price.toFixed(2)}</div>
+                      </div>
+
+                      {/* Discount Type */}
+                      <div>
+                        <Label>Discount Type</Label>
+                        <div className="flex gap-4 mt-2">
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="discountType"
+                              value="percentage"
+                              checked={discountType === 'percentage'}
+                              onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
+                              className="form-radio text-primary-600"
+                            />
+                            <span className="text-sm">Percentage (%)</span>
+                          </label>
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="discountType"
+                              value="fixed"
+                              checked={discountType === 'fixed'}
+                              onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
+                              className="form-radio text-primary-600"
+                            />
+                            <span className="text-sm">Fixed Amount ({currency})</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Discount Value */}
+                      <div>
+                        <Label htmlFor="discount-value">
+                          Discount Value {discountType === 'percentage' ? '(%)' : `(${currency})`}
+                        </Label>
+                        <Input
+                          id="discount-value"
+                          type="number"
+                          min="0"
+                          max={discountType === 'percentage' ? '100' : selectedProduct.price.toString()}
+                          step={discountType === 'percentage' ? '1' : '0.01'}
+                          value={discountValue}
+                          onChange={(e) => setDiscountValue(e.target.value)}
+                          placeholder={discountType === 'percentage' ? 'e.g., 10' : 'e.g., 50.00'}
+                          className="mt-1"
+                        />
+                        {discountValue && parseFloat(discountValue) > 0 && (
+                          <div className="text-sm text-success-600 mt-1">
+                            Final price: {currency} {getDiscountedPrice(selectedProduct.price, { type: discountType, value: parseFloat(discountValue) || 0 }).toFixed(2)}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Discount Reason */}
+                      <div>
+                        <Label htmlFor="discount-reason">Reason (Optional)</Label>
+                        <Input
+                          id="discount-reason"
+                          type="text"
+                          value={discountReason}
+                          onChange={(e) => setDiscountReason(e.target.value)}
+                          placeholder="e.g., Early bird discount, Family member"
+                          className="mt-1"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="flex justify-between pt-6">
+                  <div>
+                    {player?.assignedProducts?.find(ap => ap.productId === discountProductId)?.discount && (
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          handleCloseDiscountModal();
+                          handleRemoveDiscount(discountProductId);
+                        }}
+                        disabled={savingDiscount}
+                        className="text-error-600 hover:text-error-700 border-error-300 hover:border-error-400"
+                      >
+                        Remove Discount
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex space-x-3">
+                    <Button
+                      variant="outline"
+                      onClick={handleCloseDiscountModal}
+                      disabled={savingDiscount}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleSaveDiscount}
+                      disabled={savingDiscount || !discountValue || parseFloat(discountValue) < 0}
+                    >
+                      {savingDiscount && (
+                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      )}
+                      {savingDiscount ? 'Saving...' : 'Save Discount'}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </Card>

@@ -1,0 +1,11 @@
+/**
+ * Firebase Cloud Functions for Academy Pro
+ * WhatsApp Messaging via Twilio
+ */
+
+// Webhook handlers
+export { whatsappWebhook } from './webhooks/whatsappWebhook';
+export { whatsappStatusCallback } from './webhooks/statusCallback';
+
+// API functions
+export { sendWhatsAppMessage, markConversationRead } from './api/sendMessage';

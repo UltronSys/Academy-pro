@@ -15,7 +15,7 @@ import { createUser, getUsersByOrganization, updateUser } from '../../services/u
 import { getAcademiesByOrganization } from '../../services/academyService';
 import { createPlayer } from '../../services/playerService';
 import { getSettingsByOrganization, getFieldCategoriesForAcademy } from '../../services/settingsService';
-import { addUserToCache } from '../../utils/userCache';
+import { useUsers } from '../../contexts/UsersContext';
 
 // Icons (reusing from EditUser)
 const ArrowLeftIcon = () => (
@@ -76,6 +76,7 @@ const AddUser: React.FC = () => {
   const [imageUploading, setImageUploading] = useState(false);
 
   const { userData } = useAuth();
+  const { addUser } = useUsers();
 
   const steps = ['Full Name', 'Role Assignment', 'Contact Information', 'Player Details'];
   const isPlayerRole = formData.roles.includes('player');
@@ -152,7 +153,93 @@ const AddUser: React.FC = () => {
       setFieldCategories([]);
     }
     console.log('===== AddUser useEffect END =====');
-  }, [organizationSettings, formData.academyId]);
+  }, [organizationSettings, formData.academyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Initialize default values when fieldCategories change
+  useEffect(() => {
+    if (fieldCategories.length === 0) return;
+
+    console.log('🔄 Initializing default values for fieldCategories:', fieldCategories.length);
+
+    const newDynamicFields: Record<string, any> = { ...formData.dynamicFields };
+    let hasChanges = false;
+
+    fieldCategories.forEach(category => {
+      if (category.type === 'parameter' || category.type === 'mixed') {
+        category.fields?.forEach(field => {
+          const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+
+          console.log(`🔍 Checking field "${field.name}":`, {
+            fieldKey,
+            currentValue: newDynamicFields[fieldKey],
+            defaultValue: field.defaultValue,
+            type: field.type
+          });
+
+          // Only set default if field doesn't have a value AND defaultValue exists
+          // For arrays (multiselect), also check if array has elements
+          const hasDefaultValue = field.defaultValue !== undefined &&
+                                  field.defaultValue !== null &&
+                                  field.defaultValue !== '' &&
+                                  !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
+          const fieldNotSet = newDynamicFields[fieldKey] === undefined;
+
+          if (fieldNotSet && hasDefaultValue) {
+            let defaultVal: any = field.defaultValue;
+
+            switch (field.type) {
+              case 'number':
+                defaultVal = Number(field.defaultValue) || 0;
+                break;
+              case 'boolean':
+                if (typeof field.defaultValue === 'boolean') {
+                  defaultVal = field.defaultValue;
+                } else if (typeof field.defaultValue === 'string') {
+                  const lowerVal = field.defaultValue.toLowerCase();
+                  if (lowerVal === 'true' || lowerVal === 'yes') {
+                    defaultVal = true;
+                  } else if (lowerVal === 'false' || lowerVal === 'no') {
+                    defaultVal = false;
+                  }
+                }
+                break;
+              case 'date':
+                if (field.defaultValue === '__CURRENT_DATE__') {
+                  const today = new Date();
+                  defaultVal = today.toISOString().split('T')[0];
+                } else {
+                  defaultVal = String(field.defaultValue);
+                }
+                break;
+              case 'multiselect':
+                if (Array.isArray(field.defaultValue)) {
+                  defaultVal = field.defaultValue;
+                } else if (typeof field.defaultValue === 'string' && field.defaultValue) {
+                  defaultVal = [field.defaultValue];
+                } else {
+                  defaultVal = [];
+                }
+                break;
+              default:
+                defaultVal = String(field.defaultValue);
+            }
+
+            newDynamicFields[fieldKey] = defaultVal;
+            hasChanges = true;
+            console.log(`✅ Set default for "${field.name}":`, defaultVal);
+          }
+        });
+      }
+    });
+
+    if (hasChanges) {
+      console.log('📝 Updating formData.dynamicFields with defaults:', newDynamicFields);
+      setFormData(prev => ({
+        ...prev,
+        dynamicFields: newDynamicFields
+      }));
+    }
+  }, [fieldCategories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadInitialData = async () => {
     try {
@@ -382,15 +469,14 @@ const AddUser: React.FC = () => {
         });
       }
 
-      // Save to localStorage cache for faster retrieval while Algolia syncs
-      addUserToCache(createdUserData);
-      console.log('✅ User saved to localStorage cache for fast retrieval');
+      // Add to context for instant UI update
+      addUser(createdUserData);
+      console.log('✅ User added to context');
 
-      // Navigate back with the newly created user data for optimistic UI update
+      // Navigate back
       navigate('/users', {
         state: {
-          newUser: createdUserData,
-          successMessage: 'User created successfully. Syncing with search index...'
+          successMessage: 'User created successfully!'
         }
       });
     } catch (error) {
@@ -403,7 +489,10 @@ const AddUser: React.FC = () => {
 
   const renderParameterField = (field: ParameterField) => {
     const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
-    const currentValue = formData.dynamicFields[fieldKey] || field.defaultValue;
+    // Use !== undefined to properly handle false and 0 values
+    const currentValue = formData.dynamicFields[fieldKey] !== undefined
+      ? formData.dynamicFields[fieldKey]
+      : field.defaultValue;
 
     // Debug logging for multiselect fields
     if (field.type === 'multiselect') {
@@ -616,17 +705,46 @@ const AddUser: React.FC = () => {
               {field.name}
               {field.required && <span className="text-red-500 ml-1">*</span>}
             </label>
-            <Select
-              value={currentValue === true ? 'true' : currentValue === false ? 'false' : ''}
-              onChange={(e) => handleFieldChange(e.target.value === 'true' ? true : e.target.value === 'false' ? false : '')}
-              required={field.required}
-            >
-              <option value="">Select yes/no</option>
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </Select>
+            <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => handleFieldChange(true)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
+                  currentValue === true
+                    ? 'bg-green-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentValue === true && (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  Yes
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFieldChange(false)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
+                  currentValue === false
+                    ? 'bg-red-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentValue === false && (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                  No
+                </span>
+              </button>
+            </div>
             {field.description && (
-              <p className="text-sm text-gray-500">{field.description}</p>
+              <p className="text-sm text-gray-500 mt-1">{field.description}</p>
             )}
           </div>
         );

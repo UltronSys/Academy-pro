@@ -13,7 +13,7 @@ export const getSettingsByOrganization = async (organizationId: string): Promise
   try {
     const docRef = doc(db, COLLECTION_NAME, organizationId);
     const docSnap = await getDoc(docRef);
-    
+
     if (docSnap.exists()) {
       const data = docSnap.data() as Settings;
       // Ensure fieldCategories have proper structure
@@ -22,6 +22,18 @@ export const getSettingsByOrganization = async (organizationId: string): Promise
           ...category,
           fields: Array.isArray(category.fields) ? category.fields : []
         }));
+
+        // Debug: Log loaded field categories with their default values
+        console.log('📥 Loaded settings - field categories with defaults:',
+          data.fieldCategories.map(cat => ({
+            category: cat.name,
+            fields: cat.fields?.map(f => ({
+              name: f.name,
+              defaultValue: f.defaultValue,
+              type: f.type
+            }))
+          }))
+        );
       }
       return data;
     }
@@ -71,6 +83,12 @@ export const updateSettings = async (organizationId: string, updates: Partial<Se
     
     // Clean up undefined values and ensure proper data structure
     const cleanField = (field: any) => {
+      // Properly handle defaultValue - don't use || which converts false/0 to ''
+      let defaultValue = '';
+      if (field.defaultValue !== undefined && field.defaultValue !== null) {
+        defaultValue = field.defaultValue;
+      }
+
       const cleaned = {
         name: field.name || '',
         type: field.type || 'text',
@@ -79,14 +97,16 @@ export const updateSettings = async (organizationId: string, updates: Partial<Se
         description: field.description || '',
         ...(field.unit && { unit: field.unit }),
         ...(field.maximum !== undefined && field.maximum !== null && field.maximum !== '' && { maximum: field.maximum }),
-        defaultValue: field.defaultValue || '',
+        defaultValue: defaultValue,
         options: Array.isArray(field.options) ? field.options : []
       };
 
-      // Log if maximum is being saved
-      if (field.maximum !== undefined && field.maximum !== null && field.maximum !== '') {
-        console.log('💾 Saving field with maximum:', field.name, 'maximum:', field.maximum);
-      }
+      // Log what's being saved
+      console.log('💾 Saving field:', field.name, {
+        defaultValue: cleaned.defaultValue,
+        defaultValueType: typeof cleaned.defaultValue,
+        maximum: cleaned.maximum
+      });
 
       return cleaned;
     };

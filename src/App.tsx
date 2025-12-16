@@ -3,6 +3,8 @@ import { AuthProvider } from './contexts/AuthContext';
 import { AppProvider } from './contexts/AppContext';
 import { PermissionsProvider } from './contexts/PermissionsContext';
 import { SettingsProvider } from './contexts/SettingsContext';
+import { UserCacheProvider } from './contexts/UserCacheContext';
+import { UsersProvider } from './contexts/UsersContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import Login from './components/auth/Login';
 import Signup from './components/auth/Signup';
@@ -16,6 +18,7 @@ import Settings from './components/settings/Settings';
 import Finance from './components/finance/Finance';
 import PlayerDetails from './components/finance/PlayerDetails';
 import GuardianDetails from './components/finance/GuardianDetails';
+import Messaging from './components/messaging/Messaging';
 
 
 function App() {
@@ -23,8 +26,10 @@ function App() {
     <AuthProvider>
       <PermissionsProvider>
         <SettingsProvider>
-          <AppProvider>
-            <Router>
+          <UserCacheProvider>
+            <UsersProvider>
+              <AppProvider>
+                <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
@@ -106,20 +111,32 @@ function App() {
                 </ProtectedRoute>
               } 
             />
-            <Route 
-              path="/finance/guardian/:guardianId" 
+            <Route
+              path="/finance/guardian/:guardianId"
               element={
                 <ProtectedRoute requiredResource="finance" requiredAction="read">
                   <DashboardLayout>
                     <GuardianDetails />
                   </DashboardLayout>
                 </ProtectedRoute>
-              } 
+              }
+            />
+            <Route
+              path="/messaging"
+              element={
+                <ProtectedRoute requiredResource="messaging" requiredAction="read">
+                  <DashboardLayout>
+                    <Messaging />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
             />
             <Route path="/" element={<Navigate to="/dashboard" />} />
           </Routes>
-        </Router>
-          </AppProvider>
+                </Router>
+              </AppProvider>
+            </UsersProvider>
+          </UserCacheProvider>
         </SettingsProvider>
       </PermissionsProvider>
     </AuthProvider>
