@@ -244,6 +244,7 @@ class AlgoliaService {
       
       if (filters.academyId) {
         filterParts.push(`academies:${filters.academyId}`);
+        console.log('🏫 Adding academy filter:', filters.academyId);
       }
       
       if (filters.status) {
@@ -270,8 +271,11 @@ class AlgoliaService {
       }
 
       // Perform search
+      const filterString = filterParts.join(' AND ');
+      console.log('🔎 Algolia search - Query:', query, 'Filters:', filterString);
+
       const searchResults = await this.usersIndex.search(query, {
-        filters: filterParts.join(' AND '),
+        filters: filterString,
         page,
         hitsPerPage,
         attributesToRetrieve: [
@@ -289,6 +293,8 @@ class AlgoliaService {
           'updatedAt'
         ]
       });
+
+      console.log('🔎 Algolia results:', searchResults.nbHits, 'users found');
 
       return {
         users: searchResults.hits,

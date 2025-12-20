@@ -27,8 +27,8 @@ function App() {
       <PermissionsProvider>
         <SettingsProvider>
           <UserCacheProvider>
-            <UsersProvider>
-              <AppProvider>
+            <AppProvider>
+              <UsersProvider>
                 <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -134,8 +134,8 @@ function App() {
             <Route path="/" element={<Navigate to="/dashboard" />} />
           </Routes>
                 </Router>
-              </AppProvider>
-            </UsersProvider>
+              </UsersProvider>
+            </AppProvider>
           </UserCacheProvider>
         </SettingsProvider>
       </PermissionsProvider>

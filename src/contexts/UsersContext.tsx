@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User } from '../types';
 import { useAuth } from './AuthContext';
+import { useApp } from './AppContext';
 import { searchUsers as searchUsersAlgolia } from '../services/algoliaService';
 
 interface UsersContextType {
@@ -29,6 +30,7 @@ export const useUsers = () => {
 
 export const UsersProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { userData } = useAuth();
+  const { selectedAcademy } = useApp();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,15 +39,16 @@ export const UsersProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [currentPage, setCurrentPage] = useState(0);
 
   const organizationId = userData?.roles?.[0]?.organizationId;
+  const academyId = selectedAcademy?.id;
 
-  // Load users from Algolia on mount or when organization changes
+  // Load users from Algolia on mount or when organization/academy changes
   useEffect(() => {
     if (organizationId) {
       loadUsers();
     } else {
       setUsers([]);
     }
-  }, [organizationId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [organizationId, academyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadUsers = async () => {
     if (!organizationId) return;
@@ -54,10 +57,17 @@ export const UsersProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setLoading(true);
       setError(null);
 
+      const filters: any = {};
+      if (academyId) {
+        filters.academyId = academyId;
+      }
+
+      console.log('🔍 Loading users with filters:', { organizationId, academyId, filters });
+
       const results = await searchUsersAlgolia({
         query: '',
         organizationId,
-        filters: {},
+        filters,
         page: 0,
         hitsPerPage: 1000 // Load all users at once
       });
@@ -138,7 +148,7 @@ export const UsersProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Refresh users from Algolia
   const refreshUsers = useCallback(async () => {
     await loadUsers();
-  }, [organizationId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [organizationId, academyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Search users (filters the current context, doesn't reload from Algolia)
   const searchUsers = useCallback(async (query: string, roleFilter?: string, page: number = 0) => {
@@ -152,6 +162,9 @@ export const UsersProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const filters: any = {};
       if (roleFilter && roleFilter !== 'all') {
         filters.role = roleFilter;
+      }
+      if (academyId) {
+        filters.academyId = academyId;
       }
 
       const results = await searchUsersAlgolia({
@@ -200,7 +213,7 @@ export const UsersProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } finally {
       setLoading(false);
     }
-  }, [organizationId]);
+  }, [organizationId, academyId]);
 
   const value = {
     users,

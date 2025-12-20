@@ -282,15 +282,17 @@ const PlayersGuardians: React.FC = () => {
               console.error(`Error calculating balance for ${playerSummary.user.name}:`, balanceError);
             }
             
-            // Filter receipts for this specific user from organization receipts
+            // Filter receipts for this specific user from organization receipts (exclude deleted)
             const organizationReceipts = allOrgReceipts.filter(r => {
               return r.userRef && r.userRef.id === playerSummary.player.userId &&
-                     r.organizationId === selectedOrganization.id && 
-                     (r.status === 'active' || !r.status);
+                     r.organizationId === selectedOrganization.id &&
+                     r.status !== 'deleted' &&
+                     (r.status === 'active' || r.status === 'paid' || r.status === 'completed' || !r.status);
             });
 
-            // Use user's balance field directly for net balance
-            const netBalance = playerSummary.user.balance ?? 0;
+            // Calculate net balance from outstanding debits and available credits
+            // Negative = owes money, Positive = has credit
+            const netBalance = balanceInfo.availableCredits - balanceInfo.outstandingDebits;
 
             // Calculate total transaction amount
             const totalAmount = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
@@ -312,7 +314,7 @@ const PlayersGuardians: React.FC = () => {
               ...playerSummary,
               outstandingDebits: 0,
               availableCredits: 0,
-              netBalance: playerSummary.user.balance ?? 0,
+              netBalance: 0, // Reset to 0 on error instead of using stale stored balance
               recentTransactions: [],
               receipts: [],
               totalTransactionAmount: 0

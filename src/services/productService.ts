@@ -311,12 +311,80 @@ export const linkPlayersToProduct = async (
   }
 };
 
-export const unlinkPlayersFromProduct = async (productId: string): Promise<void> => {
+export const unlinkPlayersFromProduct = async (productId: string, playerIdsToUnlink?: string[]): Promise<void> => {
   try {
+    // Get the product to find currently linked players
+    const product = await getProductById(productId);
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    const currentlyLinkedPlayerIds = product.linkedPlayerIds || [];
+    const currentlyLinkedPlayerNames = product.linkedPlayerNames || [];
+
+    // Determine which players to unlink
+    const idsToUnlink = playerIdsToUnlink || currentlyLinkedPlayerIds;
+
+    if (idsToUnlink.length === 0) {
+      console.log('No players to unlink from product');
+      return;
+    }
+
+    console.log('🔓 unlinkPlayersFromProduct: Unlinking players:', idsToUnlink);
+
+    // Import removeProductFromPlayer to update player records
+    const { removeProductFromPlayer, getPlayerById, getPlayerByUserId } = await import('./playerService');
+
+    // Remove product from each player's assignedProducts
+    for (const playerId of idsToUnlink) {
+      try {
+        // Try to find the player - first by player ID, then by user ID
+        let player = null;
+        try {
+          player = await getPlayerById(playerId);
+        } catch (error) {
+          console.log(`🔍 Player not found by ID ${playerId}, trying by userId...`);
+        }
+
+        if (!player) {
+          try {
+            player = await getPlayerByUserId(playerId);
+          } catch (error) {
+            console.warn(`⚠️ Player record not found for: ${playerId}`);
+            continue;
+          }
+        }
+
+        if (player) {
+          await removeProductFromPlayer(player.id, productId);
+          console.log(`✅ Product removed from player: ${player.id}`);
+        }
+      } catch (playerError) {
+        console.error(`❌ Failed to remove product from player ${playerId}:`, playerError);
+        // Continue with other players even if one fails
+      }
+    }
+
+    // Calculate remaining linked players (if unlinking specific players)
+    let remainingPlayerIds: string[] = [];
+    let remainingPlayerNames: string[] = [];
+
+    if (playerIdsToUnlink) {
+      // Only unlink specific players, keep others
+      remainingPlayerIds = currentlyLinkedPlayerIds.filter(id => !playerIdsToUnlink.includes(id));
+      remainingPlayerNames = currentlyLinkedPlayerNames.filter((_, index) =>
+        !playerIdsToUnlink.includes(currentlyLinkedPlayerIds[index])
+      );
+    }
+    // If no specific players provided, unlink all (remainingPlayerIds stays empty)
+
+    // Update product document
     await updateProduct(productId, {
-      linkedPlayerIds: [],
-      linkedPlayerNames: []
+      linkedPlayerIds: remainingPlayerIds,
+      linkedPlayerNames: remainingPlayerNames
     });
+
+    console.log('🎉 unlinkPlayersFromProduct: Players unlinked successfully');
   } catch (error) {
     console.error('Error unlinking players from product:', error);
     throw error;

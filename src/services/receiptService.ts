@@ -430,12 +430,14 @@ export const linkSiblingReceipts = async (
 export const calculateUserBalanceFromReceipts = async (userId: string, organizationId?: string): Promise<number> => {
   try {
     const receipts = await getReceiptsByUser(userId);
-    
-    // Filter by organization if provided
-    const filteredReceipts = organizationId 
-      ? receipts.filter(r => r.organizationId === organizationId)
-      : receipts;
-    
+
+    // Filter by organization if provided and exclude deleted receipts
+    const filteredReceipts = receipts.filter(r => {
+      if (r.status === 'deleted') return false;
+      if (organizationId && r.organizationId !== organizationId) return false;
+      return true;
+    });
+
     const balance = filteredReceipts.reduce((acc, receipt) => {
       if (receipt.type === 'debit') {
         // Debit receipts represent money owed (negative impact on balance)
@@ -446,7 +448,7 @@ export const calculateUserBalanceFromReceipts = async (userId: string, organizat
       }
       return acc;
     }, 0);
-    
+
     return balance;
   } catch (error) {
     console.error('Error calculating user balance from receipts:', error);
@@ -464,7 +466,10 @@ export const getPendingDebitReceipts = async (
 ): Promise<Receipt[]> => {
   try {
     const userReceipts = await getReceiptsByUser(userId);
-    const organizationReceipts = userReceipts.filter(r => r.organizationId === organizationId);
+    // Filter by organization and exclude deleted receipts
+    const organizationReceipts = userReceipts.filter(r =>
+      r.organizationId === organizationId && r.status !== 'deleted'
+    );
     const debitReceipts = organizationReceipts.filter(r => r.type === 'debit');
     const pendingDebits: Receipt[] = [];
 
@@ -928,12 +933,143 @@ export const createPlayerProductReceipts = async (
       organizationId,
       academyId
     );
-    
+
     console.log('Created debit receipt for player:', playerId, 'Receipt ID:', debitReceipt.id);
-    
+
     return debitReceipt;
   } catch (error) {
     console.error('Error creating player product receipts:', error);
+    throw error;
+  }
+};
+
+// Update a debit receipt (invoice) - allows editing product name, price, dates
+export const updateDebitReceipt = async (
+  userId: string,
+  receiptId: string,
+  updates: {
+    productName?: string;
+    amount?: number;
+    invoiceDate?: Date;
+    deadline?: Date;
+  }
+): Promise<void> => {
+  try {
+    console.log('📝 updateDebitReceipt: Updating receipt', receiptId, 'for user', userId);
+
+    const receipt = await getReceiptById(userId, receiptId);
+    if (!receipt) {
+      throw new Error('Receipt not found');
+    }
+
+    if (receipt.type !== 'debit') {
+      throw new Error('Can only edit debit receipts (invoices)');
+    }
+
+    // Build the update object
+    const updateData: any = {};
+
+    if (updates.amount !== undefined) {
+      updateData.amount = updates.amount;
+    }
+
+    // Update product info if any product-related fields are changed
+    if (updates.productName || updates.invoiceDate || updates.deadline || updates.amount !== undefined) {
+      updateData.product = {
+        ...receipt.product,
+        ...(updates.productName && { name: updates.productName }),
+        ...(updates.amount !== undefined && { price: updates.amount }),
+        ...(updates.invoiceDate && { invoiceDate: Timestamp.fromDate(updates.invoiceDate) }),
+        ...(updates.deadline && { deadline: Timestamp.fromDate(updates.deadline) })
+      };
+    }
+
+    await updateReceipt(userId, receiptId, updateData);
+
+    console.log('✅ updateDebitReceipt: Receipt updated successfully');
+  } catch (error) {
+    console.error('❌ updateDebitReceipt: Error updating receipt:', error);
+    throw error;
+  }
+};
+
+// Delete a debit receipt (invoice) and convert linked credits to available credits
+export const deleteDebitReceiptWithCreditConversion = async (
+  userId: string,
+  receiptId: string,
+  deletedBy: { name: string; userRef: DocumentReference }
+): Promise<{ convertedCredits: number }> => {
+  try {
+    console.log('🗑️ deleteDebitReceiptWithCreditConversion: Starting deletion of receipt', receiptId);
+
+    const receipt = await getReceiptById(userId, receiptId);
+    if (!receipt) {
+      throw new Error('Receipt not found');
+    }
+
+    if (receipt.type !== 'debit') {
+      throw new Error('Can only delete debit receipts (invoices) with this function');
+    }
+
+    const batch = writeBatch(db);
+    let convertedCredits = 0;
+
+    // Get all credit receipts linked to this debit
+    const userReceipts = await getReceiptsByUser(userId);
+    const linkedCredits = userReceipts.filter(r =>
+      r.type === 'credit' &&
+      r.siblingReceiptRefs &&
+      r.siblingReceiptRefs.some(ref => ref.id === receiptId)
+    );
+
+    console.log(`🔗 Found ${linkedCredits.length} linked credit receipts to unlink`);
+
+    // Unlink each credit receipt from this debit (convert to available credit)
+    for (const creditReceipt of linkedCredits) {
+      const creditRef = doc(db, 'users', userId, 'receipts', creditReceipt.id);
+
+      // Remove this debit from the credit's siblingReceiptRefs
+      const updatedSiblingRefs = (creditReceipt.siblingReceiptRefs || [])
+        .filter(ref => ref.id !== receiptId);
+
+      batch.update(creditRef, {
+        siblingReceiptRefs: updatedSiblingRefs,
+        description: `${creditReceipt.description || 'Payment'} (invoice deleted - converted to available credit)`,
+        updatedAt: serverTimestamp()
+      });
+
+      convertedCredits += creditReceipt.amount;
+      console.log(`💰 Unlinking credit receipt ${creditReceipt.id} - ${creditReceipt.amount} will become available credit`);
+    }
+
+    // Delete (or mark as deleted) the debit receipt
+    const debitRef = doc(db, 'users', userId, 'receipts', receiptId);
+
+    // Option: Mark as deleted instead of hard delete for audit trail
+    batch.update(debitRef, {
+      status: 'deleted',
+      deletedAt: serverTimestamp(),
+      deletedBy: deletedBy,
+      siblingReceiptRefs: [], // Clear any links
+      updatedAt: serverTimestamp()
+    });
+
+    await batch.commit();
+
+    console.log(`✅ deleteDebitReceiptWithCreditConversion: Deleted receipt and converted ${convertedCredits} to available credits`);
+
+    // Update user balance after deletion
+    try {
+      await recalculateAndUpdateUserBalance(userId, receipt.organizationId);
+      await recalculateAndUpdateUserOutstandingAndCredits(userId, receipt.organizationId);
+      console.log('💰 User balance and outstanding/credits updated after receipt deletion');
+    } catch (balanceError) {
+      console.error('❌ Error updating user balance after receipt deletion:', balanceError);
+    }
+
+    return { convertedCredits };
+  } catch (error) {
+    console.error('❌ deleteDebitReceiptWithCreditConversion: Error:', error);
     throw error;
   }
 };

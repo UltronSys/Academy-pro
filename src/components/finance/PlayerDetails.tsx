@@ -2,14 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, Input, Label, Toast, Badge, DataTable } from '../ui';
 import { useApp } from '../../contexts/AppContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { getPlayerById, updatePlayer, assignProductToPlayer, removeProductFromPlayer } from '../../services/playerService';
 import { getUserById } from '../../services/userService';
-import { getReceiptsByUser, updateReceipt } from '../../services/receiptService';
+import { getReceiptsByUser, updateReceipt, updateDebitReceipt, deleteDebitReceiptWithCreditConversion } from '../../services/receiptService';
 import { getProductsByOrganization } from '../../services/productService';
 import { getSettingsByOrganization } from '../../services/settingsService';
 import { Player, User, Receipt, Product } from '../../types';
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp, doc } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface GroupedReceipts {
   [key: string]: Receipt[];
@@ -19,6 +21,7 @@ const PlayerDetails: React.FC = () => {
   const { playerId } = useParams<{ playerId: string }>();
   const navigate = useNavigate();
   const { selectedOrganization } = useApp();
+  const { currentUser } = useAuth();
   const { canWrite } = usePermissions();
   
   const [loading, setLoading] = useState(true);
@@ -53,6 +56,21 @@ const PlayerDetails: React.FC = () => {
   const [discountValue, setDiscountValue] = useState<string>('');
   const [discountReason, setDiscountReason] = useState<string>('');
   const [savingDiscount, setSavingDiscount] = useState(false);
+
+  // Invoice edit/delete states
+  const [editInvoiceModalOpen, setEditInvoiceModalOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<Receipt | null>(null);
+  const [editInvoiceForm, setEditInvoiceForm] = useState({
+    productName: '',
+    amount: 0,
+    invoiceDate: '',
+    deadline: ''
+  });
+  const [editInvoiceLoading, setEditInvoiceLoading] = useState(false);
+
+  const [deleteInvoiceModalOpen, setDeleteInvoiceModalOpen] = useState(false);
+  const [deletingInvoice, setDeletingInvoice] = useState<Receipt | null>(null);
+  const [deleteInvoiceLoading, setDeleteInvoiceLoading] = useState(false);
 
   useEffect(() => {
     if (playerId && selectedOrganization?.id) {
@@ -659,6 +677,101 @@ const PlayerDetails: React.FC = () => {
     return `${currency} ${discount.value.toFixed(2)}`;
   };
 
+  // Invoice edit handlers
+  const handleEditInvoiceClick = (receipt: Receipt) => {
+    if (receipt.type !== 'debit') {
+      showToast('Only invoices can be edited', 'error');
+      return;
+    }
+    setEditingInvoice(receipt);
+    setEditInvoiceForm({
+      productName: receipt.product?.name || '',
+      amount: receipt.amount,
+      invoiceDate: receipt.product?.invoiceDate
+        ? receipt.product.invoiceDate.toDate().toISOString().split('T')[0]
+        : '',
+      deadline: receipt.product?.deadline
+        ? receipt.product.deadline.toDate().toISOString().split('T')[0]
+        : ''
+    });
+    setEditInvoiceModalOpen(true);
+  };
+
+  const handleEditInvoiceSubmit = async () => {
+    if (!editingInvoice || !player || !currentUser) return;
+
+    try {
+      setEditInvoiceLoading(true);
+
+      await updateDebitReceipt(player.userId, editingInvoice.id, {
+        productName: editInvoiceForm.productName,
+        amount: editInvoiceForm.amount,
+        invoiceDate: editInvoiceForm.invoiceDate ? new Date(editInvoiceForm.invoiceDate) : undefined,
+        deadline: editInvoiceForm.deadline ? new Date(editInvoiceForm.deadline) : undefined
+      });
+
+      showToast('Invoice updated successfully', 'success');
+      setEditInvoiceModalOpen(false);
+      setEditingInvoice(null);
+      await loadPlayerDetails();
+    } catch (error: any) {
+      console.error('Error updating invoice:', error);
+      showToast(error.message || 'Failed to update invoice', 'error');
+    } finally {
+      setEditInvoiceLoading(false);
+    }
+  };
+
+  // Invoice delete handlers
+  const handleDeleteInvoiceClick = (receipt: Receipt) => {
+    if (receipt.type !== 'debit') {
+      showToast('Only invoices can be deleted', 'error');
+      return;
+    }
+    setDeletingInvoice(receipt);
+    setDeleteInvoiceModalOpen(true);
+  };
+
+  const handleDeleteInvoiceConfirm = async () => {
+    if (!deletingInvoice || !player || !currentUser) return;
+
+    try {
+      setDeleteInvoiceLoading(true);
+      const userRef = doc(db, 'users', currentUser.uid);
+
+      const result = await deleteDebitReceiptWithCreditConversion(
+        player.userId,
+        deletingInvoice.id,
+        { name: currentUser.displayName || currentUser.email || 'Unknown', userRef }
+      );
+
+      if (result.convertedCredits > 0) {
+        showToast(
+          `Invoice deleted. ${currency} ${result.convertedCredits.toFixed(2)} converted to available credit.`,
+          'success'
+        );
+      } else {
+        showToast('Invoice deleted successfully', 'success');
+      }
+
+      setDeleteInvoiceModalOpen(false);
+      setDeletingInvoice(null);
+      await loadPlayerDetails();
+    } catch (error: any) {
+      console.error('Error deleting invoice:', error);
+      showToast(error.message || 'Failed to delete invoice', 'error');
+    } finally {
+      setDeleteInvoiceLoading(false);
+    }
+  };
+
+  // Check if invoice has linked payments
+  const invoiceHasLinkedPayments = (receipt: Receipt): boolean => {
+    return receipt.type === 'debit' &&
+      receipt.siblingReceiptRefs &&
+      receipt.siblingReceiptRefs.length > 0;
+  };
+
   const invoiceColumns = [
     {
       key: 'date',
@@ -742,6 +855,34 @@ const PlayerDetails: React.FC = () => {
           </Badge>
         );
       }
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (receipt: Receipt) => (
+        <div className="flex gap-1">
+          {receipt.status !== 'deleted' && canWrite('finance') && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleEditInvoiceClick(receipt)}
+                className="text-xs px-2 py-1"
+              >
+                Edit
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleDeleteInvoiceClick(receipt)}
+                className="text-xs px-2 py-1 text-error-600 hover:text-error-700 border-error-300 hover:border-error-400"
+              >
+                Delete
+              </Button>
+            </>
+          )}
+        </div>
+      )
     }
   ];
 
@@ -1531,6 +1672,118 @@ const PlayerDetails: React.FC = () => {
                         </svg>
                       )}
                       {savingDiscount ? 'Saving...' : 'Save Discount'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Invoice Modal */}
+      {editInvoiceModalOpen && editingInvoice && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="w-full max-w-md">
+            <Card className="w-full">
+              <div className="p-6">
+                <h3 className="text-lg font-semibold text-secondary-900 mb-4">Edit Invoice</h3>
+                <div className="space-y-4">
+                  <Input
+                    label="Product/Service Name"
+                    value={editInvoiceForm.productName}
+                    onChange={(e) => setEditInvoiceForm({ ...editInvoiceForm, productName: e.target.value })}
+                  />
+                  <Input
+                    label={`Amount (${currency})`}
+                    type="number"
+                    step="0.01"
+                    value={editInvoiceForm.amount}
+                    onChange={(e) => setEditInvoiceForm({ ...editInvoiceForm, amount: parseFloat(e.target.value) || 0 })}
+                  />
+                  <Input
+                    label="Invoice Date"
+                    type="date"
+                    value={editInvoiceForm.invoiceDate}
+                    onChange={(e) => setEditInvoiceForm({ ...editInvoiceForm, invoiceDate: e.target.value })}
+                  />
+                  <Input
+                    label="Due Date"
+                    type="date"
+                    value={editInvoiceForm.deadline}
+                    onChange={(e) => setEditInvoiceForm({ ...editInvoiceForm, deadline: e.target.value })}
+                  />
+                  <div className="flex justify-end gap-3 mt-6">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setEditInvoiceModalOpen(false);
+                        setEditingInvoice(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="primary"
+                      onClick={handleEditInvoiceSubmit}
+                      disabled={editInvoiceLoading}
+                    >
+                      {editInvoiceLoading ? 'Saving...' : 'Save Changes'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Invoice Modal */}
+      {deleteInvoiceModalOpen && deletingInvoice && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="w-full max-w-md">
+            <Card className="w-full">
+              <div className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="flex-shrink-0 w-10 h-10 bg-error-100 rounded-full flex items-center justify-center">
+                    <svg className="w-6 h-6 text-error-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-secondary-900">Delete Invoice</h3>
+                </div>
+                <div className="space-y-4">
+                  <p className="text-secondary-700">
+                    Are you sure you want to delete this invoice?
+                  </p>
+                  <div className="bg-secondary-50 p-4 rounded-lg">
+                    <p className="font-medium">{deletingInvoice.product?.name || 'Unknown Product'}</p>
+                    <p className="text-secondary-600">Amount: {currency} {deletingInvoice.amount.toFixed(2)}</p>
+                  </div>
+                  {invoiceHasLinkedPayments(deletingInvoice) && (
+                    <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+                      <p className="text-yellow-800 font-medium">This invoice has linked payments</p>
+                      <p className="text-yellow-700 text-sm mt-1">
+                        The payments will be converted to available credit that can be applied to future invoices.
+                      </p>
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-3 mt-6">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setDeleteInvoiceModalOpen(false);
+                        setDeletingInvoice(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleDeleteInvoiceConfirm}
+                      disabled={deleteInvoiceLoading}
+                      className="bg-error-600 hover:bg-error-700 text-white border-error-600"
+                    >
+                      {deleteInvoiceLoading ? 'Deleting...' : 'Delete Invoice'}
                     </Button>
                   </div>
                 </div>

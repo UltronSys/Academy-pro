@@ -1,19 +1,43 @@
 import React, { useState, useEffect } from 'react';
-import { Card, DataTable, Badge, Toast } from '../ui';
+import { Card, DataTable, Badge, Toast, Button, Input, ConfirmModal } from '../ui';
 import { useApp } from '../../contexts/AppContext';
-import { getReceiptsByOrganization, getUserReceiptSummary } from '../../services/receiptService';
+import { useAuth } from '../../contexts/AuthContext';
+import {
+  getReceiptsByOrganization,
+  getUserReceiptSummary,
+  updateDebitReceipt,
+  deleteDebitReceiptWithCreditConversion
+} from '../../services/receiptService';
 import { getPlayersByOrganization } from '../../services/playerService';
 import { Receipt, Transaction } from '../../types';
 import { getUserById } from '../../services/userService';
-import { getDoc } from 'firebase/firestore';
+import { getDoc, doc } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 const ReceiptsView: React.FC = () => {
   const { selectedOrganization } = useApp();
+  const { currentUser } = useAuth();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [playerSummaries, setPlayerSummaries] = useState<Map<string, any>>(new Map());
   const [transactionInfo, setTransactionInfo] = useState<Map<string, Transaction>>(new Map());
+
+  // Edit modal state
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null);
+  const [editForm, setEditForm] = useState({
+    productName: '',
+    amount: 0,
+    invoiceDate: '',
+    deadline: ''
+  });
+  const [editLoading, setEditLoading] = useState(false);
+
+  // Delete modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deletingReceipt, setDeletingReceipt] = useState<Receipt | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -80,6 +104,114 @@ const ReceiptsView: React.FC = () => {
 
   const showToast = (message: string, type: 'success' | 'error' | 'info') => {
     setToast({ message, type });
+  };
+
+  // Reload receipts data
+  const reloadReceipts = async () => {
+    if (!selectedOrganization?.id) return;
+    try {
+      const receiptsData = await getReceiptsByOrganization(selectedOrganization.id);
+      setReceipts(receiptsData);
+    } catch (error) {
+      console.error('Error reloading receipts:', error);
+    }
+  };
+
+  // Edit handlers
+  const handleEditClick = (receipt: Receipt) => {
+    if (receipt.type !== 'debit') {
+      showToast('Only invoices (debit receipts) can be edited', 'error');
+      return;
+    }
+    setEditingReceipt(receipt);
+    setEditForm({
+      productName: receipt.product?.name || '',
+      amount: receipt.amount,
+      invoiceDate: receipt.product?.invoiceDate
+        ? receipt.product.invoiceDate.toDate().toISOString().split('T')[0]
+        : '',
+      deadline: receipt.product?.deadline
+        ? receipt.product.deadline.toDate().toISOString().split('T')[0]
+        : ''
+    });
+    setEditModalOpen(true);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!editingReceipt || !currentUser) return;
+
+    try {
+      setEditLoading(true);
+      const userId = editingReceipt.userRef.id;
+
+      await updateDebitReceipt(userId, editingReceipt.id, {
+        productName: editForm.productName,
+        amount: editForm.amount,
+        invoiceDate: editForm.invoiceDate ? new Date(editForm.invoiceDate) : undefined,
+        deadline: editForm.deadline ? new Date(editForm.deadline) : undefined
+      });
+
+      showToast('Invoice updated successfully', 'success');
+      setEditModalOpen(false);
+      setEditingReceipt(null);
+      await reloadReceipts();
+    } catch (error: any) {
+      console.error('Error updating receipt:', error);
+      showToast(error.message || 'Failed to update invoice', 'error');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  // Delete handlers
+  const handleDeleteClick = (receipt: Receipt) => {
+    if (receipt.type !== 'debit') {
+      showToast('Only invoices (debit receipts) can be deleted', 'error');
+      return;
+    }
+    setDeletingReceipt(receipt);
+    setDeleteModalOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingReceipt || !currentUser) return;
+
+    try {
+      setDeleteLoading(true);
+      const userId = deletingReceipt.userRef.id;
+      const userRef = doc(db, 'users', currentUser.uid);
+
+      const result = await deleteDebitReceiptWithCreditConversion(
+        userId,
+        deletingReceipt.id,
+        { name: currentUser.displayName || currentUser.email || 'Unknown', userRef }
+      );
+
+      if (result.convertedCredits > 0) {
+        showToast(
+          `Invoice deleted. ${result.convertedCredits.toFixed(2)} USD converted to available credit.`,
+          'success'
+        );
+      } else {
+        showToast('Invoice deleted successfully', 'success');
+      }
+
+      setDeleteModalOpen(false);
+      setDeletingReceipt(null);
+      await reloadReceipts();
+    } catch (error: any) {
+      console.error('Error deleting receipt:', error);
+      showToast(error.message || 'Failed to delete invoice', 'error');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  // Check if receipt has linked payments
+  const hasLinkedPayments = (receipt: Receipt): boolean => {
+    return receipt.type === 'debit' &&
+      receipt.siblingReceiptRefs &&
+      receipt.siblingReceiptRefs.length > 0;
   };
 
   const getStatusColor = (receipt: Receipt) => {
@@ -289,8 +421,8 @@ const ReceiptsView: React.FC = () => {
         </div>
       )
     },
-    { 
-      key: 'linkedReceipts', 
+    {
+      key: 'linkedReceipts',
       header: 'Linked',
       render: (receipt: Receipt) => (
         <div>
@@ -298,6 +430,35 @@ const ReceiptsView: React.FC = () => {
             <Badge variant="primary">Linked</Badge>
           ) : (
             <span className="text-secondary-500 text-sm">No links</span>
+          )}
+        </div>
+      )
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (receipt: Receipt) => (
+        <div className="flex gap-2">
+          {receipt.type === 'debit' && receipt.status !== 'deleted' && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleEditClick(receipt)}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => handleDeleteClick(receipt)}
+              >
+                Delete
+              </Button>
+            </>
+          )}
+          {receipt.status === 'deleted' && (
+            <span className="text-sm text-secondary-500 italic">Deleted</span>
           )}
         </div>
       )
@@ -416,6 +577,118 @@ const ReceiptsView: React.FC = () => {
           </Card>
         )}
       </div>
+
+      {/* Edit Invoice Modal */}
+      {editModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="w-full max-w-md">
+            <Card className="w-full">
+              <div className="p-6">
+                <h3 className="text-lg font-semibold text-secondary-900 mb-4">Edit Invoice</h3>
+                <div className="space-y-4">
+                  <Input
+                    label="Product/Service Name"
+                    value={editForm.productName}
+                    onChange={(e) => setEditForm({ ...editForm, productName: e.target.value })}
+                  />
+                  <Input
+                    label="Amount (USD)"
+                    type="number"
+                    step="0.01"
+                    value={editForm.amount}
+                    onChange={(e) => setEditForm({ ...editForm, amount: parseFloat(e.target.value) || 0 })}
+                  />
+                  <Input
+                    label="Invoice Date"
+                    type="date"
+                    value={editForm.invoiceDate}
+                    onChange={(e) => setEditForm({ ...editForm, invoiceDate: e.target.value })}
+                  />
+                  <Input
+                    label="Due Date"
+                    type="date"
+                    value={editForm.deadline}
+                    onChange={(e) => setEditForm({ ...editForm, deadline: e.target.value })}
+                  />
+                  <div className="flex justify-end gap-3 mt-6">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setEditModalOpen(false);
+                        setEditingReceipt(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="primary"
+                      onClick={handleEditSubmit}
+                      disabled={editLoading}
+                    >
+                      {editLoading ? 'Saving...' : 'Save Changes'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Invoice Modal */}
+      {deleteModalOpen && deletingReceipt && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="w-full max-w-md">
+            <Card className="w-full">
+              <div className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="flex-shrink-0 w-10 h-10 bg-error-100 rounded-full flex items-center justify-center">
+                    <svg className="w-6 h-6 text-error-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-secondary-900">Delete Invoice</h3>
+                </div>
+                <div className="space-y-4">
+                  <p className="text-secondary-700">
+                    Are you sure you want to delete this invoice?
+                  </p>
+                  <div className="bg-secondary-50 p-4 rounded-lg">
+                    <p className="font-medium">{deletingReceipt.product?.name || 'Unknown Product'}</p>
+                    <p className="text-secondary-600">Amount: USD {deletingReceipt.amount.toFixed(2)}</p>
+                  </div>
+                  {hasLinkedPayments(deletingReceipt) && (
+                    <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+                      <p className="text-yellow-800 font-medium">This invoice has linked payments</p>
+                      <p className="text-yellow-700 text-sm mt-1">
+                        The payments will be converted to available credit that can be applied to future invoices.
+                      </p>
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-3 mt-6">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setDeleteModalOpen(false);
+                        setDeletingReceipt(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleDeleteConfirm}
+                      disabled={deleteLoading}
+                      className="bg-error-600 hover:bg-error-700 text-white border-error-600"
+                    >
+                      {deleteLoading ? 'Deleting...' : 'Delete Invoice'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
 
       {/* Toast Notifications */}
       {toast && (
