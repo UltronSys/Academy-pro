@@ -373,6 +373,27 @@ export const getUsersWithWhatsApp = async (
 };
 
 /**
+ * Normalize phone number to a consistent format for matching
+ * Removes leading 0 and adds country code if needed, strips non-digits
+ */
+const normalizePhoneNumber = (phone: string): string => {
+  // Remove all non-digit characters except leading +
+  let normalized = phone.replace(/[^\d+]/g, '');
+
+  // Remove leading + if present
+  if (normalized.startsWith('+')) {
+    normalized = normalized.substring(1);
+  }
+
+  // Handle Kenyan numbers: convert 07xxx to 2547xxx
+  if (normalized.startsWith('0') && normalized.length === 10) {
+    normalized = '254' + normalized.substring(1);
+  }
+
+  return normalized;
+};
+
+/**
  * Find or create a conversation with a user
  */
 export const findOrCreateConversation = async (
@@ -383,8 +404,51 @@ export const findOrCreateConversation = async (
   userType: 'player' | 'guardian'
 ): Promise<Conversation> => {
   try {
-    // Check for existing active conversation
-    const q = query(
+    // Check for existing conversation by phone number FIRST
+    // This handles cases where inbound messages created a conversation before user was linked
+    const normalizedPhone = normalizePhoneNumber(userPhone);
+    const qByOrg = query(
+      collection(db, CONVERSATIONS_COLLECTION),
+      where('organizationId', '==', organizationId),
+      where('status', '==', 'active')
+    );
+
+    const allConversations = await getDocs(qByOrg);
+
+    // Find conversation matching this phone number
+    const existingByPhone = allConversations.docs.find(doc => {
+      const data = doc.data();
+      const existingPhone = normalizePhoneNumber(data.participantPhone || '');
+      return existingPhone === normalizedPhone;
+    });
+
+    if (existingByPhone) {
+      // Found existing conversation by phone - update it with proper user info
+      const existingData = existingByPhone.data();
+      const userRef = doc(db, 'users', userId);
+
+      // Always update to ensure the conversation has correct user info
+      await updateDoc(doc(db, CONVERSATIONS_COLLECTION, existingByPhone.id), {
+        participantUserId: userId,
+        participantName: userName,
+        participantType: userType,
+        participantUserRef: userRef,
+        updatedAt: Timestamp.now()
+      });
+
+      console.log('Found existing conversation by phone:', existingByPhone.id, 'Updated with user:', userName);
+
+      return {
+        id: existingByPhone.id,
+        ...existingData,
+        participantUserId: userId,
+        participantName: userName,
+        participantType: userType
+      } as Conversation;
+    }
+
+    // If no conversation found by phone, check by userId
+    const qByUser = query(
       collection(db, CONVERSATIONS_COLLECTION),
       where('organizationId', '==', organizationId),
       where('participantUserId', '==', userId),
@@ -392,12 +456,12 @@ export const findOrCreateConversation = async (
       limit(1)
     );
 
-    const snapshot = await getDocs(q);
+    const snapshotByUser = await getDocs(qByUser);
 
-    if (!snapshot.empty) {
+    if (!snapshotByUser.empty) {
       return {
-        id: snapshot.docs[0].id,
-        ...snapshot.docs[0].data()
+        id: snapshotByUser.docs[0].id,
+        ...snapshotByUser.docs[0].data()
       } as Conversation;
     }
 

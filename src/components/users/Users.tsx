@@ -207,7 +207,7 @@ const Users: React.FC = () => {
   const navigate = useNavigate();
   const { canWrite, canDelete } = usePermissions();
   const { organizationSettings } = useSettingsContext();
-  const { users, loading: usersLoading, error: usersError, searchUsers, totalPages, totalUsers, currentPage, removeUser: removeUserFromContext } = useUsers();
+  const { users, loading: usersLoading, error: usersError, searchUsers, totalPages, totalUsers, currentPage, removeUser: removeUserFromContext, addUser: addUserToContext, updateUser: updateUserInContext } = useUsers();
   const [academies, setAcademies] = useState<Academy[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -625,14 +625,14 @@ const Users: React.FC = () => {
     }
   }, [userData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Trigger search when search term, filters, or tab changes
+  // Trigger search when search term, filters, tab, or academy changes
   useEffect(() => {
     if (userData) {
-      // Always perform search when tab changes (even with empty search term)
+      // Always perform search when tab or academy changes (even with empty search term)
       // This ensures the role filter is applied based on the active tab
       performSearch(searchTerm, 0);
     }
-  }, [searchTerm, roleFilter, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchTerm, roleFilter, activeTab, selectedAcademy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Search function using UsersContext
   const performSearch = async (query: string = searchTerm, page: number = 0) => {
@@ -1219,8 +1219,30 @@ service firebase.storage {
         }
       }
       
-      // Reload users and close dialog
-      await performSearch(searchTerm, 0);
+      // Update user in context for immediate UI feedback (no refresh needed)
+      const updatedUserForContext: User = {
+        ...selectedUser,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        roles: formData.roles.map(role => ({
+          role: [role],
+          organizationId: userData?.roles?.[0]?.organizationId || '',
+          academyId: formData.academyId
+        })),
+        ...(photoURL && { photoURL }),
+        updatedAt: {
+          toDate: () => new Date(),
+          seconds: Math.floor(Date.now() / 1000),
+          nanoseconds: 0,
+          toMillis: () => Date.now(),
+          isEqual: () => false,
+          toJSON: () => ({ seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 })
+        } as any
+      };
+      updateUserInContext(updatedUserForContext);
+      console.log('✅ User updated in context for immediate display');
+
       setOpenDialog(false);
       setActiveStep(0);
       setProfileImage(null); // Reset profile image
@@ -1238,9 +1260,7 @@ service firebase.storage {
         status: '',
         dynamicFields: {}
       });
-      
-      // Update local state immediately for instant UI feedback
-      // User state is managed by context, no need for local updates
+
       console.log('✅ User updated in Firestore and synced to Algolia');
       
       console.log('✅ User update completed successfully');
@@ -1389,6 +1409,10 @@ service firebase.storage {
       addUserToCache(newUserData);
       console.log('✅ User saved to localStorage cache');
 
+      // Add user to context for immediate UI update (no refresh needed)
+      addUserToContext(newUserData);
+      console.log('✅ User added to context for immediate display');
+
       // If creating a player, also create player record
       if (formData.roles.includes('player')) {
         const playerId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
@@ -1417,9 +1441,8 @@ service firebase.storage {
         
         console.log('✅ Player created successfully with guardians');
       }
-      
-      // Reload users and close dialog
-      await performSearch(searchTerm, 0);
+
+      // Close dialog - no need to reload from Algolia since we already added user to context
       setOpenDialog(false);
       setActiveStep(0);
       setProfileImage(null); // Reset profile image
