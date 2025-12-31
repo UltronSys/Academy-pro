@@ -43,6 +43,7 @@ const PlayersGuardians: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [sortBy, setSortBy] = useState('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [loading, setLoading] = useState(true);
   const [defaultCurrency, setDefaultCurrency] = useState<string>('USD');
   
@@ -490,7 +491,8 @@ const PlayersGuardians: React.FC = () => {
 
   const statusOptions = [
     { value: 'all', label: 'All Status' },
-    { value: 'active', label: 'Active' },
+    { value: 'active', label: 'Paid Up' },
+    { value: 'pending', label: 'Pending Payment' },
     { value: 'overdue', label: 'Overdue' },
     { value: 'credit', label: 'Has Credits' }
   ];
@@ -503,21 +505,56 @@ const PlayersGuardians: React.FC = () => {
   ];
 
   const getFinancialStatus = (playerSummary: PlayerFinancialSummary) => {
-    if (playerSummary.netBalance < 0) return 'overdue'; // Negative balance = owes money
-    if (playerSummary.netBalance > 0) return 'credit'; // Positive balance = has credit
-    return 'active'; // Zero balance = even
+    // Check if player has any credit (positive balance)
+    if (playerSummary.netBalance > 0) return 'credit';
+
+    // Check if player has no outstanding balance
+    if (playerSummary.netBalance >= 0) return 'active';
+
+    // Player has outstanding balance (netBalance < 0)
+    // Check if any unpaid receipts are past their deadline
+    const now = new Date();
+    const hasOverdueReceipts = playerSummary.receipts.some(receipt => {
+      if (receipt.type !== 'debit') return false;
+      if (receipt.status === 'completed' || receipt.status === 'deleted') return false;
+
+      // Check if deadline has passed
+      const deadline = receipt.product?.deadline?.toDate?.();
+      if (deadline && deadline < now) {
+        return true; // This receipt is overdue
+      }
+      return false;
+    });
+
+    if (hasOverdueReceipts) return 'overdue';
+
+    // Has outstanding balance but no overdue receipts yet
+    return 'pending';
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active':
         return 'success';
+      case 'pending':
+        return 'warning';
       case 'overdue':
         return 'error';
       case 'credit':
         return 'primary';
       default:
         return 'secondary';
+    }
+  };
+
+  const handleSort = (key: string) => {
+    if (sortBy === key) {
+      // Toggle direction if same column
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New column, default to ascending
+      setSortBy(key);
+      setSortDirection('asc');
     }
   };
 
@@ -537,15 +574,22 @@ const PlayersGuardians: React.FC = () => {
       return matchesSearch && matchesStatus && matchesAcademy;
     })
     .sort((a, b) => {
+      const direction = sortDirection === 'asc' ? 1 : -1;
       switch (sortBy) {
         case 'balance':
-          return b.netBalance - a.netBalance;
+          return (a.netBalance - b.netBalance) * direction;
         case 'outstanding':
-          return b.outstandingDebits - a.outstandingDebits;
+          return (a.outstandingDebits - b.outstandingDebits) * direction;
         case 'credits':
-          return b.availableCredits - a.availableCredits;
+          return (a.availableCredits - b.availableCredits) * direction;
+        case 'status':
+          const statusOrder: Record<string, number> = { 'overdue': 0, 'pending': 1, 'active': 2, 'credit': 3 };
+          const statusA = getFinancialStatus(a);
+          const statusB = getFinancialStatus(b);
+          return ((statusOrder[statusA] || 0) - (statusOrder[statusB] || 0)) * direction;
+        case 'name':
         default:
-          return a.user.name.localeCompare(b.user.name);
+          return a.user.name.localeCompare(b.user.name) * direction;
       }
     });
 
@@ -577,9 +621,11 @@ const PlayersGuardians: React.FC = () => {
     });
 
   const playerColumns = [
-    { 
-      key: 'player', 
+    {
+      key: 'player',
       header: 'Player',
+      sortable: true,
+      sortKey: 'name',
       render: (playerSummary: PlayerFinancialSummary) => (
         <div>
           <div className="font-medium text-secondary-900">{playerSummary.user.name}</div>
@@ -592,8 +638,8 @@ const PlayersGuardians: React.FC = () => {
         </div>
       )
     },
-    { 
-      key: 'guardian', 
+    {
+      key: 'guardian',
       header: 'Guardian(s)',
       render: (playerSummary: PlayerFinancialSummary) => (
         <div>
@@ -615,18 +661,22 @@ const PlayersGuardians: React.FC = () => {
         </div>
       )
     },
-    { 
-      key: 'financialSummary', 
+    {
+      key: 'financialSummary',
       header: 'Financial Summary',
+      sortable: true,
+      sortKey: 'balance',
       render: (playerSummary: PlayerFinancialSummary) => (
         <div className={`font-medium ${playerSummary.netBalance > 0 ? 'text-success-600' : playerSummary.netBalance < 0 ? 'text-error-600' : 'text-secondary-900'}`}>
           Net Balance: {defaultCurrency} {playerSummary.netBalance.toFixed(2)}
         </div>
       )
     },
-    { 
-      key: 'status', 
+    {
+      key: 'status',
       header: 'Status',
+      sortable: true,
+      sortKey: 'status',
       render: (playerSummary: PlayerFinancialSummary) => {
         const status = getFinancialStatus(playerSummary);
         return (
@@ -758,19 +808,25 @@ const PlayersGuardians: React.FC = () => {
   const playersTab = (
     <div className="space-y-6">
       {/* Summary Cards for Players */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card className="p-4">
           <div className="text-sm text-secondary-600">Total Players</div>
           <div className="text-2xl font-bold text-secondary-900">{filteredPlayers.length}</div>
         </Card>
         <Card className="p-4">
-          <div className="text-sm text-secondary-600">Active Players</div>
+          <div className="text-sm text-secondary-600">Paid Up</div>
           <div className="text-2xl font-bold text-success-600">
             {filteredPlayers.filter(p => getFinancialStatus(p) === 'active').length}
           </div>
         </Card>
         <Card className="p-4">
-          <div className="text-sm text-secondary-600">Overdue Accounts</div>
+          <div className="text-sm text-secondary-600">Pending Payment</div>
+          <div className="text-2xl font-bold text-warning-600">
+            {filteredPlayers.filter(p => getFinancialStatus(p) === 'pending').length}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-secondary-600">Overdue</div>
           <div className="text-2xl font-bold text-error-600">
             {filteredPlayers.filter(p => getFinancialStatus(p) === 'overdue').length}
           </div>
@@ -791,6 +847,9 @@ const PlayersGuardians: React.FC = () => {
           emptyMessage="No players found"
           showPagination={true}
           itemsPerPage={10}
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
         />
       </Card>
     </div>

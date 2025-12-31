@@ -1071,21 +1071,33 @@ const AddUser: React.FC = () => {
                 console.log('onlyPlayerGuardian:', onlyPlayerGuardian);
                 
                 if (onlyPlayerGuardian) {
+                  const hasEmail = formData.email.trim().length > 0;
+                  const hasPhone = formData.phone.trim().length > 0;
+                  const hasEither = hasEmail || hasPhone;
+
                   return (
                     <div className="space-y-4">
-                      <p className="text-gray-600">Contact information is optional for players and guardians.</p>
+                      <div className={`p-3 rounded-lg ${hasEither ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+                        <p className={`text-sm ${hasEither ? 'text-green-700' : 'text-amber-700'}`}>
+                          {hasEither
+                            ? '✓ Contact information provided'
+                            : 'Please provide at least an email address OR a phone number'}
+                        </p>
+                      </div>
                       <Input
-                        label="Email Address (Optional)"
+                        label={`Email Address ${hasPhone ? '(Optional)' : hasEmail ? '' : '(Required if no phone)'}`}
                         type="email"
                         value={formData.email}
                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                        helperText="Optional - Can be added later if needed"
+                        required={!hasPhone}
+                        helperText={hasPhone ? "Optional since phone number is provided" : "Required if phone number is not provided"}
                       />
                       <Input
-                        label="Phone Number (Optional)"
+                        label={`Phone Number ${hasEmail ? '(Optional)' : hasPhone ? '' : '(Required if no email)'}`}
                         value={formData.phone}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        helperText="Optional - Can be added later if needed"
+                        required={!hasEmail}
+                        helperText={hasEmail ? "Optional since email is provided" : "Required if email is not provided"}
                       />
                     </div>
                   );
@@ -1259,12 +1271,13 @@ const AddUser: React.FC = () => {
                       const hasLoginRole = formData.roles.some(role => 
                         !['player', 'guardian'].includes(role)
                       );
-                      const onlyPlayerGuardian = formData.roles.every(role => 
+                      const onlyPlayerGuardian = formData.roles.every(role =>
                         ['player', 'guardian'].includes(role)
                       );
-                      
+
                       if (onlyPlayerGuardian) {
-                        return false; // Optional fields for players/guardians
+                        // At least email or phone is required
+                        return !formData.email.trim() && !formData.phone.trim();
                       } else if (hasLoginRole) {
                         return (!formData.email || !formData.phone || !formData.password);
                       } else {
@@ -1286,15 +1299,16 @@ const AddUser: React.FC = () => {
                     !formData.name || 
                     formData.roles.length === 0 || 
                     (() => {
-                      const hasLoginRole = formData.roles.some(role => 
+                      const hasLoginRole = formData.roles.some(role =>
                         !['player', 'guardian'].includes(role)
                       );
-                      const onlyPlayerGuardian = formData.roles.every(role => 
+                      const onlyPlayerGuardian = formData.roles.every(role =>
                         ['player', 'guardian'].includes(role)
                       );
-                      
+
                       if (onlyPlayerGuardian) {
-                        return false; // Optional fields
+                        // At least email or phone is required
+                        return !formData.email.trim() && !formData.phone.trim();
                       } else if (hasLoginRole) {
                         return (!formData.email || !formData.phone || !formData.password);
                       } else {

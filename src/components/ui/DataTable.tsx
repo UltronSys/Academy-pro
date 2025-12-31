@@ -6,6 +6,8 @@ interface Column<T> {
   key: string;
   header: string;
   render?: (item: T) => React.ReactNode;
+  sortable?: boolean;
+  sortKey?: string;
 }
 
 interface DataTableProps<T> {
@@ -14,17 +16,54 @@ interface DataTableProps<T> {
   emptyMessage?: string;
   itemsPerPage?: number;
   showPagination?: boolean;
+  sortBy?: string;
+  sortDirection?: 'asc' | 'desc';
+  onSort?: (key: string) => void;
 }
 
-function DataTable<T extends Record<string, any>>({ 
-  data, 
-  columns, 
+function DataTable<T extends Record<string, any>>({
+  data,
+  columns,
   emptyMessage = 'No data available',
   itemsPerPage = 10,
-  showPagination = false
+  showPagination = false,
+  sortBy,
+  sortDirection = 'asc',
+  onSort
 }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(itemsPerPage);
+
+  const handleHeaderClick = (column: Column<T>) => {
+    if (column.sortable && onSort) {
+      onSort(column.sortKey || column.key);
+    }
+  };
+
+  const renderSortIcon = (column: Column<T>) => {
+    if (!column.sortable) return null;
+    const columnKey = column.sortKey || column.key;
+    const isActive = sortBy === columnKey;
+
+    return (
+      <span className="ml-1 inline-flex flex-col">
+        <svg
+          className={`w-3 h-3 -mb-1 ${isActive && sortDirection === 'asc' ? 'text-primary-600' : 'text-secondary-300'}`}
+          fill="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path d="M7 14l5-5 5 5H7z" />
+        </svg>
+        <svg
+          className={`w-3 h-3 ${isActive && sortDirection === 'desc' ? 'text-primary-600' : 'text-secondary-300'}`}
+          fill="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path d="M7 10l5 5 5-5H7z" />
+        </svg>
+      </span>
+    );
+  };
 
   // Reset to first page when data changes
   useEffect(() => {
@@ -90,7 +129,16 @@ function DataTable<T extends Record<string, any>>({
         <TableHeader>
           <TableRow>
             {columns.map((column) => (
-              <TableHead key={column.key}>{column.header}</TableHead>
+              <TableHead
+                key={column.key}
+                className={column.sortable ? 'cursor-pointer select-none hover:bg-secondary-50' : ''}
+                onClick={() => handleHeaderClick(column)}
+              >
+                <div className="flex items-center">
+                  {column.header}
+                  {renderSortIcon(column)}
+                </div>
+              </TableHead>
             ))}
           </TableRow>
         </TableHeader>

@@ -438,8 +438,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             
             {/* Left side - Academy selector and search */}
             <div className="flex items-center space-x-2 sm:space-x-4 flex-1 lg:ml-0">
-              {/* Academy Selector */}
-              {academies.length > 0 && (
+              {/* Academy Selector - hidden on products page */}
+              {academies.length > 0 && !(location.pathname === '/finance' && (!location.search || location.search.includes('tab=0'))) && (
                 <div className="flex items-center space-x-1 sm:space-x-2 bg-secondary-50 rounded-lg px-2 sm:px-3 py-1.5 sm:py-2 border border-secondary-200">
                   <span className="text-primary-600 hidden sm:block">
                     <SchoolIcon />
