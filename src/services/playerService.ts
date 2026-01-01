@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Player, Product } from '../types';
-import { createDebitReceipt } from './receiptService';
+import { createDebitReceipt, getReceiptsByUser, deleteReceipt } from './receiptService';
 
 const COLLECTION_NAME = 'players';
 
@@ -354,31 +354,52 @@ export const removeProductFromPlayer = async (
   try {
     const playerRef = doc(db, COLLECTION_NAME, playerId);
     const playerSnap = await getDoc(playerRef);
-    
+
     if (!playerSnap.exists()) {
       throw new Error('Player not found');
     }
-    
+
     const player = playerSnap.data() as Player;
-    
+
     if (!player.assignedProducts) {
       throw new Error('No products assigned to this player');
     }
-    
+
+    // Delete unpaid receipts for this product before unlinking
+    try {
+      const receipts = await getReceiptsByUser(player.userId);
+      const unpaidReceipts = receipts.filter(r =>
+        r.type === 'debit' &&
+        r.status === 'active' && // Only unpaid receipts
+        r.product?.productRef?.id === productId
+      );
+
+      console.log(`Found ${unpaidReceipts.length} unpaid receipts to delete for product:`, productId);
+
+      // Delete each unpaid receipt
+      for (const receipt of unpaidReceipts) {
+        await deleteReceipt(player.userId, receipt.id);
+        console.log('Deleted unpaid receipt:', receipt.id);
+      }
+    } catch (receiptError) {
+      console.error('Error deleting unpaid receipts:', receiptError);
+      // Continue with unlinking even if receipt deletion fails
+    }
+
     // Mark product as cancelled instead of removing it
-    const updatedAssignedProducts = player.assignedProducts.map(p => 
-      p.productId === productId 
+    const updatedAssignedProducts = player.assignedProducts.map(p =>
+      p.productId === productId
         ? { ...p, status: 'cancelled' as const }
         : p
     );
-    
+
     await updateDoc(playerRef, {
       assignedProducts: updatedAssignedProducts,
       updatedAt: Timestamp.now()
     });
-    
+
     console.log('Product assignment cancelled for player:', playerId, 'product:', productId);
-    
+
   } catch (error) {
     console.error('Error removing product from player:', error);
     throw error;

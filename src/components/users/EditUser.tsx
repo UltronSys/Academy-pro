@@ -334,9 +334,17 @@ const EditUser: React.FC = () => {
         return;
       }
     } else if (activeStep === 2) {
-      const isPlayerRole = formData.roles.includes('player');
-      if (!isPlayerRole && (!formData.email || !formData.phone)) {
-        setError('Email and phone are required for non-player roles');
+      const onlyPlayerGuardian = formData.roles.every(role =>
+        ['player', 'guardian'].includes(role)
+      );
+      if (onlyPlayerGuardian) {
+        // At least email or phone is required for players/guardians
+        if (!formData.email?.trim() && !formData.phone?.trim()) {
+          setError('At least email or phone is required');
+          return;
+        }
+      } else if (!formData.email || !formData.phone) {
+        setError('Email and phone are required for this role');
         return;
       }
     }
@@ -1065,7 +1073,15 @@ const EditUser: React.FC = () => {
           )}
           
           {/* Step 3: Contact Information */}
-          {activeStep === 2 && (
+          {activeStep === 2 && (() => {
+            const onlyPlayerGuardian = formData.roles.every(role =>
+              ['player', 'guardian'].includes(role)
+            );
+            const hasEmail = formData.email?.trim().length > 0;
+            const hasPhone = formData.phone?.trim().length > 0;
+            const hasEither = hasEmail || hasPhone;
+
+            return (
             <div className="space-y-6 animate-fade-in">
               <div className="text-center mb-8">
                 <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -1075,13 +1091,23 @@ const EditUser: React.FC = () => {
                 </div>
                 <h2 className="text-2xl font-bold text-secondary-900 mb-2">Contact Information</h2>
                 <p className="text-secondary-600 font-normal">
-                  {formData.roles.includes('player') 
-                    ? 'Contact details are optional for players' 
+                  {onlyPlayerGuardian
+                    ? 'At least email or phone is required'
                     : 'Required contact information for this role'
                   }
                 </p>
               </div>
-              
+
+              {onlyPlayerGuardian && (
+                <div className={`p-3 rounded-lg ${hasEither ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+                  <p className={`text-sm ${hasEither ? 'text-green-700' : 'text-amber-700'}`}>
+                    {hasEither
+                      ? '✓ Contact information provided'
+                      : 'Please provide at least an email address OR a phone number'}
+                  </p>
+                </div>
+              )}
+
               <div className="bg-secondary-50 rounded-xl p-6">
                 <div className="flex items-center gap-3 mb-6">
                   <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">
@@ -1092,41 +1118,46 @@ const EditUser: React.FC = () => {
                   <div>
                     <h3 className="font-semibold text-secondary-900">Contact Details</h3>
                     <p className="text-xs text-secondary-600 font-normal">
-                      {formData.roles.includes('player') 
-                        ? 'Optional - can be added later if needed' 
+                      {onlyPlayerGuardian
+                        ? 'Provide at least one contact method'
                         : 'Required for account access and communication'
                       }
                     </p>
                   </div>
                 </div>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-2">
                   <Input
-                    label={formData.roles.includes('player') ? "Email Address (Optional)" : "Email Address"}
+                    label={onlyPlayerGuardian
+                      ? `Email Address ${hasPhone ? '(Optional)' : '(Required if no phone)'}`
+                      : "Email Address"}
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    required={!formData.roles.includes('player')}
-                    helperText={formData.roles.includes('player') 
-                      ? "Optional - Can be added later if needed"
+                    required={onlyPlayerGuardian ? !hasPhone : true}
+                    helperText={onlyPlayerGuardian
+                      ? (hasPhone ? "Optional since phone is provided" : "Required if phone is not provided")
                       : "This will be used for login"
                     }
                   />
                   <Input
-                    label={formData.roles.includes('player') ? "Phone Number (Optional)" : "Phone Number"}
+                    label={onlyPlayerGuardian
+                      ? `Phone Number ${hasEmail ? '(Optional)' : '(Required if no email)'}`
+                      : "Phone Number"}
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    required={!formData.roles.includes('player')}
-                    helperText={formData.roles.includes('player') 
-                      ? "Optional - Can be added later if needed"
+                    required={onlyPlayerGuardian ? !hasEmail : true}
+                    helperText={onlyPlayerGuardian
+                      ? (hasEmail ? "Optional since email is provided" : "Required if email is not provided")
                       : "Required for this role"
                     }
                   />
                 </div>
               </div>
             </div>
-          )}
-          
+          );
+          })()}
+
           {/* Step 4: Player Details */}
           {activeStep === 3 && isPlayerRole && (
             <div className="space-y-6 animate-fade-in">
@@ -1235,15 +1266,20 @@ const EditUser: React.FC = () => {
                 </Button>
               )}
               {activeStep < effectiveSteps.length - 1 ? (
-                <Button 
+                <Button
                   onClick={handleNext}
                   disabled={
-                    activeStep === 0 ? !formData.name : 
+                    activeStep === 0 ? !formData.name :
                     activeStep === 1 ? formData.roles.length === 0 :
-                    activeStep === 2 ? (
-                      formData.roles.includes('player') ? false :
-                      (!formData.email || !formData.phone)
-                    ) :
+                    activeStep === 2 ? (() => {
+                      const onlyPlayerGuardian = formData.roles.every(role =>
+                        ['player', 'guardian'].includes(role)
+                      );
+                      if (onlyPlayerGuardian) {
+                        return !formData.email?.trim() && !formData.phone?.trim();
+                      }
+                      return !formData.email || !formData.phone;
+                    })() :
                     false
                   }
                   icon={<ArrowRightIcon />}
@@ -1252,13 +1288,21 @@ const EditUser: React.FC = () => {
                   Next
                 </Button>
               ) : (
-                <Button 
+                <Button
                   onClick={handleSubmit}
                   loading={submitLoading}
                   disabled={
-                    !formData.name || 
-                    formData.roles.length === 0 || 
-                    (!formData.roles.includes('player') && (!formData.email || !formData.phone)) ||
+                    !formData.name ||
+                    formData.roles.length === 0 ||
+                    (() => {
+                      const onlyPlayerGuardian = formData.roles.every(role =>
+                        ['player', 'guardian'].includes(role)
+                      );
+                      if (onlyPlayerGuardian) {
+                        return !formData.email?.trim() && !formData.phone?.trim();
+                      }
+                      return !formData.email || !formData.phone;
+                    })() ||
                     (isPlayerRole && activeStep === 3 && !isParameterFieldsValid())
                   }
                   icon={<SaveIcon />}

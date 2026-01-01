@@ -88,7 +88,7 @@ const PlayerDetails: React.FC = () => {
       const playerData = await getPlayerById(playerId);
       if (!playerData) {
         showToast('Player not found', 'error');
-        navigate('/finance/players-guardians');
+        navigate('/finance?tab=2');
         return;
       }
       setPlayer(playerData);
@@ -260,10 +260,13 @@ const PlayerDetails: React.FC = () => {
       // Load available products for the organization
       const allProducts = await getProductsByOrganization(selectedOrganization.id);
       
-      // Filter out products that are already assigned to this player
-      const assignedProductIds = player?.assignedProducts?.map(ap => ap.productId) || [];
-      const unassignedProducts = allProducts.filter(product => 
-        !assignedProductIds.includes(product.id) && product.isActive
+      // Filter out products that are already actively assigned to this player
+      // (cancelled/unlinked products should be available for re-linking)
+      const activeAssignedProductIds = player?.assignedProducts
+        ?.filter(ap => ap.status === 'active')
+        .map(ap => ap.productId) || [];
+      const unassignedProducts = allProducts.filter(product =>
+        !activeAssignedProductIds.includes(product.id) && product.isActive
       );
       
       setAvailableProducts(unassignedProducts);
@@ -965,12 +968,12 @@ const PlayerDetails: React.FC = () => {
     return (
       <div className="flex flex-col items-center justify-center min-h-96">
         <p className="text-secondary-600">Player not found</p>
-        <Button 
-          variant="outline" 
-          onClick={() => navigate('/finance/players-guardians')}
+        <Button
+          variant="outline"
+          onClick={() => navigate('/finance?tab=2')}
           className="mt-4"
         >
-          Back to Players & Guardians
+          Back to Players
         </Button>
       </div>
     );
@@ -986,9 +989,9 @@ const PlayerDetails: React.FC = () => {
             <p className="text-gray-600 mt-1">{user.email}</p>
             {user.phone && <p className="text-gray-500">{user.phone}</p>}
           </div>
-          <Button 
-            variant="outline" 
-            onClick={() => navigate('/finance/players-guardians')}
+          <Button
+            variant="outline"
+            onClick={() => navigate('/finance?tab=2')}
           >
             Back to List
           </Button>
