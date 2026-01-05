@@ -245,6 +245,8 @@ const Users: React.FC = () => {
   });
   const [fieldCategories, setFieldCategories] = useState<FieldCategory[]>([]);
   const [tableRenderKey, setTableRenderKey] = useState(Date.now());
+  const [sortBy, setSortBy] = useState<string>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -267,6 +269,84 @@ const Users: React.FC = () => {
   const [profileImage, setProfileImage] = useState<File | null>(null);
   const [profileImagePreview, setProfileImagePreview] = useState<string | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
+  const [emailError, setEmailError] = useState('');
+  const [phoneError, setPhoneError] = useState('');
+  const [countryCode, setCountryCode] = useState('+966'); // Default to Saudi Arabia
+
+  // Common country codes (sorted alphabetically by country name)
+  const countryCodes = [
+    { code: '+93', country: 'AF', name: 'Afghanistan' },
+    { code: '+355', country: 'AL', name: 'Albania' },
+    { code: '+213', country: 'DZ', name: 'Algeria' },
+    { code: '+54', country: 'AR', name: 'Argentina' },
+    { code: '+61', country: 'AU', name: 'Australia' },
+    { code: '+43', country: 'AT', name: 'Austria' },
+    { code: '+973', country: 'BH', name: 'Bahrain' },
+    { code: '+880', country: 'BD', name: 'Bangladesh' },
+    { code: '+32', country: 'BE', name: 'Belgium' },
+    { code: '+55', country: 'BR', name: 'Brazil' },
+    { code: '+1', country: 'CA', name: 'Canada' },
+    { code: '+86', country: 'CN', name: 'China' },
+    { code: '+57', country: 'CO', name: 'Colombia' },
+    { code: '+20', country: 'EG', name: 'Egypt' },
+    { code: '+251', country: 'ET', name: 'Ethiopia' },
+    { code: '+358', country: 'FI', name: 'Finland' },
+    { code: '+33', country: 'FR', name: 'France' },
+    { code: '+49', country: 'DE', name: 'Germany' },
+    { code: '+233', country: 'GH', name: 'Ghana' },
+    { code: '+30', country: 'GR', name: 'Greece' },
+    { code: '+91', country: 'IN', name: 'India' },
+    { code: '+62', country: 'ID', name: 'Indonesia' },
+    { code: '+98', country: 'IR', name: 'Iran' },
+    { code: '+964', country: 'IQ', name: 'Iraq' },
+    { code: '+353', country: 'IE', name: 'Ireland' },
+    { code: '+972', country: 'IL', name: 'Israel' },
+    { code: '+39', country: 'IT', name: 'Italy' },
+    { code: '+81', country: 'JP', name: 'Japan' },
+    { code: '+962', country: 'JO', name: 'Jordan' },
+    { code: '+254', country: 'KE', name: 'Kenya' },
+    { code: '+82', country: 'KR', name: 'South Korea' },
+    { code: '+965', country: 'KW', name: 'Kuwait' },
+    { code: '+961', country: 'LB', name: 'Lebanon' },
+    { code: '+218', country: 'LY', name: 'Libya' },
+    { code: '+60', country: 'MY', name: 'Malaysia' },
+    { code: '+52', country: 'MX', name: 'Mexico' },
+    { code: '+212', country: 'MA', name: 'Morocco' },
+    { code: '+31', country: 'NL', name: 'Netherlands' },
+    { code: '+64', country: 'NZ', name: 'New Zealand' },
+    { code: '+234', country: 'NG', name: 'Nigeria' },
+    { code: '+47', country: 'NO', name: 'Norway' },
+    { code: '+968', country: 'OM', name: 'Oman' },
+    { code: '+92', country: 'PK', name: 'Pakistan' },
+    { code: '+970', country: 'PS', name: 'Palestine' },
+    { code: '+63', country: 'PH', name: 'Philippines' },
+    { code: '+48', country: 'PL', name: 'Poland' },
+    { code: '+351', country: 'PT', name: 'Portugal' },
+    { code: '+974', country: 'QA', name: 'Qatar' },
+    { code: '+7', country: 'RU', name: 'Russia' },
+    { code: '+966', country: 'SA', name: 'Saudi Arabia' },
+    { code: '+65', country: 'SG', name: 'Singapore' },
+    { code: '+27', country: 'ZA', name: 'South Africa' },
+    { code: '+34', country: 'ES', name: 'Spain' },
+    { code: '+94', country: 'LK', name: 'Sri Lanka' },
+    { code: '+249', country: 'SD', name: 'Sudan' },
+    { code: '+46', country: 'SE', name: 'Sweden' },
+    { code: '+41', country: 'CH', name: 'Switzerland' },
+    { code: '+963', country: 'SY', name: 'Syria' },
+    { code: '+255', country: 'TZ', name: 'Tanzania' },
+    { code: '+66', country: 'TH', name: 'Thailand' },
+    { code: '+216', country: 'TN', name: 'Tunisia' },
+    { code: '+90', country: 'TR', name: 'Turkey' },
+    { code: '+256', country: 'UG', name: 'Uganda' },
+    { code: '+971', country: 'AE', name: 'UAE' },
+    { code: '+44', country: 'GB', name: 'UK' },
+    { code: '+1', country: 'US', name: 'USA' },
+    { code: '+58', country: 'VE', name: 'Venezuela' },
+    { code: '+84', country: 'VN', name: 'Vietnam' },
+    { code: '+967', country: 'YE', name: 'Yemen' },
+    { code: '+260', country: 'ZM', name: 'Zambia' },
+    { code: '+263', country: 'ZW', name: 'Zimbabwe' },
+  ];
 
   const { userData } = useAuth();
   const { selectedAcademy, setSelectedAcademy } = useApp();
@@ -929,6 +1009,11 @@ service firebase.storage {
     setProfileImage(null);
     setProfileImagePreview(null);
 
+    // Reset validation errors and country code
+    setEmailError('');
+    setPhoneError('');
+    setCountryCode('+966'); // Reset to default
+
     setFormData({
       name: '',
       email: '',
@@ -957,12 +1042,32 @@ service firebase.storage {
     setGuardianSearchPerformed(false);
     setShowCreateGuardian(false);
     setNewGuardianData({ name: '', email: '', phone: '' });
-    
+
+    // Reset validation errors
+    setEmailError('');
+    setPhoneError('');
+
+    // Extract country code from existing phone number
+    const extractPhoneAndCountryCode = (phone: string) => {
+      if (!phone) return { code: '+966', number: '' };
+      // Try to match known country codes
+      for (const cc of countryCodes) {
+        if (phone.startsWith(cc.code)) {
+          return { code: cc.code, number: phone.slice(cc.code.length) };
+        }
+      }
+      // If no match, assume default country code and use the whole number
+      return { code: '+966', number: phone.replace(/^\+/, '') };
+    };
+
+    const { code, number } = extractPhoneAndCountryCode(user.phone || '');
+    setCountryCode(code);
+
     // Load user data into form
-    const isPlayer = user.roles.some(role => 
+    const isPlayer = user.roles.some(role =>
       Array.isArray(role.role) ? role.role.includes('player') : role.role === 'player'
     );
-    
+
     // Get player data if user is a player
     let playerData = null;
     if (isPlayer) {
@@ -973,13 +1078,13 @@ service firebase.storage {
         console.error('Error loading player data:', error);
       }
     }
-    
+
     // Set form data with existing user information
     try {
       setFormData({
         name: user.name || '',
         email: user.email || '',
-        phone: user.phone || '',
+        phone: number,
         password: '', // Don't pre-fill password for security
         roles: user.roles?.flatMap(role => 
           Array.isArray(role.role) ? role.role : [role.role]
@@ -1049,7 +1154,20 @@ service firebase.storage {
     setOpenDialog(true);
   };
 
+  // Check if user has owner role
+  const isOwner = (user: User): boolean => {
+    return user.roles?.some(role => {
+      const roles = Array.isArray(role.role) ? role.role : [role.role];
+      return roles.includes('owner');
+    }) || false;
+  };
+
   const handleDeleteUser = (user: User) => {
+    // Prevent deletion of owners
+    if (isOwner(user)) {
+      setError('Owners cannot be deleted. Please transfer ownership first.');
+      return;
+    }
     setUserToDelete(user);
     setOpenDeleteDialog(true);
   };
@@ -1074,9 +1192,28 @@ service firebase.storage {
     }
   };
 
+  // Email validation helper
+  const isValidEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  // Phone validation helper (now only checks digits since country code is separate)
+  const isValidPhone = (phone: string): boolean => {
+    // Phone should be digits only and at least 7 characters
+    const phoneRegex = /^\d+$/;
+    return phone.length >= 7 && phoneRegex.test(phone);
+  };
+
+  // Get full phone number with country code
+  const getFullPhoneNumber = (): string => {
+    if (!formData.phone) return '';
+    return `${countryCode}${formData.phone}`;
+  };
+
   const handleNext = () => {
     setError('');
-    
+
     if (activeStep === 0) {
       if (!formData.name) {
         setError('Please enter the full name');
@@ -1090,22 +1227,48 @@ service firebase.storage {
     } else if ((activeStep === 1 && isRolePreset) || (activeStep === 2 && !isRolePreset)) {
       const isPlayerRole = formData.roles.includes('player');
       const isOnlyGuardian = formData.roles.every(role => role === 'guardian');
-      
+
       if (!isPlayerRole && !isOnlyGuardian) {
+        // For roles that require login (coach, admin, owner, etc.)
         if (!formData.email || !formData.phone || !formData.password) {
           setError('Email, phone, and password are required for this role');
+          return;
+        }
+        if (!isValidEmail(formData.email)) {
+          setError('Please enter a valid email address');
+          return;
+        }
+        if (!isValidPhone(formData.phone)) {
+          setError('Please enter a valid phone number (minimum 7 digits)');
           return;
         }
         if (formData.password.length < 6) {
           setError('Password must be at least 6 characters');
           return;
         }
-      } else if (!isPlayerRole && isOnlyGuardian && (!formData.email && !formData.phone)) {
-        setError('Either email or phone is required for guardian role');
-        return;
+      } else if (!isPlayerRole && isOnlyGuardian) {
+        // For guardian role - email and phone are optional, but validate format if provided
+        if (formData.email && !isValidEmail(formData.email)) {
+          setError('Please enter a valid email address');
+          return;
+        }
+        if (formData.phone && !isValidPhone(formData.phone)) {
+          setError('Please enter a valid phone number (minimum 7 digits)');
+          return;
+        }
+      } else if (isPlayerRole) {
+        // For player role - validate format if provided
+        if (formData.email && !isValidEmail(formData.email)) {
+          setError('Please enter a valid email address');
+          return;
+        }
+        if (formData.phone && !isValidPhone(formData.phone)) {
+          setError('Please enter a valid phone number (minimum 7 digits)');
+          return;
+        }
       }
     }
-    
+
     setActiveStep((prevStep) => prevStep + 1);
   };
 
@@ -1123,6 +1286,49 @@ service firebase.storage {
         profileImageName: profileImage?.name,
         currentPhotoURL: selectedUser.photoURL
       });
+
+      // Check if editing an owner - only allow profile picture update
+      if (isOwner(selectedUser)) {
+        console.log('👑 Owner account - only updating profile picture');
+
+        if (profileImage) {
+          const uploadedURL = await uploadProfileImage(selectedUser.id);
+          if (uploadedURL) {
+            await updateUserService(selectedUser.id, { photoURL: uploadedURL });
+            console.log('✅ Owner profile picture updated successfully');
+
+            // Update in context for immediate display
+            const updatedOwner = {
+              ...selectedUser,
+              photoURL: uploadedURL,
+              updatedAt: {
+                toDate: () => new Date(),
+                seconds: Math.floor(Date.now() / 1000),
+                nanoseconds: 0,
+                toMillis: () => Date.now(),
+                isEqual: () => false,
+                toJSON: () => ({ seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 })
+              } as any
+            };
+            updateUserInContext(updatedOwner);
+
+            // Sync to Algolia
+            try {
+              const { syncUserToAlgolia } = await import('../../services/algoliaService');
+              await syncUserToAlgolia(updatedOwner);
+            } catch (algoliaError) {
+              console.warn('⚠️ Failed to sync owner to Algolia:', algoliaError);
+            }
+          }
+        } else {
+          console.log('ℹ️ No profile picture change for owner');
+        }
+
+        setOpenDialog(false);
+        setProfileImage(null);
+        setProfileImagePreview(null);
+        return;
+      }
 
       // Upload profile image if one was selected
       let photoURL = selectedUser.photoURL; // Keep existing photo by default
@@ -1147,7 +1353,7 @@ service firebase.storage {
       const updatedUserData = {
         name: formData.name,
         email: formData.email,
-        phone: formData.phone,
+        phone: getFullPhoneNumber(),
         roles: formData.roles.map(role => ({
           role: [role],
           organizationId: userData?.roles?.[0]?.organizationId || '',
@@ -1224,7 +1430,7 @@ service firebase.storage {
         ...selectedUser,
         name: formData.name,
         email: formData.email,
-        phone: formData.phone,
+        phone: getFullPhoneNumber(),
         roles: formData.roles.map(role => ({
           role: [role],
           organizationId: userData?.roles?.[0]?.organizationId || '',
@@ -1321,7 +1527,7 @@ service firebase.storage {
         // Update user document with additional data and roles
         console.log('Updating user with roles and organization data...');
         await updateUserService(newUserId, {
-          phone: formData.phone,
+          phone: getFullPhoneNumber(),
           roles: formData.roles.map(role => ({
             role: [role],
             organizationId: organizationId,
@@ -1336,7 +1542,7 @@ service firebase.storage {
           id: newUserId,
           name: formData.name,
           email: formData.email,
-          phone: formData.phone,
+          phone: getFullPhoneNumber(),
           roles: formData.roles.map(role => ({
             role: [role],
             organizationId: organizationId,
@@ -1376,7 +1582,7 @@ service firebase.storage {
         id: newUserId,
         name: formData.name,
         email: formData.email,
-        phone: formData.phone,
+        phone: getFullPhoneNumber(),
         roles: formData.roles.map(role => ({
           role: [role],
           organizationId: organizationId,
@@ -1520,11 +1726,36 @@ service firebase.storage {
   };
 
 
+  // Sort handler for DataTable
+  const handleSort = (key: string) => {
+    if (sortBy === key) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(key);
+      setSortDirection('asc');
+    }
+  };
+
+  // Sort users by name
+  const sortedUsers = [...users].sort((a, b) => {
+    if (sortBy === 'name') {
+      const nameA = (a.name || '').toLowerCase();
+      const nameB = (b.name || '').toLowerCase();
+      if (sortDirection === 'asc') {
+        return nameA.localeCompare(nameB);
+      } else {
+        return nameB.localeCompare(nameA);
+      }
+    }
+    return 0;
+  });
+
   // DataTable columns configuration - conditionally add guardians column for players
   const baseColumns = [
     {
       key: 'name',
       header: 'User',
+      sortable: true,
       render: (user: User) => {
         // Debug logging
         if (user.photoURL) {
@@ -1595,7 +1826,7 @@ service firebase.storage {
               <EditIcon />
             </button>
           )}
-          {canDelete('users') && (
+          {canDelete('users') && !isOwner(user) && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -1808,7 +2039,6 @@ service firebase.storage {
                 {selectedAcademy && ` in "${selectedAcademy.name}"`}
               </span>
               <span className="text-xs flex items-center gap-2">
-                <span className="text-success-600 font-semibold">⚡ Algolia Search</span>
                 📄 Showing 10 per page
               </span>
             </div>
@@ -1848,17 +2078,20 @@ service firebase.storage {
         ) : (
           <DataTable
             key={`users-table-${tableRenderKey}`}
-            data={users}
+            data={sortedUsers}
             columns={columns}
             emptyMessage={
-              searchTerm || roleFilter !== 'all' 
+              searchTerm || roleFilter !== 'all'
                 ? `No users found matching your criteria.`
-                : users.length === 0 
+                : users.length === 0
                   ? 'No users found. Start by adding your first user.'
                   : 'No users found'
             }
             showPagination={false}
             itemsPerPage={10}
+            sortBy={sortBy}
+            sortDirection={sortDirection}
+            onSort={handleSort}
           />
         )}
       </Card>
@@ -2423,7 +2656,460 @@ service firebase.storage {
                   {error}
                 </Alert>
               )}
-              
+
+              {/* Simplified Edit Form - Single Page */}
+              {dialogMode === 'edit' ? (
+                <div className="space-y-6">
+                  {/* Check if editing an owner - only allow profile pic changes */}
+                  {selectedUser && isOwner(selectedUser) && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                      <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm font-medium text-amber-800">Owner Account</p>
+                        <p className="text-xs text-amber-700 mt-1">Owner details cannot be modified. Only the profile picture can be changed.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Profile & Basic Info Section */}
+                  <div className="bg-secondary-50 rounded-xl p-6">
+                    <h3 className="text-lg font-semibold text-secondary-900 mb-4 flex items-center gap-2">
+                      <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                      Personal Information
+                    </h3>
+                    <div className="flex flex-col md:flex-row gap-6">
+                      {/* Profile Picture */}
+                      <div className="flex flex-col items-center">
+                        <div className="relative">
+                          <div className="w-24 h-24 rounded-full overflow-hidden bg-secondary-200 flex items-center justify-center">
+                            {profileImagePreview ? (
+                              <img src={profileImagePreview} alt="Profile" className="w-full h-full object-cover" />
+                            ) : selectedUser?.photoURL ? (
+                              <img src={selectedUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-2xl font-bold text-secondary-400">
+                                {formData.name ? formData.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : '?'}
+                              </span>
+                            )}
+                          </div>
+                          <label className="absolute bottom-0 right-0 w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center cursor-pointer hover:bg-primary-700 transition-colors">
+                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  if (!file.type.startsWith('image/')) {
+                                    setError('Please select a valid image file');
+                                    return;
+                                  }
+                                  if (file.size > 5 * 1024 * 1024) {
+                                    setError('Image size must be less than 5MB');
+                                    return;
+                                  }
+                                  setProfileImage(file);
+                                  setProfileImagePreview(URL.createObjectURL(file));
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+                        <span className="text-xs text-secondary-500 mt-2">Click to change</span>
+                      </div>
+                      {/* Name Field */}
+                      <div className="flex-1">
+                        <Input
+                          label="Full Name"
+                          value={formData.name}
+                          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                          required
+                          disabled={!!(selectedUser && isOwner(selectedUser))}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contact Information Section */}
+                  <div className="bg-secondary-50 rounded-xl p-6">
+                    <h3 className="text-lg font-semibold text-secondary-900 mb-4 flex items-center gap-2">
+                      <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                      Contact Information
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Input
+                        label="Email Address"
+                        type="email"
+                        value={formData.email}
+                        onChange={(e) => {
+                          setFormData({ ...formData, email: e.target.value });
+                          if (emailError) setEmailError('');
+                        }}
+                        onBlur={() => {
+                          if (formData.email && !isValidEmail(formData.email)) {
+                            setEmailError('Please enter a valid email address');
+                          } else {
+                            setEmailError('');
+                          }
+                        }}
+                        error={emailError}
+                        disabled={!!(selectedUser && isOwner(selectedUser))}
+                      />
+                      <div className="space-y-1">
+                        <label className="block text-sm font-semibold text-secondary-800">Phone Number</label>
+                        <div className="flex">
+                          <select
+                            value={countryCode}
+                            onChange={(e) => setCountryCode(e.target.value)}
+                            disabled={!!(selectedUser && isOwner(selectedUser))}
+                            className={`px-2 py-2.5 text-sm border border-r-0 border-secondary-300 rounded-l-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                              selectedUser && isOwner(selectedUser) ? 'bg-secondary-100 cursor-not-allowed' : ''
+                            }`}
+                          >
+                            {countryCodes.map((cc) => (
+                              <option key={cc.code} value={cc.code}>{cc.country} {cc.code}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="tel"
+                            value={formData.phone}
+                            onChange={(e) => {
+                              const value = e.target.value.replace(/\D/g, '');
+                              setFormData({ ...formData, phone: value });
+                              if (phoneError) setPhoneError('');
+                            }}
+                            onBlur={() => {
+                              if (formData.phone && formData.phone.length < 7) {
+                                setPhoneError('Minimum 7 digits required');
+                              } else {
+                                setPhoneError('');
+                              }
+                            }}
+                            placeholder="5XXXXXXXX"
+                            disabled={!!(selectedUser && isOwner(selectedUser))}
+                            className={`flex-1 px-3 py-2.5 text-sm border rounded-r-lg focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                              phoneError ? 'border-error-300' : 'border-secondary-300'
+                            } ${selectedUser && isOwner(selectedUser) ? 'bg-secondary-100 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                        {phoneError && <p className="text-sm text-error-600">{phoneError}</p>}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Role & Academy Section */}
+                  <div className="bg-secondary-50 rounded-xl p-6">
+                    <h3 className="text-lg font-semibold text-secondary-900 mb-4 flex items-center gap-2">
+                      <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                      Role & Access
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-secondary-800 mb-1">Roles</label>
+                        <div className="flex flex-wrap gap-2">
+                          {formData.roles.map((role) => (
+                            <span key={role} className="px-3 py-1 bg-primary-100 text-primary-700 rounded-full text-sm font-medium capitalize">
+                              {role}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-xs text-secondary-500 mt-2">Roles cannot be changed after creation</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-secondary-800 mb-1">Academy Access</label>
+                        {selectedUser && isOwner(selectedUser) ? (
+                          <p className="text-sm text-secondary-600 py-2">Organization-wide access (Owner)</p>
+                        ) : (
+                          <>
+                            <Select
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  const updatedAcademyIds = [...formData.academyId, e.target.value];
+                                  setFormData({ ...formData, academyId: updatedAcademyIds });
+                                }
+                              }}
+                            >
+                              <option value="">Add academy access</option>
+                              {academies.filter(academy => !formData.academyId.includes(academy.id)).map((academy) => (
+                                <option key={academy.id} value={academy.id}>{academy.name}</option>
+                              ))}
+                            </Select>
+                            {formData.academyId.length > 0 ? (
+                              <div className="flex flex-wrap gap-2 mt-2">
+                                {formData.academyId.map((academyId) => {
+                                  const academy = academies.find(a => a.id === academyId);
+                                  return (
+                                    <span key={academyId} className="px-2 py-1 bg-secondary-200 text-secondary-700 rounded-full text-xs font-medium flex items-center gap-1">
+                                      {academy?.name || academyId}
+                                      <button
+                                        onClick={() => setFormData({
+                                          ...formData,
+                                          academyId: formData.academyId.filter(id => id !== academyId)
+                                        })}
+                                        className="text-secondary-500 hover:text-error-600"
+                                      >
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                      </button>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-secondary-500 mt-2">Organization-wide access</p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Player Details Section - Only for players */}
+                  {isPlayerRole && (
+                    <div className="bg-secondary-50 rounded-xl p-6">
+                      <h3 className="text-lg font-semibold text-secondary-900 mb-4 flex items-center gap-2">
+                        <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Player Details
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <Input
+                          label="Date of Birth"
+                          type="date"
+                          value={formData.dateOfBirth}
+                          onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
+                        />
+                        <Select
+                          label="Gender"
+                          value={formData.gender}
+                          onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                        >
+                          <option value="">Select gender</option>
+                          <option value="male">Male</option>
+                          <option value="female">Female</option>
+                        </Select>
+                        <Select
+                          label="Status"
+                          value={formData.status}
+                          onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                        >
+                          <option value="">Select status</option>
+                          <option value="active">Active</option>
+                          <option value="inactive">Inactive</option>
+                          <option value="injured">Injured</option>
+                          <option value="suspended">Suspended</option>
+                        </Select>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Guardian Management Section - Only for players */}
+                  {isPlayerRole && (
+                    <div className="bg-secondary-50 rounded-xl p-6">
+                      <h3 className="text-lg font-semibold text-secondary-900 mb-4 flex items-center gap-2">
+                        <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        Guardians
+                      </h3>
+
+                      {/* Currently Linked Guardians */}
+                      {formData.guardianId.length > 0 && (
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-secondary-700 mb-2">Linked Guardians</label>
+                          <div className="space-y-2">
+                            {formData.guardianId.map((guardianId) => (
+                              <LinkedGuardianLoader
+                                key={guardianId}
+                                guardianId={guardianId}
+                                onUnlink={() => {
+                                  setFormData({
+                                    ...formData,
+                                    guardianId: formData.guardianId.filter(id => id !== guardianId)
+                                  });
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Search for Guardian */}
+                      <div className="border-t border-secondary-200 pt-4">
+                        <label className="block text-sm font-medium text-secondary-700 mb-2">Add Guardian</label>
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Search by phone or name"
+                            value={guardianPhone}
+                            onChange={(e) => {
+                              setGuardianPhone(e.target.value);
+                              setGuardianSearchPerformed(false);
+                              setGuardianSearchResult(null);
+                            }}
+                            className="flex-1"
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              if (!guardianPhone.trim() || guardianPhone.trim().length < 2) {
+                                setError('Please enter at least 2 characters');
+                                return;
+                              }
+                              try {
+                                setGuardianSearchPerformed(true);
+                                const organizationId = userData?.roles[0]?.organizationId;
+                                if (!organizationId) return;
+
+                                const results = await searchUsersAlgolia({
+                                  query: guardianPhone.trim(),
+                                  organizationId,
+                                  filters: { role: 'guardian' },
+                                  page: 0,
+                                  hitsPerPage: 10
+                                });
+
+                                if (results.users.length > 0) {
+                                  const foundGuardian = results.users[0];
+                                  setGuardianSearchResult({
+                                    id: foundGuardian.objectID,
+                                    name: foundGuardian.name,
+                                    email: foundGuardian.email || '',
+                                    phone: foundGuardian.phone,
+                                    roles: foundGuardian.roleDetails || [],
+                                  } as User);
+                                } else {
+                                  setGuardianSearchResult(null);
+                                }
+                              } catch (error) {
+                                console.error('Error searching guardian:', error);
+                                setError('Failed to search for guardian');
+                              }
+                            }}
+                            disabled={!guardianPhone.trim() || guardianPhone.trim().length < 2}
+                          >
+                            Search
+                          </Button>
+                        </div>
+
+                        {/* Search Result */}
+                        {guardianSearchResult && (
+                          <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-200">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <Avatar size="sm" src={guardianSearchResult.photoURL}>
+                                  {!guardianSearchResult.photoURL && getInitials(guardianSearchResult.name)}
+                                </Avatar>
+                                <div>
+                                  <div className="font-medium text-green-900">{guardianSearchResult.name}</div>
+                                  <div className="text-xs text-green-700">{guardianSearchResult.phone}</div>
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  if (!formData.guardianId.includes(guardianSearchResult.id)) {
+                                    setFormData({
+                                      ...formData,
+                                      guardianId: [...formData.guardianId, guardianSearchResult.id]
+                                    });
+                                  }
+                                  setGuardianSearchResult(null);
+                                  setGuardianPhone('');
+                                  setGuardianSearchPerformed(false);
+                                }}
+                                disabled={formData.guardianId.includes(guardianSearchResult.id)}
+                              >
+                                {formData.guardianId.includes(guardianSearchResult.id) ? 'Linked' : 'Add'}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* No results message */}
+                        {guardianSearchPerformed && !guardianSearchResult && guardianPhone.trim().length >= 2 && (
+                          <p className="mt-2 text-sm text-secondary-600">No guardian found with that search term.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Player Parameters Section - Only for players */}
+                  {isPlayerRole && fieldCategories.length > 0 && (
+                    <div className="bg-secondary-50 rounded-xl p-6">
+                      <h3 className="text-lg font-semibold text-secondary-900 mb-4 flex items-center gap-2">
+                        <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Player Parameters
+                      </h3>
+                      <div className="space-y-4">
+                        {fieldCategories
+                          .filter(category => category.type === 'parameter' || category.type === 'mixed')
+                          .sort((a, b) => a.order - b.order)
+                          .map(category => {
+                            const categoryFields = category.fields || [];
+                            if (categoryFields.length === 0) return null;
+
+                            return (
+                              <div key={category.id} className="border-b border-secondary-200 pb-4 last:border-0 last:pb-0">
+                                <h4 className="text-sm font-semibold text-secondary-800 mb-3">{category.name}</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {categoryFields
+                                    .sort((a, b) => a.order - b.order)
+                                    .map(field => (
+                                      <div key={field.name}>
+                                        {renderParameterField(field)}
+                                      </div>
+                                    ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex justify-end gap-3 pt-4 border-t border-secondary-200">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setOpenDialog(false);
+                        setProfileImage(null);
+                        setProfileImagePreview(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleSubmit}
+                      loading={submitLoading}
+                      disabled={!formData.name || !!emailError || !!phoneError || !!(formData.email && !isValidEmail(formData.email)) || !!(formData.phone && !isValidPhone(formData.phone))}
+                      className="bg-primary-600 hover:bg-primary-700"
+                    >
+                      {submitLoading ? 'Saving...' : 'Save Changes'}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+              /* Add User Flow - Multi-step wizard */
+              <>
               {/* Enhanced Stepper */}
               {effectiveSteps.length > 1 && (
                 <div className="mb-8">
@@ -2672,8 +3358,8 @@ service firebase.storage {
                   </div>
                 )}
                 
-                {/* Step 2 or 3: Contact Information (depending on if role is preset or edit mode) */}
-                {((activeStep === 1 && (isRolePreset || dialogMode === 'edit')) || (activeStep === 2 && !isRolePreset && dialogMode === 'add')) && (
+                {/* Step 2 or 3: Contact Information (depending on if role is preset) */}
+                {((activeStep === 1 && isRolePreset) || (activeStep === 2 && !isRolePreset)) && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="text-center mb-8">
                       <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -2771,26 +3457,79 @@ service firebase.storage {
                       <div className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-2">
                           <Input
-                            label={formData.roles.includes('player') ? "Email Address (Optional)" : "Email Address"}
+                            label={formData.roles.includes('player') || formData.roles.every(role => role === 'guardian') ? "Email Address (Optional)" : "Email Address"}
                             type="email"
                             value={formData.email}
-                            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                            required={!formData.roles.includes('player')}
-                            helperText={formData.roles.includes('player') 
+                            onChange={(e) => {
+                              setFormData({ ...formData, email: e.target.value });
+                              // Clear error when user starts typing
+                              if (emailError) setEmailError('');
+                            }}
+                            onBlur={() => {
+                              // Validate email format on blur if value is provided
+                              if (formData.email && !isValidEmail(formData.email)) {
+                                setEmailError('Please enter a valid email address');
+                              } else {
+                                setEmailError('');
+                              }
+                            }}
+                            error={emailError}
+                            required={!formData.roles.includes('player') && !formData.roles.every(role => role === 'guardian')}
+                            helperText={!emailError ? (formData.roles.includes('player') || formData.roles.every(role => role === 'guardian')
                               ? "Optional - Can be added later if needed"
-                              : "This will be used for login"
+                              : "This will be used for login") : undefined
                             }
                           />
-                          <Input
-                            label={formData.roles.includes('player') ? "Phone Number (Optional)" : "Phone Number"}
-                            value={formData.phone}
-                            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                            required={!formData.roles.includes('player')}
-                            helperText={formData.roles.includes('player') 
-                              ? "Optional - Can be added later if needed"
-                              : "Required for this role"
-                            }
-                          />
+                          <div className="space-y-1">
+                            <label className="block text-sm font-semibold text-secondary-800">
+                              {formData.roles.includes('player') || formData.roles.every(role => role === 'guardian') ? "Phone Number (Optional)" : "Phone Number"}
+                              {!formData.roles.includes('player') && !formData.roles.every(role => role === 'guardian') && <span className="text-error-500 ml-1">*</span>}
+                            </label>
+                            <div className="flex">
+                              <select
+                                value={countryCode}
+                                onChange={(e) => setCountryCode(e.target.value)}
+                                className="px-2 py-2.5 text-sm border border-r-0 border-secondary-300 rounded-l-lg bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                              >
+                                {countryCodes.map((cc) => (
+                                  <option key={cc.code} value={cc.code}>
+                                    {cc.country} {cc.code}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                type="tel"
+                                value={formData.phone}
+                                onChange={(e) => {
+                                  // Only allow digits
+                                  const value = e.target.value.replace(/\D/g, '');
+                                  setFormData({ ...formData, phone: value });
+                                  // Clear error when user starts typing
+                                  if (phoneError) setPhoneError('');
+                                }}
+                                onBlur={() => {
+                                  // Validate phone format on blur if value is provided
+                                  if (formData.phone && formData.phone.length < 7) {
+                                    setPhoneError('Please enter a valid phone number (minimum 7 digits)');
+                                  } else {
+                                    setPhoneError('');
+                                  }
+                                }}
+                                placeholder="5XXXXXXXX"
+                                className={`flex-1 px-3 py-2.5 text-sm border rounded-r-lg shadow-sm placeholder-secondary-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+                                  phoneError ? 'border-error-300 focus:ring-error-500' : 'border-secondary-300'
+                                }`}
+                              />
+                            </div>
+                            {(phoneError || (!phoneError && (formData.roles.includes('player') || formData.roles.every(role => role === 'guardian')))) && (
+                              <p className={`text-sm font-normal ${phoneError ? 'text-error-600' : 'text-secondary-600'}`}>
+                                {phoneError || "Optional - Can be added later if needed"}
+                              </p>
+                            )}
+                            {!phoneError && !formData.roles.includes('player') && !formData.roles.every(role => role === 'guardian') && (
+                              <p className="text-sm font-normal text-secondary-600">Required for this role</p>
+                            )}
+                          </div>
                         </div>
                         
                         {/* Password field for non-player roles - only show in add mode */}
@@ -2809,14 +3548,8 @@ service firebase.storage {
                   </div>
                 )}
                 
-                {/* Step 3 or 4: Player Details (depending on if role is preset or edit mode) */}
-                {(() => {
-                  const shouldShowStep = (activeStep === 2 && (isRolePreset || dialogMode === 'edit') && isPlayerRole) || (activeStep === 3 && !isRolePreset && dialogMode === 'add' && isPlayerRole);
-                  if (shouldShowStep && dialogMode === 'edit') {
-                    console.log('✅ Player Details step is showing in edit mode with guardian search');
-                  }
-                  return shouldShowStep;
-                })() && (
+                {/* Step 3 or 4: Player Details (depending on if role is preset) */}
+                {((activeStep === 2 && isRolePreset && isPlayerRole) || (activeStep === 3 && !isRolePreset && isPlayerRole)) && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="text-center mb-8">
                       <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -3281,9 +4014,12 @@ service firebase.storage {
                   </div>
                 )}
               </div>
+            </>
+            )}
             </div>
-            
-            {/* Enhanced Action Buttons */}
+
+            {/* Enhanced Action Buttons - Only for Add mode */}
+            {dialogMode === 'add' && (
             <div className="bg-secondary-50 border-t border-secondary-200 p-6">
               <div className="flex justify-between items-center">
                 <Button
@@ -3309,16 +4045,19 @@ service firebase.storage {
                     </Button>
                   )}
                   {activeStep < effectiveSteps.length - 1 ? (
-                    <Button 
+                    <Button
                       onClick={handleNext}
                       disabled={
-                        activeStep === 0 ? !formData.name : 
+                        activeStep === 0 ? !formData.name :
                         (activeStep === 1 && !isRolePreset) ? formData.roles.length === 0 :
                         ((activeStep === 1 && isRolePreset) || (activeStep === 2 && !isRolePreset)) ? (
-                          formData.roles.includes('player') ? false :
-                          formData.roles.every(role => role === 'guardian') ? 
-                            (!formData.email || !formData.phone) :
-                            (!formData.email || !formData.phone || !formData.password)
+                          // Check for validation errors or invalid format
+                          !!emailError || !!phoneError ||
+                          (formData.email && !isValidEmail(formData.email)) ||
+                          (formData.phone && !isValidPhone(formData.phone)) ||
+                          (formData.roles.includes('player') ? false :
+                          formData.roles.every(role => role === 'guardian') ? false :
+                            (!formData.email || !formData.phone || !formData.password))
                         ) :
                         false
                       }
@@ -3328,28 +4067,29 @@ service firebase.storage {
                       Continue
                     </Button>
                   ) : (
-                    <Button 
+                    <Button
                       onClick={handleSubmit}
                       loading={submitLoading}
                       disabled={
-                        !formData.name || 
-                        formData.roles.length === 0 || 
+                        !formData.name ||
+                        formData.roles.length === 0 ||
+                        // Check for validation errors or invalid format
+                        !!emailError || !!phoneError ||
+                        (formData.email && !isValidEmail(formData.email)) ||
+                        (formData.phone && !isValidPhone(formData.phone)) ||
                         (!formData.roles.includes('player') && !formData.roles.every(role => role === 'guardian') && (!formData.email || !formData.phone || !formData.password)) ||
-                        (!formData.roles.includes('player') && formData.roles.every(role => role === 'guardian') && (!formData.email || !formData.phone)) ||
                         (isPlayerRole && ((activeStep === 2 && isRolePreset) || (activeStep === 3 && !isRolePreset)) && !isParameterFieldsValid())
                       }
                       icon={<SaveIcon />}
                       className="bg-gradient-to-r from-success-600 to-success-700 hover:from-success-700 hover:to-success-800 px-8 py-3 shadow-lg"
                     >
-                      {submitLoading ? 
-                        (dialogMode === 'edit' ? 'Updating User...' : 'Creating User...') : 
-                        (dialogMode === 'edit' ? 'Update User' : 'Create User')
-                      }
+                      {submitLoading ? 'Creating User...' : 'Create User'}
                     </Button>
                   )}
                 </div>
               </div>
             </div>
+            )}
           </div>
         </div>
       )}
