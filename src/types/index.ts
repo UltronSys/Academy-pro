@@ -220,6 +220,8 @@ export interface Receipt {
     price: number;
     invoiceDate: Timestamp;  // Invoice date for this product
     deadline: Timestamp;     // Payment deadline for this product
+    originalPrice?: number;  // Original price before any discount
+    discountApplied?: string; // Description of discount applied (e.g., "10% discount (Early payment)")
   };
   description?: string; // For credit receipts to store payment description
   paymentDate?: Timestamp; // For credit receipts - when payment was received

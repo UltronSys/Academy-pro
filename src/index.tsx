@@ -4,6 +4,10 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 
+// Import sync utilities to register window functions for console access
+import './utils/syncUsersToAlgolia';
+import './utils/syncPlayersToAlgolia';
+
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );

@@ -9,11 +9,14 @@ import {
   query,
   where,
   Timestamp,
-  writeBatch
+  writeBatch,
+  arrayUnion
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Player, Product } from '../types';
-import { createDebitReceipt, getReceiptsByUser, deleteReceipt } from './receiptService';
+import { createDebitReceipt } from './receiptService';
+import { getUserById } from './userService';
+import { syncPlayerToAlgolia, deletePlayerFromAlgolia, isAlgoliaConfigured } from './algoliaService';
 
 const COLLECTION_NAME = 'players';
 
@@ -25,8 +28,28 @@ export const createPlayer = async (playerData: Omit<Player, 'createdAt' | 'updat
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now()
     };
-    
+
     await setDoc(docRef, player);
+
+    // Sync to Algolia
+    if (isAlgoliaConfigured()) {
+      try {
+        const user = await getUserById(player.userId);
+        if (user) {
+          await syncPlayerToAlgolia(player, {
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+            photoURL: user.photoURL
+          });
+          console.log('✅ Player synced to Algolia');
+        }
+      } catch (algoliaError) {
+        console.error('Warning: Failed to sync player to Algolia:', algoliaError);
+        // Don't fail player creation if Algolia sync fails
+      }
+    }
+
     return player;
   } catch (error) {
     console.error('Error creating player:', error);
@@ -102,17 +125,42 @@ export const getPlayersByGuardianId = async (guardianId: string): Promise<Player
     console.log('🔎 getPlayersByGuardianId: Searching for players with guardianId containing:', guardianId);
     const q = query(collection(db, COLLECTION_NAME), where('guardianId', 'array-contains', guardianId));
     const querySnapshot = await getDocs(q);
-    
+
     const players = querySnapshot.docs.map(doc => {
       const playerData = doc.data() as Player;
       console.log('🎯 Found player:', playerData.userId, 'with guardianIds:', playerData.guardianId);
       return playerData;
     });
-    
+
     console.log('📊 getPlayersByGuardianId result:', players.length, 'players found');
     return players;
   } catch (error) {
     console.error('❌ Error getting players by guardian ID:', error);
+    throw error;
+  }
+};
+
+// Batch load players by multiple user IDs (more efficient than individual calls)
+export const getPlayersByUserIds = async (userIds: string[]): Promise<Player[]> => {
+  try {
+    if (userIds.length === 0) return [];
+
+    // Firestore 'in' query supports up to 30 items, so we batch if needed
+    const batchSize = 30;
+    const allPlayers: Player[] = [];
+
+    for (let i = 0; i < userIds.length; i += batchSize) {
+      const batch = userIds.slice(i, i + batchSize);
+      const q = query(collection(db, COLLECTION_NAME), where('userId', 'in', batch));
+      const querySnapshot = await getDocs(q);
+
+      const players = querySnapshot.docs.map(doc => doc.data() as Player);
+      allPlayers.push(...players);
+    }
+
+    return allPlayers;
+  } catch (error) {
+    console.error('Error getting players by user IDs:', error);
     throw error;
   }
 };
@@ -148,6 +196,27 @@ export const updatePlayer = async (playerId: string, updates: Partial<Player>): 
       ...updates,
       updatedAt: Timestamp.now()
     });
+
+    // Sync to Algolia
+    if (isAlgoliaConfigured()) {
+      try {
+        const updatedPlayer = await getPlayerById(playerId);
+        if (updatedPlayer) {
+          const user = await getUserById(updatedPlayer.userId);
+          if (user) {
+            await syncPlayerToAlgolia(updatedPlayer, {
+              name: user.name,
+              email: user.email,
+              phone: user.phone,
+              photoURL: user.photoURL
+            });
+            console.log('✅ Player updates synced to Algolia');
+          }
+        }
+      } catch (algoliaError) {
+        console.error('Warning: Failed to sync player updates to Algolia:', algoliaError);
+      }
+    }
   } catch (error) {
     console.error('Error updating player:', error);
     throw error;
@@ -158,6 +227,16 @@ export const deletePlayer = async (playerId: string): Promise<void> => {
   try {
     const docRef = doc(db, COLLECTION_NAME, playerId);
     await deleteDoc(docRef);
+
+    // Delete from Algolia
+    if (isAlgoliaConfigured()) {
+      try {
+        await deletePlayerFromAlgolia(playerId);
+        console.log('✅ Player deleted from Algolia');
+      } catch (algoliaError) {
+        console.error('Warning: Failed to delete player from Algolia:', algoliaError);
+      }
+    }
   } catch (error) {
     console.error('Error deleting player:', error);
     throw error;
@@ -252,7 +331,36 @@ export const assignProductToPlayer = async (
     console.log('💾 assignProductToPlayer: Committing player update batch...');
     await batch.commit();
     console.log('✅ assignProductToPlayer: Player update batch committed');
-    
+
+    // Update product's linkedPlayerIds and linkedPlayerNames
+    // Note: linkedPlayerIds uses the user's userId, not the player document ID
+    try {
+      const user = await getUserById(player.userId);
+      const playerName = user?.name || `Player ${player.userId}`;
+
+      // Check if player is already in the product's linked lists
+      const productDoc = await getDoc(productRef);
+      if (productDoc.exists()) {
+        const productData = productDoc.data();
+        const currentLinkedIds = productData.linkedPlayerIds || [];
+
+        // Only add if not already linked (using userId, not player document id)
+        if (!currentLinkedIds.includes(player.userId)) {
+          await updateDoc(productRef, {
+            linkedPlayerIds: arrayUnion(player.userId),
+            linkedPlayerNames: arrayUnion(playerName),
+            updatedAt: Timestamp.now()
+          });
+          console.log('✅ assignProductToPlayer: Product updated with linked player:', playerName, 'userId:', player.userId);
+        } else {
+          console.log('ℹ️ assignProductToPlayer: Player already in product linkedPlayerIds, skipping product update');
+        }
+      }
+    } catch (productUpdateError) {
+      console.error('⚠️ assignProductToPlayer: Failed to update product linkedPlayerIds:', productUpdateError);
+      // Don't throw - the main operation succeeded
+    }
+
     // Create debit receipt based on invoice generation preference
     if (finalInvoiceGeneration === 'immediate') {
       // Create receipt immediately
@@ -365,28 +473,8 @@ export const removeProductFromPlayer = async (
       throw new Error('No products assigned to this player');
     }
 
-    // Delete unpaid receipts for this product before unlinking
-    try {
-      const receipts = await getReceiptsByUser(player.userId);
-      const unpaidReceipts = receipts.filter(r =>
-        r.type === 'debit' &&
-        r.status === 'active' && // Only unpaid receipts
-        r.product?.productRef?.id === productId
-      );
-
-      console.log(`Found ${unpaidReceipts.length} unpaid receipts to delete for product:`, productId);
-
-      // Delete each unpaid receipt
-      for (const receipt of unpaidReceipts) {
-        await deleteReceipt(player.userId, receipt.id);
-        console.log('Deleted unpaid receipt:', receipt.id);
-      }
-    } catch (receiptError) {
-      console.error('Error deleting unpaid receipts:', receiptError);
-      // Continue with unlinking even if receipt deletion fails
-    }
-
     // Mark product as cancelled instead of removing it
+    // Note: Active receipts are preserved - they remain as outstanding invoices
     const updatedAssignedProducts = player.assignedProducts.map(p =>
       p.productId === productId
         ? { ...p, status: 'cancelled' as const }
@@ -413,10 +501,82 @@ export const getPlayerActiveProducts = async (playerId: string): Promise<Player[
     if (!player) {
       throw new Error('Player not found');
     }
-    
+
     return player.assignedProducts?.filter(p => p.status === 'active') || [];
   } catch (error) {
     console.error('Error getting player active products:', error);
+    throw error;
+  }
+};
+
+// Sync all player-product links to update product linkedPlayerIds
+// This is a one-time utility to fix products that were linked before the fix
+export const syncProductLinkedPlayers = async (organizationId: string): Promise<{ synced: number; errors: number }> => {
+  try {
+    console.log('🔄 syncProductLinkedPlayers: Starting sync for organization:', organizationId);
+
+    // Get all players in the organization
+    const playersQuery = query(
+      collection(db, COLLECTION_NAME),
+      where('organizationId', '==', organizationId)
+    );
+    const playersSnapshot = await getDocs(playersQuery);
+    const players = playersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Player);
+
+    console.log(`📋 Found ${players.length} players in organization`);
+
+    // Build a map of productId -> { userIds: [], names: [] }
+    const productPlayerMap: Record<string, { userIds: string[]; names: string[] }> = {};
+
+    for (const player of players) {
+      if (!player.assignedProducts || player.assignedProducts.length === 0) continue;
+
+      // Get user name
+      const user = await getUserById(player.userId);
+      const playerName = user?.name || `Player ${player.userId}`;
+
+      for (const assignedProduct of player.assignedProducts) {
+        if (assignedProduct.status !== 'active') continue;
+
+        const productId = assignedProduct.productId;
+        if (!productPlayerMap[productId]) {
+          productPlayerMap[productId] = { userIds: [], names: [] };
+        }
+
+        // Add if not already in the list
+        if (!productPlayerMap[productId].userIds.includes(player.userId)) {
+          productPlayerMap[productId].userIds.push(player.userId);
+          productPlayerMap[productId].names.push(playerName);
+        }
+      }
+    }
+
+    console.log(`📦 Found ${Object.keys(productPlayerMap).length} products with linked players`);
+
+    // Update each product
+    let synced = 0;
+    let errors = 0;
+
+    for (const [productId, playerData] of Object.entries(productPlayerMap)) {
+      try {
+        const productRef = doc(db, 'products', productId);
+        await updateDoc(productRef, {
+          linkedPlayerIds: playerData.userIds,
+          linkedPlayerNames: playerData.names,
+          updatedAt: Timestamp.now()
+        });
+        synced++;
+        console.log(`✅ Updated product ${productId} with ${playerData.userIds.length} players`);
+      } catch (error) {
+        console.error(`❌ Failed to update product ${productId}:`, error);
+        errors++;
+      }
+    }
+
+    console.log(`🎉 Sync complete. Synced: ${synced}, Errors: ${errors}`);
+    return { synced, errors };
+  } catch (error) {
+    console.error('Error syncing product linked players:', error);
     throw error;
   }
 };

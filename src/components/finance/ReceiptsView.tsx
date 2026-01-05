@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Card, DataTable, Badge, Toast, Button, Input, ConfirmModal } from '../ui';
+import { Card, DataTable, Badge, Toast, Button, Input, ConfirmModal, Label } from '../ui';
 import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   getReceiptsByOrganization,
   getUserReceiptSummary,
   updateDebitReceipt,
-  deleteDebitReceiptWithCreditConversion
+  deleteDebitReceiptWithCreditConversion,
+  updateReceipt
 } from '../../services/receiptService';
 import { getPlayersByOrganization } from '../../services/playerService';
 import { Receipt, Transaction } from '../../types';
 import { getUserById } from '../../services/userService';
-import { getDoc, doc } from 'firebase/firestore';
+import { getDoc, doc, deleteField } from 'firebase/firestore';
 import { db } from '../../firebase';
 
 const ReceiptsView: React.FC = () => {
@@ -38,6 +39,14 @@ const ReceiptsView: React.FC = () => {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deletingReceipt, setDeletingReceipt] = useState<Receipt | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Discount modal state
+  const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  const [discountingReceipt, setDiscountingReceipt] = useState<Receipt | null>(null);
+  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [discountValue, setDiscountValue] = useState<string>('');
+  const [discountReason, setDiscountReason] = useState<string>('');
+  const [discountLoading, setDiscountLoading] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -214,25 +223,172 @@ const ReceiptsView: React.FC = () => {
       receipt.siblingReceiptRefs.length > 0;
   };
 
+  // Discount handlers
+  const handleDiscountClick = (receipt: Receipt) => {
+    if (receipt.type !== 'debit' || receipt.status !== 'active') {
+      showToast('Only unpaid invoices can be discounted', 'error');
+      return;
+    }
+    setDiscountingReceipt(receipt);
+    setDiscountType('percentage');
+    setDiscountValue('');
+    setDiscountReason('');
+    setDiscountModalOpen(true);
+  };
+
+  const handleDiscountSubmit = async () => {
+    if (!discountingReceipt) return;
+
+    const numericValue = parseFloat(discountValue);
+    if (isNaN(numericValue) || numericValue <= 0) {
+      showToast('Please enter a valid discount value', 'error');
+      return;
+    }
+
+    const originalAmount = discountingReceipt.amount;
+
+    // Validate percentage is between 0 and 100
+    if (discountType === 'percentage' && numericValue > 100) {
+      showToast('Percentage discount cannot exceed 100%', 'error');
+      return;
+    }
+
+    // Validate fixed discount doesn't exceed invoice amount
+    if (discountType === 'fixed' && numericValue > originalAmount) {
+      showToast('Discount cannot exceed invoice amount', 'error');
+      return;
+    }
+
+    try {
+      setDiscountLoading(true);
+      const userId = discountingReceipt.userRef.id;
+
+      // Calculate the new price
+      let newAmount = originalAmount;
+      if (discountType === 'percentage') {
+        newAmount = originalAmount - (originalAmount * numericValue / 100);
+      } else {
+        newAmount = originalAmount - numericValue;
+      }
+
+      // Build description with discount info
+      const discountInfo = discountType === 'percentage'
+        ? `${numericValue}% discount`
+        : `USD ${numericValue.toFixed(2)} discount`;
+      const reasonText = discountReason.trim() ? ` (${discountReason.trim()})` : '';
+
+      // Update the receipt with the discounted amount
+      await updateReceipt(userId, discountingReceipt.id, {
+        amount: newAmount,
+        product: discountingReceipt.product ? {
+          ...discountingReceipt.product,
+          price: newAmount,
+          originalPrice: discountingReceipt.product.originalPrice || originalAmount,
+          discountApplied: discountInfo + reasonText
+        } : undefined
+      });
+
+      showToast(`Discount applied successfully! New amount: USD ${newAmount.toFixed(2)}`, 'success');
+      setDiscountModalOpen(false);
+      setDiscountingReceipt(null);
+      await reloadReceipts();
+
+    } catch (error) {
+      console.error('Error applying discount:', error);
+      showToast('Failed to apply discount', 'error');
+    } finally {
+      setDiscountLoading(false);
+    }
+  };
+
+  // Calculate discounted amount for preview
+  const getDiscountedAmount = () => {
+    if (!discountingReceipt || !discountValue) return null;
+    const numericValue = parseFloat(discountValue);
+    if (isNaN(numericValue) || numericValue <= 0) return null;
+
+    const originalAmount = discountingReceipt.amount;
+    if (discountType === 'percentage') {
+      return originalAmount - (originalAmount * numericValue / 100);
+    }
+    return originalAmount - numericValue;
+  };
+
+  const handleRemoveDiscount = async () => {
+    if (!discountingReceipt) return;
+
+    // Check if there's a discount to remove
+    if (!discountingReceipt.product?.originalPrice) {
+      showToast('No discount to remove', 'error');
+      return;
+    }
+
+    try {
+      setDiscountLoading(true);
+      const userId = discountingReceipt.userRef.id;
+      const originalPrice = discountingReceipt.product.originalPrice;
+
+      // Build a clean product object without the discount fields
+      const cleanProduct: Record<string, any> = {
+        productRef: discountingReceipt.product.productRef,
+        name: discountingReceipt.product.name,
+        price: originalPrice,
+        invoiceDate: discountingReceipt.product.invoiceDate,
+        deadline: discountingReceipt.product.deadline
+      };
+
+      // Update the receipt to restore original amount and remove discount info
+      // Using deleteField() to properly remove nested fields
+      await updateReceipt(userId, discountingReceipt.id, {
+        amount: originalPrice,
+        product: cleanProduct,
+        'product.originalPrice': deleteField(),
+        'product.discountApplied': deleteField()
+      } as any);
+
+      showToast(`Discount removed. Amount restored to USD ${originalPrice.toFixed(2)}`, 'success');
+      setDiscountModalOpen(false);
+      setDiscountingReceipt(null);
+      await reloadReceipts();
+
+    } catch (error) {
+      console.error('Error removing discount:', error);
+      showToast('Failed to remove discount', 'error');
+    } finally {
+      setDiscountLoading(false);
+    }
+  };
+
   const getStatusColor = (receipt: Receipt) => {
     if (receipt.type === 'credit') {
       return 'success'; // Credit receipts are always "paid" (completed payments)
     }
-    
+
     if (receipt.type === 'debit') {
-      // Check if debit has sibling credit receipts (paid)
-      if (receipt.siblingReceiptRefs && receipt.siblingReceiptRefs.length > 0) {
-        return 'success'; // Paid
+      // First check explicit status field
+      if (receipt.status === 'completed') {
+        return 'success'; // Fully paid
       }
-      
+      if (receipt.status === 'paid') {
+        return 'primary'; // Partially paid (blue)
+      }
+      if (receipt.status === 'deleted') {
+        return 'secondary';
+      }
+
+      // Fall back to checking sibling refs for legacy data
+      if (receipt.siblingReceiptRefs && receipt.siblingReceiptRefs.length > 0) {
+        return 'success'; // Has payments linked
+      }
+
       // Check if overdue (past deadline and unpaid)
       if (receipt.product?.deadline && receipt.product.deadline.toMillis() < Date.now()) {
         return 'error'; // Overdue
       }
-      
-      return 'warning'; // Pending
+
+      return 'warning'; // Pending/Unpaid
     }
-    
+
     return 'secondary'; // Default
   };
 
@@ -240,21 +396,32 @@ const ReceiptsView: React.FC = () => {
     if (receipt.type === 'credit') {
       return 'PAID';
     }
-    
+
     if (receipt.type === 'debit') {
-      // Check if debit has sibling credit receipts (paid)
+      // First check explicit status field
+      if (receipt.status === 'completed') {
+        return 'FULLY PAID';
+      }
+      if (receipt.status === 'paid') {
+        return 'PARTIALLY PAID';
+      }
+      if (receipt.status === 'deleted') {
+        return 'DELETED';
+      }
+
+      // Fall back to checking sibling refs for legacy data
       if (receipt.siblingReceiptRefs && receipt.siblingReceiptRefs.length > 0) {
         return 'PAID';
       }
-      
+
       // Check if overdue (past deadline and unpaid)
       if (receipt.product?.deadline && receipt.product.deadline.toMillis() < Date.now()) {
         return 'OVERDUE';
       }
-      
+
       return 'PENDING';
     }
-    
+
     return 'UNKNOWN';
   };
 
@@ -316,39 +483,56 @@ const ReceiptsView: React.FC = () => {
         </Badge>
       )
     },
-    { 
-      key: 'details', 
+    {
+      key: 'details',
       header: 'Details',
       render: (receipt: Receipt) => {
         const transaction = transactionInfo.get(receipt.id);
         const isInternal = transaction?.type === 'internal';
         const isOverpay = isOverpayment(receipt);
-        
+        const hasDiscount = receipt.product?.discountApplied;
+
         return (
           <div>
             <div className="font-medium text-secondary-900">
-              {receipt.type === 'credit' 
+              {receipt.type === 'credit'
                 ? receipt.description || 'Payment Received'
                 : receipt.product?.name || 'Service'
               }
             </div>
             <div className="text-sm text-secondary-600">
-              Amount: USD {receipt.amount.toFixed(2)}
+              {hasDiscount ? (
+                <>
+                  <span className="text-success-600 font-medium">USD {receipt.amount.toFixed(2)}</span>
+                  {receipt.product?.originalPrice && (
+                    <span className="ml-2 line-through text-secondary-400">
+                      USD {receipt.product.originalPrice.toFixed(2)}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>Amount: USD {receipt.amount.toFixed(2)}</>
+              )}
               {receipt.type === 'credit' && isOverpay && (
                 <span className="ml-2 text-green-600 font-medium">(Overpayment)</span>
               )}
             </div>
+            {hasDiscount && (
+              <div className="text-xs text-primary-600 font-medium">
+                {receipt.product?.discountApplied}
+              </div>
+            )}
             <div className={`text-xs font-medium ${receipt.status === 'active' ? 'text-green-600' : 'text-red-600'}`}>
               Status: {receipt.status?.toUpperCase() || 'ACTIVE'}
             </div>
-            {receipt.product && (
+            {receipt.product && !hasDiscount && (
               <div className="text-xs text-secondary-500">
                 Product: {receipt.product.name}
               </div>
             )}
             {isInternal && (
               <div className="text-xs text-blue-600 font-medium">
-                🤖 Internal Transaction
+                Internal Transaction
               </div>
             )}
             {transaction && !isInternal && (
@@ -437,31 +621,49 @@ const ReceiptsView: React.FC = () => {
     {
       key: 'actions',
       header: 'Actions',
-      render: (receipt: Receipt) => (
-        <div className="flex gap-2">
-          {receipt.type === 'debit' && receipt.status !== 'deleted' && (
-            <>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => handleEditClick(receipt)}
-              >
-                Edit
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => handleDeleteClick(receipt)}
-              >
-                Delete
-              </Button>
-            </>
-          )}
-          {receipt.status === 'deleted' && (
-            <span className="text-sm text-secondary-500 italic">Deleted</span>
-          )}
-        </div>
-      )
+      render: (receipt: Receipt) => {
+        // Check if invoice is truly unpaid (no sibling refs = no payments)
+        const isUnpaid = receipt.type === 'debit' &&
+          (!receipt.siblingReceiptRefs || receipt.siblingReceiptRefs.length === 0) &&
+          receipt.status !== 'completed' &&
+          receipt.status !== 'paid';
+
+        return (
+          <div className="flex gap-2 flex-wrap">
+            {receipt.type === 'debit' && receipt.status !== 'deleted' && (
+              <>
+                {isUnpaid && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDiscountClick(receipt)}
+                    className="text-primary-600 hover:text-primary-700 border-primary-300 hover:border-primary-400"
+                  >
+                    Discount
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleEditClick(receipt)}
+                >
+                  Edit
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => handleDeleteClick(receipt)}
+                >
+                  Delete
+                </Button>
+              </>
+            )}
+            {receipt.status === 'deleted' && (
+              <span className="text-sm text-secondary-500 italic">Deleted</span>
+            )}
+          </div>
+        );
+      }
     }
   ];
 
@@ -599,16 +801,12 @@ const ReceiptsView: React.FC = () => {
                     onChange={(e) => setEditForm({ ...editForm, amount: parseFloat(e.target.value) || 0 })}
                   />
                   <Input
-                    label="Invoice Date"
-                    type="date"
-                    value={editForm.invoiceDate}
-                    onChange={(e) => setEditForm({ ...editForm, invoiceDate: e.target.value })}
-                  />
-                  <Input
                     label="Due Date"
                     type="date"
                     value={editForm.deadline}
                     onChange={(e) => setEditForm({ ...editForm, deadline: e.target.value })}
+                    min={new Date().toISOString().split('T')[0]}
+                    helperText="Cannot be in the past"
                   />
                   <div className="flex justify-end gap-3 mt-6">
                     <Button
@@ -682,6 +880,162 @@ const ReceiptsView: React.FC = () => {
                     >
                       {deleteLoading ? 'Deleting...' : 'Delete Invoice'}
                     </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Discount Modal */}
+      {discountModalOpen && discountingReceipt && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !discountLoading) {
+              setDiscountModalOpen(false);
+              setDiscountingReceipt(null);
+            }
+          }}
+        >
+          <div className="w-full max-w-md">
+            <Card className="w-full">
+              <div className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="flex-shrink-0 w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
+                    <svg className="w-6 h-6 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-secondary-900">Apply Discount to Invoice</h3>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Invoice Info */}
+                  <div className="bg-secondary-50 p-4 rounded-lg">
+                    <p className="font-medium text-secondary-900">{discountingReceipt.product?.name || 'Invoice'}</p>
+                    <p className="text-secondary-600">Current Amount: USD {discountingReceipt.amount.toFixed(2)}</p>
+                    {discountingReceipt.product?.discountApplied && (
+                      <p className="text-xs text-primary-600 mt-1">
+                        Previous discount: {discountingReceipt.product.discountApplied}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Discount Type */}
+                  <div>
+                    <Label>Discount Type</Label>
+                    <div className="flex gap-4 mt-2">
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="discountType"
+                          value="percentage"
+                          checked={discountType === 'percentage'}
+                          onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
+                          className="form-radio text-primary-600"
+                        />
+                        <span className="text-sm">Percentage (%)</span>
+                      </label>
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="discountType"
+                          value="fixed"
+                          checked={discountType === 'fixed'}
+                          onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
+                          className="form-radio text-primary-600"
+                        />
+                        <span className="text-sm">Fixed Amount (USD)</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Discount Value */}
+                  <div>
+                    <Label htmlFor="discount-value">
+                      Discount Value {discountType === 'percentage' ? '(%)' : '(USD)'}
+                    </Label>
+                    <Input
+                      id="discount-value"
+                      type="number"
+                      min="0"
+                      max={discountType === 'percentage' ? '100' : discountingReceipt.amount.toString()}
+                      step={discountType === 'percentage' ? '1' : '0.01'}
+                      value={discountValue}
+                      onChange={(e) => setDiscountValue(e.target.value)}
+                      placeholder={discountType === 'percentage' ? 'e.g., 10' : 'e.g., 50.00'}
+                      className="mt-1"
+                    />
+                    {(() => {
+                      const discountedAmount = getDiscountedAmount();
+                      if (discountedAmount !== null && discountedAmount >= 0) {
+                        return (
+                          <div className="text-sm text-success-600 mt-1 font-medium">
+                            New amount: USD {discountedAmount.toFixed(2)}
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+
+                  {/* Discount Reason */}
+                  <div>
+                    <Label htmlFor="discount-reason">Reason (Optional)</Label>
+                    <Input
+                      id="discount-reason"
+                      type="text"
+                      value={discountReason}
+                      onChange={(e) => setDiscountReason(e.target.value)}
+                      placeholder="e.g., Early payment discount, Promotional offer"
+                      className="mt-1"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-between mt-6">
+                    <div>
+                      {discountingReceipt?.product?.originalPrice && (
+                        <Button
+                          variant="outline"
+                          onClick={handleRemoveDiscount}
+                          disabled={discountLoading}
+                          className="text-error-600 hover:text-error-700 border-error-300 hover:border-error-400"
+                        >
+                          Remove Discount
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setDiscountModalOpen(false);
+                          setDiscountingReceipt(null);
+                        }}
+                        disabled={discountLoading}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleDiscountSubmit}
+                        disabled={discountLoading || !discountValue || parseFloat(discountValue) <= 0}
+                      >
+                        {discountLoading ? (
+                          <>
+                            <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Applying...
+                          </>
+                        ) : (
+                          'Apply Discount'
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

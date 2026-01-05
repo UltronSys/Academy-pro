@@ -170,12 +170,16 @@ Subcollection under users for storing receipt records linked to transactions.
 - `id` (string) - Receipt's unique identifier
 - `type` (string) - Receipt type: 'debit' | 'credit' | 'excess'
 - `amount` (number) - Receipt amount
-- `product` (object) - Product information
+- `product` (object) - Product information (for debit receipts)
   - `productRef` (DocumentReference) - Reference to product document
   - `name` (string) - Product name (cached for display)
   - `price` (number) - Product price at time of receipt
-- `invoiceDate` (Timestamp) - Date of invoice generation
-- `deadline` (Timestamp) - Payment deadline
+  - `invoiceDate` (Timestamp) - Date of invoice generation
+  - `deadline` (Timestamp) - Payment deadline
+  - `originalPrice` (number, optional) - Original price before discount applied
+  - `discountApplied` (string, optional) - Description of discount applied (e.g., "10% discount (Early payment)")
+- `description` (string, optional) - For credit receipts to store payment description
+- `paymentDate` (Timestamp, optional) - For credit receipts - when payment was received
 - `parentTransactionRef` (DocumentReference, optional) - Reference to parent transaction
 - `userRef` (DocumentReference) - Reference to user (player/guardian) document
 - `siblingReceiptRefs` (array of DocumentReferences) - Related receipt references

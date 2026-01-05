@@ -3,13 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Card, Input, Select, DataTable, Badge, Tabs, Toast } from '../ui';
 import { useApp } from '../../contexts/AppContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { getPlayersByOrganization } from '../../services/playerService';
+import { updatePlayer } from '../../services/playerService';
 import { getTransactionsByOwner } from '../../services/transactionService';
 import { getReceiptsByOrganization, calculateUserOutstandingBalance } from '../../services/receiptService';
 import { getSettingsByOrganization } from '../../services/settingsService';
 import { Player, User, Transaction, Receipt } from '../../types';
-import { getUserById } from '../../services/userService';
-import { updatePlayer } from '../../services/playerService';
+import { searchPlayers } from '../../services/algoliaService';
 
 interface PlayerFinancialSummary {
   player: Player;
@@ -38,15 +37,22 @@ const PlayersGuardians: React.FC = () => {
   const { selectedOrganization, selectedAcademy } = useApp();
   const { canWrite } = usePermissions();
   const navigate = useNavigate();
-  
+
   const [activeTab, setActiveTab] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [sortBy, setSortBy] = useState('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [loading, setLoading] = useState(true);
   const [defaultCurrency, setDefaultCurrency] = useState<string>('USD');
-  
+
+  // Algolia pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalPlayers, setTotalPlayers] = useState(0);
+  const [hitsPerPage] = useState(20); // Load 20 players per page from Algolia
+
   // Data state
   const [playerFinancials, setPlayerFinancials] = useState<PlayerFinancialSummary[]>([]);
   const [guardianFinancials, setGuardianFinancials] = useState<GuardianFinancialSummary[]>([]);
@@ -56,14 +62,24 @@ const PlayersGuardians: React.FC = () => {
   const [selectedGuardianForLinking, setSelectedGuardianForLinking] = useState<GuardianFinancialSummary | null>(null);
   const [selectedPlayersToLink, setSelectedPlayersToLink] = useState<string[]>([]);
   const [availablePlayersForLinking, setAvailablePlayersForLinking] = useState<PlayerFinancialSummary[]>([]);
-  
+
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+      setCurrentPage(0); // Reset to first page on new search
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Load data when organization, academy, search, or page changes (sorting is done locally)
   useEffect(() => {
     if (selectedOrganization?.id) {
       loadFinancialData();
     }
-  }, [selectedOrganization, selectedAcademy]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedOrganization, selectedAcademy, debouncedSearchTerm, currentPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh data when the page becomes visible (user returns from transaction page)
   useEffect(() => {
@@ -95,60 +111,129 @@ const PlayersGuardians: React.FC = () => {
 
     try {
       setLoading(true);
-      
+
       // Load currency from settings
       const settingsData = await getSettingsByOrganization(selectedOrganization.id);
       if (settingsData?.generalSettings?.currency) {
         setDefaultCurrency(settingsData.generalSettings.currency);
       }
 
-      // Load all players for the organization
-      const players = await getPlayersByOrganization(selectedOrganization.id);
-      
-      // Batch load all users first to reduce individual calls
-      const userIds = new Set([
-        ...players.map(p => p.userId),
-        ...players.flatMap(p => p.guardianId || [])
-      ]);
-      
-      const usersMap = new Map<string, User>();
-      const userLoadPromises = Array.from(userIds).map(async (userId) => {
-        try {
-          const user = await getUserById(userId);
-          if (user) usersMap.set(userId, user);
-        } catch (error) {
-          console.error(`Error loading user ${userId}:`, error);
+      // Use Algolia PLAYERS index directly (much more efficient)
+      console.log('🔎 Searching players via Algolia players index...');
+      console.log('📌 Organization ID:', selectedOrganization.id);
+      console.log('📌 Academy ID filter:', selectedAcademy?.id || 'none');
+
+      let algoliaResults;
+      try {
+        // Algolia handles search and filtering, sorting is done locally
+        algoliaResults = await searchPlayers({
+          query: debouncedSearchTerm,
+          organizationId: selectedOrganization.id,
+          filters: {
+            academyId: selectedAcademy?.id
+          },
+          page: currentPage,
+          hitsPerPage: hitsPerPage
+        });
+      } catch (algoliaError) {
+        console.error('❌ Algolia search failed:', algoliaError);
+        showToast('Search failed. The players index may not be configured. Run syncPlayersToAlgolia() in console.', 'error');
+        setPlayerFinancials([]);
+        setGuardianFinancials([]);
+        setLoading(false);
+        return;
+      }
+
+      console.log(`✅ Algolia returned ${algoliaResults.players.length} players (page ${algoliaResults.currentPage + 1}/${algoliaResults.totalPages})`);
+      console.log('📊 Total players in index:', algoliaResults.totalPlayers);
+
+      // Update pagination state
+      setTotalPages(algoliaResults.totalPages);
+      setTotalPlayers(algoliaResults.totalPlayers);
+
+      // If no results, show helpful message
+      if (algoliaResults.players.length === 0) {
+        console.warn('⚠️ No players found in Algolia. You may need to run syncPlayersToAlgolia() in the browser console.');
+        if (algoliaResults.totalPlayers === 0 && !debouncedSearchTerm) {
+          showToast('No players in index. Open browser console and run: syncPlayersToAlgolia()', 'info');
         }
-      });
-      
-      await Promise.all(userLoadPromises);
+        setPlayerFinancials([]);
+        setGuardianFinancials([]);
+        setLoading(false);
+        return;
+      }
 
-      // Load basic player summaries with minimal data for initial display
+      // Build player summaries directly from Algolia player data (no Firebase calls needed)
       const playerSummaries: PlayerFinancialSummary[] = [];
-      
-      for (const player of players) {
-        const user = usersMap.get(player.userId);
-        if (!user) continue;
 
+      for (const algoliaPlayer of algoliaResults.players) {
+        // Convert Algolia player to Player type
+        const player: Player = {
+          id: algoliaPlayer.objectID,
+          userId: algoliaPlayer.userId,
+          organizationId: algoliaPlayer.organizationId,
+          academyId: algoliaPlayer.academyId || [],
+          guardianId: algoliaPlayer.guardianId || [],
+          dob: new Date(),
+          gender: '',
+          playerParameters: {},
+          status: algoliaPlayer.status,
+          createdAt: algoliaPlayer.createdAt ? {
+            toDate: () => new Date(algoliaPlayer.createdAt!),
+            seconds: Math.floor((algoliaPlayer.createdAt || 0) / 1000),
+            nanoseconds: 0,
+            toMillis: () => algoliaPlayer.createdAt || 0,
+            isEqual: () => false,
+            toJSON: () => ({ seconds: Math.floor((algoliaPlayer.createdAt || 0) / 1000), nanoseconds: 0 })
+          } as any : { toDate: () => new Date() } as any,
+          updatedAt: algoliaPlayer.updatedAt ? {
+            toDate: () => new Date(algoliaPlayer.updatedAt!),
+            seconds: Math.floor((algoliaPlayer.updatedAt || 0) / 1000),
+            nanoseconds: 0,
+            toMillis: () => algoliaPlayer.updatedAt || 0,
+            isEqual: () => false,
+            toJSON: () => ({ seconds: Math.floor((algoliaPlayer.updatedAt || 0) / 1000), nanoseconds: 0 })
+          } as any : { toDate: () => new Date() } as any
+        };
+
+        // Convert Algolia player user data to User type
+        const user: User = {
+          id: algoliaPlayer.userId,
+          name: algoliaPlayer.userName || '',
+          email: algoliaPlayer.userEmail || '',
+          phone: algoliaPlayer.userPhone,
+          photoURL: algoliaPlayer.userPhotoURL,
+          roles: [],
+          createdAt: player.createdAt,
+          updatedAt: player.updatedAt
+        };
+
+        // Build guardians from Algolia data (guardianId + guardianNames)
         const guardians: User[] = [];
-        if (player.guardianId && player.guardianId.length > 0) {
-          player.guardianId.forEach(guardianId => {
-            const guardian = usersMap.get(guardianId);
-            if (guardian) guardians.push(guardian);
+        if (algoliaPlayer.guardianId && algoliaPlayer.guardianId.length > 0) {
+          algoliaPlayer.guardianId.forEach((guardianId, index) => {
+            const guardianName = algoliaPlayer.guardianNames?.[index] || 'Guardian';
+            guardians.push({
+              id: guardianId,
+              name: guardianName,
+              email: '', // Not available in player record
+              roles: [],
+              createdAt: player.createdAt,
+              updatedAt: player.updatedAt
+            });
           });
         }
 
         // For initial load, just show basic info with placeholders
-        // Detailed financial data will be loaded on demand
         playerSummaries.push({
           player,
           user,
           guardians,
-          outstandingDebits: 0, // Will be loaded on demand
-          availableCredits: 0,  // Will be loaded on demand
-          netBalance: 0,        // Will be loaded on demand
-          recentTransactions: [], // Will be loaded on demand
-          receipts: [],         // Will be loaded on demand
+          outstandingDebits: 0,
+          availableCredits: 0,
+          netBalance: 0,
+          recentTransactions: [],
+          receipts: [],
           totalTransactionAmount: 0
         });
       }
@@ -556,26 +641,23 @@ const PlayersGuardians: React.FC = () => {
       setSortBy(key);
       setSortDirection('asc');
     }
+    // No page reset needed - sorting is done locally on current page
   };
 
+  // Players are already filtered by Algolia (search + academy), only apply status filter locally
   const filteredPlayers = playerFinancials
     .filter(playerSummary => {
-      const matchesSearch = 
-        playerSummary.user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        playerSummary.guardians.some(g => 
-          g.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-          g.email.toLowerCase().includes(searchTerm.toLowerCase())
-        );
-      
+      // Status filtering must be done locally since it depends on financial data
       const status = getFinancialStatus(playerSummary);
       const matchesStatus = filterStatus === 'all' || status === filterStatus;
-      const matchesAcademy = !selectedAcademy || playerSummary.player.academyId?.includes(selectedAcademy.id);
-      
-      return matchesSearch && matchesStatus && matchesAcademy;
+      return matchesStatus;
     })
     .sort((a, b) => {
+      // All sorting done locally on current page results
       const direction = sortDirection === 'asc' ? 1 : -1;
       switch (sortBy) {
+        case 'name':
+          return a.user.name.localeCompare(b.user.name) * direction;
         case 'balance':
           return (a.netBalance - b.netBalance) * direction;
         case 'outstanding':
@@ -587,24 +669,24 @@ const PlayersGuardians: React.FC = () => {
           const statusA = getFinancialStatus(a);
           const statusB = getFinancialStatus(b);
           return ((statusOrder[statusA] || 0) - (statusOrder[statusB] || 0)) * direction;
-        case 'name':
         default:
-          return a.user.name.localeCompare(b.user.name) * direction;
+          return 0;
       }
     });
 
+  // Guardians filtering - search is done locally since guardians come from player summaries
   const filteredGuardians = guardianFinancials
     .filter(guardianSummary => {
-      const matchesSearch = 
-        guardianSummary.guardian.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        guardianSummary.guardian.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        guardianSummary.linkedPlayers.some(p => p.user.name.toLowerCase().includes(searchTerm.toLowerCase()));
-      
+      const matchesSearch =
+        guardianSummary.guardian.name.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+        guardianSummary.guardian.email.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+        guardianSummary.linkedPlayers.some(p => p.user.name.toLowerCase().includes(debouncedSearchTerm.toLowerCase()));
+
       const hasStatus = guardianSummary.linkedPlayers.some(p => {
         const status = getFinancialStatus(p);
         return filterStatus === 'all' || status === filterStatus;
       });
-      
+
       return matchesSearch && hasStatus;
     })
     .sort((a, b) => {
@@ -811,7 +893,8 @@ const PlayersGuardians: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card className="p-4">
           <div className="text-sm text-secondary-600">Total Players</div>
-          <div className="text-2xl font-bold text-secondary-900">{filteredPlayers.length}</div>
+          <div className="text-2xl font-bold text-secondary-900">{totalPlayers}</div>
+          <div className="text-xs text-secondary-500">Showing {filteredPlayers.length} on this page</div>
         </Card>
         <Card className="p-4">
           <div className="text-sm text-secondary-600">Paid Up</div>
@@ -832,7 +915,7 @@ const PlayersGuardians: React.FC = () => {
           </div>
         </Card>
         <Card className="p-4">
-          <div className="text-sm text-secondary-600">Total Outstanding</div>
+          <div className="text-sm text-secondary-600">Page Outstanding</div>
           <div className="text-2xl font-bold text-error-600">
             {defaultCurrency} {filteredPlayers.filter(p => p.netBalance < 0).reduce((sum, p) => sum + Math.abs(p.netBalance), 0).toFixed(2)}
           </div>
@@ -845,12 +928,38 @@ const PlayersGuardians: React.FC = () => {
           data={filteredPlayers}
           columns={playerColumns}
           emptyMessage="No players found"
-          showPagination={true}
-          itemsPerPage={10}
+          showPagination={false}
           sortBy={sortBy}
           sortDirection={sortDirection}
           onSort={handleSort}
         />
+
+        {/* Algolia Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t">
+            <div className="text-sm text-secondary-600">
+              Page {currentPage + 1} of {totalPages} ({totalPlayers} total players)
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.max(0, prev - 1))}
+                disabled={currentPage === 0 || loading}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.min(totalPages - 1, prev + 1))}
+                disabled={currentPage >= totalPages - 1 || loading}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );

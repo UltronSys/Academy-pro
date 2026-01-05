@@ -10,7 +10,7 @@ import { getReceiptsByUser, updateReceipt, updateDebitReceipt, deleteDebitReceip
 import { getProductsByOrganization } from '../../services/productService';
 import { getSettingsByOrganization } from '../../services/settingsService';
 import { Player, User, Receipt, Product } from '../../types';
-import { Timestamp, doc } from 'firebase/firestore';
+import { Timestamp, doc, deleteField } from 'firebase/firestore';
 import { db } from '../../firebase';
 
 interface GroupedReceipts {
@@ -71,6 +71,18 @@ const PlayerDetails: React.FC = () => {
   const [deleteInvoiceModalOpen, setDeleteInvoiceModalOpen] = useState(false);
   const [deletingInvoice, setDeletingInvoice] = useState<Receipt | null>(null);
   const [deleteInvoiceLoading, setDeleteInvoiceLoading] = useState(false);
+
+  // Unlink product confirmation modal states
+  const [unlinkProductModalOpen, setUnlinkProductModalOpen] = useState(false);
+  const [productToUnlink, setProductToUnlink] = useState<{ productId: string; productName: string } | null>(null);
+
+  // Invoice discount modal states
+  const [invoiceDiscountModalOpen, setInvoiceDiscountModalOpen] = useState(false);
+  const [invoiceToDiscount, setInvoiceToDiscount] = useState<Receipt | null>(null);
+  const [invoiceDiscountType, setInvoiceDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [invoiceDiscountValue, setInvoiceDiscountValue] = useState<string>('');
+  const [invoiceDiscountReason, setInvoiceDiscountReason] = useState<string>('');
+  const [savingInvoiceDiscount, setSavingInvoiceDiscount] = useState(false);
 
   useEffect(() => {
     if (playerId && selectedOrganization?.id) {
@@ -198,27 +210,27 @@ const PlayerDetails: React.FC = () => {
     setEditingProductId(productId);
   };
 
-  const handleSaveProductDates = async (productId: string, invoiceDate: string, deadlineDate: string) => {
+  const handleSaveProductDates = async (productId: string, _invoiceDate: string, deadlineDate: string) => {
     if (!player || !canWrite('finance')) return;
 
     try {
       setUpdatingProduct(true);
-      
-      // Validate dates
-      const invoiceDateObj = new Date(invoiceDate);
+
+      // Validate deadline date is not in the past
       const deadlineDateObj = new Date(deadlineDate);
-      
-      if (deadlineDateObj <= invoiceDateObj) {
-        showToast('Deadline date must be after invoice date', 'error');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      if (deadlineDateObj < today) {
+        showToast('Deadline date cannot be in the past', 'error');
         return;
       }
 
-      // Update the assigned product dates
+      // Update only the deadline date (invoice date is not editable)
       const updatedProducts = player.assignedProducts?.map(ap => {
         if (ap.productId === productId) {
           return {
             ...ap,
-            invoiceDate: Timestamp.fromDate(invoiceDateObj),
             deadlineDate: Timestamp.fromDate(deadlineDateObj)
           };
         }
@@ -237,11 +249,11 @@ const PlayerDetails: React.FC = () => {
       });
 
       setEditingProductId(null);
-      showToast('Product dates updated successfully', 'success');
-      
+      showToast('Deadline date updated successfully', 'success');
+
     } catch (error) {
-      console.error('Error updating product dates:', error);
-      showToast('Failed to update product dates', 'error');
+      console.error('Error updating deadline date:', error);
+      showToast('Failed to update deadline date', 'error');
     } finally {
       setUpdatingProduct(false);
     }
@@ -405,24 +417,29 @@ const PlayerDetails: React.FC = () => {
     return 'COMPLETED';
   };
 
-  const handleUnlinkProduct = async (productId: string, productName: string) => {
+  const handleUnlinkProduct = (productId: string, productName: string) => {
     if (!player || !canWrite('finance')) return;
 
-    // Show confirmation
-    const confirmed = window.confirm(
-      `Are you sure you want to unlink "${productName}" from ${user?.name}? This will mark the product assignment as cancelled.`
-    );
+    // Show confirmation modal
+    setProductToUnlink({ productId, productName });
+    setUnlinkProductModalOpen(true);
+  };
 
-    if (!confirmed) return;
+  const handleUnlinkProductConfirm = async () => {
+    if (!player || !productToUnlink) return;
 
     try {
-      setUnlinkingProductId(productId);
+      setUnlinkingProductId(productToUnlink.productId);
 
       // Remove product from player
-      await removeProductFromPlayer(player.id, productId);
+      await removeProductFromPlayer(player.id, productToUnlink.productId);
 
-      showToast(`Product "${productName}" unlinked successfully!`, 'success');
-      
+      showToast(`Product "${productToUnlink.productName}" unlinked successfully!`, 'success');
+
+      // Close modal and reset state
+      setUnlinkProductModalOpen(false);
+      setProductToUnlink(null);
+
       // Reload player details to show the updated products list
       await loadPlayerDetails();
 
@@ -432,6 +449,12 @@ const PlayerDetails: React.FC = () => {
     } finally {
       setUnlinkingProductId(null);
     }
+  };
+
+  const handleCloseUnlinkProductModal = () => {
+    if (unlinkingProductId) return; // Don't allow closing while unlinking
+    setUnlinkProductModalOpen(false);
+    setProductToUnlink(null);
   };
 
   const handleOpenDiscountModal = (productId: string) => {
@@ -519,47 +542,8 @@ const PlayerDetails: React.FC = () => {
         assignedProducts: updatedProducts
       });
 
-      // Update unpaid debit receipts for this product with the new discounted price
-      if (assignedProduct) {
-        try {
-          const receipts = await getReceiptsByUser(player.userId);
-          const unpaidProductReceipts = receipts.filter(r =>
-            r.type === 'debit' &&
-            r.status === 'active' && // Only update unpaid receipts
-            r.organizationId === selectedOrganization?.id &&
-            r.product?.productRef?.id === discountProductId
-          );
-
-          // Calculate the new price
-          const originalPrice = assignedProduct.price;
-          let newPrice = originalPrice;
-          if (numericValue > 0) {
-            if (discountType === 'percentage') {
-              newPrice = originalPrice - (originalPrice * numericValue / 100);
-            } else {
-              newPrice = originalPrice - numericValue;
-            }
-          }
-
-          // Update each unpaid receipt
-          for (const receipt of unpaidProductReceipts) {
-            await updateReceipt(player.userId, receipt.id, {
-              amount: newPrice,
-              product: {
-                ...receipt.product!,
-                price: newPrice
-              }
-            });
-          }
-
-          if (unpaidProductReceipts.length > 0) {
-            console.log(`Updated ${unpaidProductReceipts.length} unpaid receipt(s) with new discounted price: ${newPrice}`);
-          }
-        } catch (receiptError) {
-          console.error('Error updating receipts with discount:', receiptError);
-          // Don't fail the whole operation if receipt update fails
-        }
-      }
+      // Note: Discounts only apply to NEW receipts going forward
+      // Existing receipts can be discounted individually via the invoice table
 
       // Update local state
       setPlayer({
@@ -609,40 +593,8 @@ const PlayerDetails: React.FC = () => {
         assignedProducts: updatedProducts
       });
 
-      // Restore original prices on unpaid debit receipts for this product
-      const assignedProduct = player.assignedProducts?.find(ap => ap.productId === productId);
-      if (assignedProduct) {
-        try {
-          const receipts = await getReceiptsByUser(player.userId);
-          const unpaidProductReceipts = receipts.filter(r =>
-            r.type === 'debit' &&
-            r.status === 'active' && // Only update unpaid receipts
-            r.organizationId === selectedOrganization?.id &&
-            r.product?.productRef?.id === productId
-          );
-
-          // Restore to original price (without discount)
-          const originalPrice = assignedProduct.price;
-
-          // Update each unpaid receipt
-          for (const receipt of unpaidProductReceipts) {
-            await updateReceipt(player.userId, receipt.id, {
-              amount: originalPrice,
-              product: {
-                ...receipt.product!,
-                price: originalPrice
-              }
-            });
-          }
-
-          if (unpaidProductReceipts.length > 0) {
-            console.log(`Restored ${unpaidProductReceipts.length} unpaid receipt(s) to original price: ${originalPrice}`);
-          }
-        } catch (receiptError) {
-          console.error('Error restoring receipt prices:', receiptError);
-          // Don't fail the whole operation if receipt update fails
-        }
-      }
+      // Note: Removing discount only affects NEW receipts going forward
+      // Existing receipts keep their current amounts
 
       // Update local state
       setPlayer({
@@ -775,6 +727,148 @@ const PlayerDetails: React.FC = () => {
       receipt.siblingReceiptRefs.length > 0;
   };
 
+  // Invoice discount handlers
+  const handleOpenInvoiceDiscountModal = (receipt: Receipt) => {
+    if (receipt.type !== 'debit' || receipt.status !== 'active') {
+      showToast('Only unpaid invoices can be discounted', 'error');
+      return;
+    }
+    setInvoiceToDiscount(receipt);
+    setInvoiceDiscountType('percentage');
+    setInvoiceDiscountValue('');
+    setInvoiceDiscountReason('');
+    setInvoiceDiscountModalOpen(true);
+  };
+
+  const handleCloseInvoiceDiscountModal = () => {
+    if (savingInvoiceDiscount) return;
+    setInvoiceDiscountModalOpen(false);
+    setInvoiceToDiscount(null);
+    setInvoiceDiscountType('percentage');
+    setInvoiceDiscountValue('');
+    setInvoiceDiscountReason('');
+  };
+
+  const handleSaveInvoiceDiscount = async () => {
+    if (!invoiceToDiscount || !player) return;
+
+    const numericValue = parseFloat(invoiceDiscountValue);
+    if (isNaN(numericValue) || numericValue <= 0) {
+      showToast('Please enter a valid discount value', 'error');
+      return;
+    }
+
+    const originalAmount = invoiceToDiscount.amount;
+
+    // Validate percentage is between 0 and 100
+    if (invoiceDiscountType === 'percentage' && numericValue > 100) {
+      showToast('Percentage discount cannot exceed 100%', 'error');
+      return;
+    }
+
+    // Validate fixed discount doesn't exceed invoice amount
+    if (invoiceDiscountType === 'fixed' && numericValue > originalAmount) {
+      showToast('Discount cannot exceed invoice amount', 'error');
+      return;
+    }
+
+    try {
+      setSavingInvoiceDiscount(true);
+
+      // Calculate the new price
+      let newAmount = originalAmount;
+      if (invoiceDiscountType === 'percentage') {
+        newAmount = originalAmount - (originalAmount * numericValue / 100);
+      } else {
+        newAmount = originalAmount - numericValue;
+      }
+
+      // Build description with discount info
+      const discountInfo = invoiceDiscountType === 'percentage'
+        ? `${numericValue}% discount`
+        : `${currency} ${numericValue.toFixed(2)} discount`;
+      const reasonText = invoiceDiscountReason.trim() ? ` (${invoiceDiscountReason.trim()})` : '';
+
+      // Update the receipt with the discounted amount
+      await updateReceipt(player.userId, invoiceToDiscount.id, {
+        amount: newAmount,
+        product: invoiceToDiscount.product ? {
+          ...invoiceToDiscount.product,
+          price: newAmount,
+          originalPrice: invoiceToDiscount.product.originalPrice || originalAmount,
+          discountApplied: discountInfo + reasonText
+        } : undefined
+      });
+
+      showToast(`Discount applied successfully! New amount: ${currency} ${newAmount.toFixed(2)}`, 'success');
+      handleCloseInvoiceDiscountModal();
+      await loadPlayerDetails();
+
+    } catch (error) {
+      console.error('Error applying invoice discount:', error);
+      showToast('Failed to apply discount', 'error');
+    } finally {
+      setSavingInvoiceDiscount(false);
+    }
+  };
+
+  // Calculate discounted amount for preview
+  const getInvoiceDiscountedAmount = () => {
+    if (!invoiceToDiscount || !invoiceDiscountValue) return null;
+    const numericValue = parseFloat(invoiceDiscountValue);
+    if (isNaN(numericValue) || numericValue <= 0) return null;
+
+    const originalAmount = invoiceToDiscount.amount;
+    if (invoiceDiscountType === 'percentage') {
+      return originalAmount - (originalAmount * numericValue / 100);
+    }
+    return originalAmount - numericValue;
+  };
+
+  const handleRemoveInvoiceDiscount = async () => {
+    if (!invoiceToDiscount || !player) return;
+
+    // Check if there's a discount to remove
+    if (!invoiceToDiscount.product?.originalPrice) {
+      showToast('No discount to remove', 'error');
+      return;
+    }
+
+    try {
+      setSavingInvoiceDiscount(true);
+
+      const originalPrice = invoiceToDiscount.product.originalPrice;
+
+      // Build a clean product object without the discount fields
+      const cleanProduct: Record<string, any> = {
+        productRef: invoiceToDiscount.product.productRef,
+        name: invoiceToDiscount.product.name,
+        price: originalPrice,
+        invoiceDate: invoiceToDiscount.product.invoiceDate,
+        deadline: invoiceToDiscount.product.deadline
+      };
+
+      // Update the receipt to restore original amount and remove discount info
+      // Using deleteField() to properly remove nested fields
+      await updateReceipt(player.userId, invoiceToDiscount.id, {
+        amount: originalPrice,
+        product: cleanProduct,
+        'product.originalPrice': deleteField(),
+        'product.discountApplied': deleteField()
+      } as any);
+
+      showToast(`Discount removed. Amount restored to ${currency} ${originalPrice.toFixed(2)}`, 'success');
+      handleCloseInvoiceDiscountModal();
+      await loadPlayerDetails();
+
+    } catch (error) {
+      console.error('Error removing invoice discount:', error);
+      showToast('Failed to remove discount', 'error');
+    } finally {
+      setSavingInvoiceDiscount(false);
+    }
+  };
+
   const invoiceColumns = [
     {
       key: 'date',
@@ -805,8 +899,26 @@ const PlayerDetails: React.FC = () => {
       key: 'amount',
       header: 'Amount Due',
       render: (receipt: Receipt) => (
-        <div className={`font-medium ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : 'text-error-600'}`}>
-          {currency} {receipt.amount.toFixed(2)}
+        <div>
+          {receipt.product?.discountApplied ? (
+            <>
+              <div className={`font-medium ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : 'text-success-600'}`}>
+                {currency} {receipt.amount.toFixed(2)}
+              </div>
+              {receipt.product.originalPrice && (
+                <div className="text-xs text-secondary-400 line-through">
+                  {currency} {receipt.product.originalPrice.toFixed(2)}
+                </div>
+              )}
+              <div className="text-xs text-primary-600">
+                {receipt.product.discountApplied}
+              </div>
+            </>
+          ) : (
+            <div className={`font-medium ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : 'text-error-600'}`}>
+              {currency} {receipt.amount.toFixed(2)}
+            </div>
+          )}
         </div>
       )
     },
@@ -814,6 +926,42 @@ const PlayerDetails: React.FC = () => {
       key: 'status',
       header: 'Status',
       render: (receipt: Receipt) => {
+        // Calculate effective status - handle legacy receipts without status field
+        const getEffectiveStatus = (): string => {
+          // If status is explicitly set and valid, use it
+          if (receipt.status && receipt.status !== 'active') {
+            return receipt.status;
+          }
+
+          // For debit receipts without explicit status or with 'active' status,
+          // check sibling refs to determine if paid
+          if (receipt.type === 'debit') {
+            const hasSiblings = receipt.siblingReceiptRefs && receipt.siblingReceiptRefs.length > 0;
+
+            if (hasSiblings) {
+              // Has payment(s) linked - for legacy data without status,
+              // assume it's at least partially paid
+              // The exact status (paid vs completed) should have been set by linkSiblingReceipts
+              // but for backward compatibility, default to 'paid' if there are siblings
+              return receipt.status || 'paid';
+            }
+
+            // Check if overdue (past deadline and no payments)
+            if (receipt.product?.deadline) {
+              const deadline = receipt.product.deadline.toDate();
+              if (deadline < new Date()) {
+                return 'overdue';
+              }
+            }
+
+            return 'active'; // Unpaid
+          }
+
+          return receipt.status || 'active';
+        };
+
+        const effectiveStatus = getEffectiveStatus();
+
         const getStatusColor = (status: string) => {
           switch (status) {
             case 'deleted':
@@ -853,8 +1001,8 @@ const PlayerDetails: React.FC = () => {
         };
 
         return (
-          <Badge variant={getStatusColor(receipt.status || 'active')}>
-            {getStatusText(receipt.status || 'active')}
+          <Badge variant={getStatusColor(effectiveStatus)}>
+            {getStatusText(effectiveStatus)}
           </Badge>
         );
       }
@@ -862,30 +1010,48 @@ const PlayerDetails: React.FC = () => {
     {
       key: 'actions',
       header: 'Actions',
-      render: (receipt: Receipt) => (
-        <div className="flex gap-1">
-          {receipt.status !== 'deleted' && canWrite('finance') && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleEditInvoiceClick(receipt)}
-                className="text-xs px-2 py-1"
-              >
-                Edit
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleDeleteInvoiceClick(receipt)}
-                className="text-xs px-2 py-1 text-error-600 hover:text-error-700 border-error-300 hover:border-error-400"
-              >
-                Delete
-              </Button>
-            </>
-          )}
-        </div>
-      )
+      render: (receipt: Receipt) => {
+        // Check if invoice is truly unpaid (no sibling refs = no payments)
+        const isUnpaid = receipt.type === 'debit' &&
+          (!receipt.siblingReceiptRefs || receipt.siblingReceiptRefs.length === 0) &&
+          receipt.status !== 'completed' &&
+          receipt.status !== 'paid';
+
+        return (
+          <div className="flex gap-1 flex-wrap">
+            {receipt.status !== 'deleted' && canWrite('finance') && (
+              <>
+                {isUnpaid && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleOpenInvoiceDiscountModal(receipt)}
+                    className="text-xs px-2 py-1 text-primary-600 hover:text-primary-700 border-primary-300 hover:border-primary-400"
+                  >
+                    Discount
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleEditInvoiceClick(receipt)}
+                  className="text-xs px-2 py-1"
+                >
+                  Edit
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDeleteInvoiceClick(receipt)}
+                  className="text-xs px-2 py-1 text-error-600 hover:text-error-700 border-error-300 hover:border-error-400"
+                >
+                  Delete
+                </Button>
+              </>
+            )}
+          </div>
+        );
+      }
     }
   ];
 
@@ -1045,7 +1211,6 @@ const PlayerDetails: React.FC = () => {
             <div className="space-y-4">
               {player.assignedProducts.filter(ap => ap.status === 'active').map(assignedProduct => {
                 const isEditing = editingProductId === assignedProduct.productId;
-                const currentInvoiceDate = assignedProduct.invoiceDate?.toDate().toISOString().split('T')[0] || '';
                 const currentDeadlineDate = assignedProduct.deadlineDate?.toDate().toISOString().split('T')[0] || '';
                 
                 const discountedPrice = getDiscountedPrice(assignedProduct.price, assignedProduct.discount);
@@ -1080,24 +1245,17 @@ const PlayerDetails: React.FC = () => {
                         )}
 
                         {isEditing ? (
-                          <div className="mt-3 grid grid-cols-2 gap-4 max-w-md">
-                            <div>
-                              <Label htmlFor={`invoice-${assignedProduct.productId}`}>Invoice Date</Label>
-                              <Input
-                                id={`invoice-${assignedProduct.productId}`}
-                                type="date"
-                                defaultValue={currentInvoiceDate}
-                                className="mt-1"
-                              />
-                            </div>
+                          <div className="mt-3 max-w-xs">
                             <div>
                               <Label htmlFor={`deadline-${assignedProduct.productId}`}>Deadline Date</Label>
                               <Input
                                 id={`deadline-${assignedProduct.productId}`}
                                 type="date"
                                 defaultValue={currentDeadlineDate}
+                                min={new Date().toISOString().split('T')[0]}
                                 className="mt-1"
                               />
+                              <p className="text-xs text-secondary-500 mt-1">Cannot be in the past</p>
                             </div>
                           </div>
                         ) : (
@@ -1120,9 +1278,8 @@ const PlayerDetails: React.FC = () => {
                                 <Button
                                   size="sm"
                                   onClick={() => {
-                                    const invoiceInput = document.getElementById(`invoice-${assignedProduct.productId}`) as HTMLInputElement;
                                     const deadlineInput = document.getElementById(`deadline-${assignedProduct.productId}`) as HTMLInputElement;
-                                    handleSaveProductDates(assignedProduct.productId, invoiceInput.value, deadlineInput.value);
+                                    handleSaveProductDates(assignedProduct.productId, '', deadlineInput.value);
                                   }}
                                   disabled={updatingProduct}
                                 >
@@ -1152,7 +1309,7 @@ const PlayerDetails: React.FC = () => {
                                   variant="outline"
                                   onClick={() => handleEditProduct(assignedProduct.productId)}
                                 >
-                                  Edit Dates
+                                  Edit Deadline
                                 </Button>
                                 <Button
                                   size="sm"
@@ -1705,16 +1862,12 @@ const PlayerDetails: React.FC = () => {
                     onChange={(e) => setEditInvoiceForm({ ...editInvoiceForm, amount: parseFloat(e.target.value) || 0 })}
                   />
                   <Input
-                    label="Invoice Date"
-                    type="date"
-                    value={editInvoiceForm.invoiceDate}
-                    onChange={(e) => setEditInvoiceForm({ ...editInvoiceForm, invoiceDate: e.target.value })}
-                  />
-                  <Input
                     label="Due Date"
                     type="date"
                     value={editInvoiceForm.deadline}
                     onChange={(e) => setEditInvoiceForm({ ...editInvoiceForm, deadline: e.target.value })}
+                    min={new Date().toISOString().split('T')[0]}
+                    helperText="Cannot be in the past"
                   />
                   <div className="flex justify-end gap-3 mt-6">
                     <Button
@@ -1788,6 +1941,224 @@ const PlayerDetails: React.FC = () => {
                     >
                       {deleteInvoiceLoading ? 'Deleting...' : 'Delete Invoice'}
                     </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Unlink Product Confirmation Modal */}
+      {unlinkProductModalOpen && productToUnlink && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseUnlinkProductModal();
+            }
+          }}
+        >
+          <div className="w-full max-w-md">
+            <Card className="w-full">
+              <div className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="flex-shrink-0 w-10 h-10 bg-warning-100 rounded-full flex items-center justify-center">
+                    <svg className="w-6 h-6 text-warning-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-secondary-900">Unlink Product</h3>
+                </div>
+                <div className="space-y-4">
+                  <p className="text-secondary-700">
+                    Are you sure you want to unlink this product from {user?.name}?
+                  </p>
+                  <div className="bg-secondary-50 p-4 rounded-lg">
+                    <p className="font-medium text-secondary-900">{productToUnlink.productName}</p>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg">
+                    <p className="text-blue-800 text-sm">
+                      This will mark the product assignment as cancelled. All existing invoices will be preserved and remain as outstanding.
+                    </p>
+                  </div>
+                  <div className="flex justify-end gap-3 mt-6">
+                    <Button
+                      variant="outline"
+                      onClick={handleCloseUnlinkProductModal}
+                      disabled={unlinkingProductId === productToUnlink.productId}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleUnlinkProductConfirm}
+                      disabled={unlinkingProductId === productToUnlink.productId}
+                      className="bg-error-600 hover:bg-error-700 text-white border-error-600"
+                    >
+                      {unlinkingProductId === productToUnlink.productId ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Unlinking...
+                        </>
+                      ) : (
+                        'Unlink Product'
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Invoice Discount Modal */}
+      {invoiceDiscountModalOpen && invoiceToDiscount && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseInvoiceDiscountModal();
+            }
+          }}
+        >
+          <div className="w-full max-w-md">
+            <Card className="w-full">
+              <div className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="flex-shrink-0 w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
+                    <svg className="w-6 h-6 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-secondary-900">Apply Discount to Invoice</h3>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Invoice Info */}
+                  <div className="bg-secondary-50 p-4 rounded-lg">
+                    <p className="font-medium text-secondary-900">{invoiceToDiscount.product?.name || 'Invoice'}</p>
+                    <p className="text-secondary-600">Current Amount: {currency} {invoiceToDiscount.amount.toFixed(2)}</p>
+                    {invoiceToDiscount.product?.discountApplied && (
+                      <p className="text-xs text-primary-600 mt-1">
+                        Previous discount: {invoiceToDiscount.product.discountApplied}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Discount Type */}
+                  <div>
+                    <Label>Discount Type</Label>
+                    <div className="flex gap-4 mt-2">
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="invoiceDiscountType"
+                          value="percentage"
+                          checked={invoiceDiscountType === 'percentage'}
+                          onChange={(e) => setInvoiceDiscountType(e.target.value as 'percentage' | 'fixed')}
+                          className="form-radio text-primary-600"
+                        />
+                        <span className="text-sm">Percentage (%)</span>
+                      </label>
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="invoiceDiscountType"
+                          value="fixed"
+                          checked={invoiceDiscountType === 'fixed'}
+                          onChange={(e) => setInvoiceDiscountType(e.target.value as 'percentage' | 'fixed')}
+                          className="form-radio text-primary-600"
+                        />
+                        <span className="text-sm">Fixed Amount ({currency})</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Discount Value */}
+                  <div>
+                    <Label htmlFor="invoice-discount-value">
+                      Discount Value {invoiceDiscountType === 'percentage' ? '(%)' : `(${currency})`}
+                    </Label>
+                    <Input
+                      id="invoice-discount-value"
+                      type="number"
+                      min="0"
+                      max={invoiceDiscountType === 'percentage' ? '100' : invoiceToDiscount.amount.toString()}
+                      step={invoiceDiscountType === 'percentage' ? '1' : '0.01'}
+                      value={invoiceDiscountValue}
+                      onChange={(e) => setInvoiceDiscountValue(e.target.value)}
+                      placeholder={invoiceDiscountType === 'percentage' ? 'e.g., 10' : 'e.g., 50.00'}
+                      className="mt-1"
+                    />
+                    {(() => {
+                      const discountedAmount = getInvoiceDiscountedAmount();
+                      if (discountedAmount !== null && discountedAmount >= 0) {
+                        return (
+                          <div className="text-sm text-success-600 mt-1 font-medium">
+                            New amount: {currency} {discountedAmount.toFixed(2)}
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+
+                  {/* Discount Reason */}
+                  <div>
+                    <Label htmlFor="invoice-discount-reason">Reason (Optional)</Label>
+                    <Input
+                      id="invoice-discount-reason"
+                      type="text"
+                      value={invoiceDiscountReason}
+                      onChange={(e) => setInvoiceDiscountReason(e.target.value)}
+                      placeholder="e.g., Early payment discount, Promotional offer"
+                      className="mt-1"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-between mt-6">
+                    <div>
+                      {invoiceToDiscount?.product?.originalPrice && (
+                        <Button
+                          variant="outline"
+                          onClick={handleRemoveInvoiceDiscount}
+                          disabled={savingInvoiceDiscount}
+                          className="text-error-600 hover:text-error-700 border-error-300 hover:border-error-400"
+                        >
+                          Remove Discount
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={handleCloseInvoiceDiscountModal}
+                        disabled={savingInvoiceDiscount}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleSaveInvoiceDiscount}
+                        disabled={savingInvoiceDiscount || !invoiceDiscountValue || parseFloat(invoiceDiscountValue) <= 0}
+                      >
+                        {savingInvoiceDiscount ? (
+                          <>
+                            <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Applying...
+                          </>
+                        ) : (
+                          'Apply Discount'
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

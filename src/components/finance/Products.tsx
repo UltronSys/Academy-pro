@@ -12,7 +12,7 @@ import {
   unlinkPlayersFromProduct
 } from '../../services/productService';
 import { Product, Player } from '../../types';
-import { getPlayersByOrganization } from '../../services/playerService';
+import { getPlayersByOrganization, syncProductLinkedPlayers } from '../../services/playerService';
 import { getUserById } from '../../services/userService';
 import { getSettingsByOrganization } from '../../services/settingsService';
 
@@ -51,6 +51,35 @@ const Products: React.FC = () => {
   const [allPlayers, setAllPlayers] = useState<PlayerWithUserInfo[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [playerSearchQuery, setPlayerSearchQuery] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncLinkedPlayers = async () => {
+    if (!selectedOrganization?.id) return;
+
+    try {
+      setSyncing(true);
+      const result = await syncProductLinkedPlayers(selectedOrganization.id);
+
+      // Reload products to show updated linked players
+      let productsData: Product[];
+      if (selectedAcademy?.id) {
+        productsData = await getProductsByAcademy(selectedOrganization.id, selectedAcademy.id);
+      } else {
+        productsData = await getProductsByOrganization(selectedOrganization.id);
+      }
+      setProducts(productsData);
+
+      setToast({
+        message: `Sync complete! Updated ${result.synced} products${result.errors > 0 ? `, ${result.errors} errors` : ''}`,
+        type: result.errors > 0 ? 'info' : 'success'
+      });
+    } catch (error) {
+      console.error('Error syncing linked players:', error);
+      setToast({ message: 'Failed to sync linked players', type: 'error' });
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const typeOptions = [
     { value: 'all', label: 'All Types' },
@@ -579,6 +608,16 @@ const Products: React.FC = () => {
               <option key={type.value} value={type.value}>{type.label}</option>
             ))}
           </Select>
+          {canWrite('finance') && (
+            <Button
+              variant="outline"
+              onClick={handleSyncLinkedPlayers}
+              disabled={syncing}
+              className="mr-2"
+            >
+              {syncing ? 'Syncing...' : 'Sync Linked Players'}
+            </Button>
+          )}
           {canWrite('finance') && (
             <Button onClick={() => setShowAddProduct(true)}>
               Add Product

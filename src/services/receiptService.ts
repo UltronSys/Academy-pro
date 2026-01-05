@@ -12,7 +12,8 @@ import {
   Timestamp,
   DocumentReference,
   writeBatch,
-  collectionGroup
+  collectionGroup,
+  arrayUnion
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Receipt } from '../types';
@@ -388,18 +389,18 @@ export const linkSiblingReceipts = async (
       creditUserId,
       creditReceiptId
     });
-    
+
     const batch = writeBatch(db);
-    
+
     const debitRef = doc(db, 'users', debitUserId, 'receipts', debitReceiptId);
     const creditRef = doc(db, 'users', creditUserId, 'receipts', creditReceiptId);
-    
-    // Update debit receipt - add credit link and update status if fully paid
+
+    // Update debit receipt - APPEND credit link using arrayUnion and update status
     const debitUpdate: any = {
-      siblingReceiptRefs: [creditRef],
+      siblingReceiptRefs: arrayUnion(creditRef), // Use arrayUnion to append instead of overwrite
       updatedAt: serverTimestamp()
     };
-    
+
     // Only mark as completed if this is a full payment
     if (isFullPayment) {
       debitUpdate.status = 'completed';
@@ -408,17 +409,17 @@ export const linkSiblingReceipts = async (
       debitUpdate.status = 'paid'; // Partially paid but not fully completed
       console.log('📋 linkSiblingReceipts: Marking debit receipt as paid (partial payment)');
     }
-    
+
     batch.update(debitRef, debitUpdate);
-    
-    // Update credit receipt - link to debit receipt
+
+    // Update credit receipt - APPEND debit link using arrayUnion
     batch.update(creditRef, {
-      siblingReceiptRefs: [debitRef],
+      siblingReceiptRefs: arrayUnion(debitRef), // Use arrayUnion to append instead of overwrite
       updatedAt: serverTimestamp()
     });
-    
+
     await batch.commit();
-    console.log('✅ linkSiblingReceipts: Successfully linked receipts and marked debit as completed');
+    console.log('✅ linkSiblingReceipts: Successfully linked receipts and marked debit as', isFullPayment ? 'completed' : 'paid');
   } catch (error) {
     console.error('Error linking sibling receipts:', error);
     throw error;
