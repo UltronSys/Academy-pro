@@ -42,13 +42,11 @@ const AlertIcon = () => (
 const resources: { value: ResourceType; label: string }[] = [
   { value: 'users', label: 'Users' },
   { value: 'settings', label: 'Settings' },
-  // Future pages (commented out for now)
-  // { value: 'players', label: 'Players' },
-  // { value: 'academies', label: 'Academies' },
-  // { value: 'finance', label: 'Finance' },
-  // { value: 'events', label: 'Events' },
-  // { value: 'training', label: 'Training' },
-  // { value: 'reports', label: 'Reports' },
+  { value: 'players', label: 'Players' },
+  { value: 'academies', label: 'Academies' },
+  { value: 'finance', label: 'Finance' },
+  { value: 'messaging', label: 'Messages' },
+  { value: 'reports', label: 'Stats & Reports' },
 ];
 
 
@@ -96,7 +94,16 @@ export function RolePermissions() {
     if (selectedRole && rolePermissions.length > 0) {
       const rolePermission = rolePermissions.find((rp: RolePermission) => rp.roleName === selectedRole);
       if (rolePermission) {
-        setEditingPermissions([...rolePermission.permissions]);
+        // Merge existing permissions with all resources to ensure all resources are shown
+        // This handles the case where new resources were added after the role was created
+        const mergedPermissions = resources.map(resource => {
+          const existingPermission = rolePermission.permissions.find(p => p.resource === resource.value);
+          return {
+            resource: resource.value,
+            actions: existingPermission ? existingPermission.actions : [],
+          };
+        });
+        setEditingPermissions(mergedPermissions);
       } else {
         // Initialize empty permissions for new role
         setEditingPermissions(

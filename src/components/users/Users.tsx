@@ -2777,7 +2777,7 @@ service firebase.storage {
                             }`}
                           >
                             {countryCodes.map((cc) => (
-                              <option key={cc.code} value={cc.code}>{cc.country} {cc.code}</option>
+                              <option key={`${cc.code}-${cc.country}`} value={cc.code}>{cc.country} {cc.code}</option>
                             ))}
                           </select>
                           <input
@@ -3492,7 +3492,7 @@ service firebase.storage {
                                 className="px-2 py-2.5 text-sm border border-r-0 border-secondary-300 rounded-l-lg bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                               >
                                 {countryCodes.map((cc) => (
-                                  <option key={cc.code} value={cc.code}>
+                                  <option key={`${cc.code}-${cc.country}`} value={cc.code}>
                                     {cc.country} {cc.code}
                                   </option>
                                 ))}
@@ -3788,7 +3788,11 @@ service firebase.storage {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => setShowCreateGuardian(true)}
+                                onClick={() => {
+                                  // Initialize phone with the search term
+                                  setNewGuardianData({ name: '', email: '', phone: guardianPhone });
+                                  setShowCreateGuardian(true);
+                                }}
                               >
                                 Create Guardian
                               </Button>
@@ -3807,24 +3811,22 @@ service firebase.storage {
                                     required
                                   />
                                   <Input
-                                    placeholder="Email Address"
+                                    placeholder="Email Address (Optional)"
                                     type="email"
                                     value={newGuardianData.email}
                                     onChange={(e) => setNewGuardianData({...newGuardianData, email: e.target.value})}
-                                    required
                                   />
                                   <Input
-                                    placeholder="Phone Number"
-                                    value={newGuardianData.phone || guardianPhone}
+                                    placeholder="Phone Number (Optional)"
+                                    value={newGuardianData.phone}
                                     onChange={(e) => setNewGuardianData({...newGuardianData, phone: e.target.value})}
-                                    required
                                   />
                                   <div className="flex items-center space-x-2">
                                     <Button
                                       size="sm"
                                       onClick={async () => {
-                                        if (!newGuardianData.name || !newGuardianData.email) {
-                                          setError('Guardian name and email are required');
+                                        if (!newGuardianData.name) {
+                                          setError('Guardian name is required');
                                           return;
                                         }
                                         
@@ -3840,8 +3842,8 @@ service firebase.storage {
                                           await createUser({
                                             id: guardianUserId,
                                             name: newGuardianData.name,
-                                            email: newGuardianData.email,
-                                            phone: newGuardianData.phone || guardianPhone,
+                                            email: newGuardianData.email || '',
+                                            phone: newGuardianData.phone || '',
                                             roles: [{
                                               role: ['guardian'],
                                               organizationId: organizationId,
@@ -3872,7 +3874,7 @@ service firebase.storage {
                                           setGuardianCreationLoading(false);
                                         }
                                       }}
-                                      disabled={guardianCreationLoading || !newGuardianData.name || !newGuardianData.email}
+                                      disabled={guardianCreationLoading || !newGuardianData.name}
                                     >
                                       {guardianCreationLoading ? 'Creating...' : 'Create & Link Guardian'}
                                     </Button>

@@ -9,3 +9,6 @@ export { whatsappStatusCallback } from './webhooks/statusCallback';
 
 // API functions
 export { sendWhatsAppMessage, markConversationRead } from './api/sendMessage';
+
+// Scheduled functions
+export { generateScheduledReceipts, triggerReceiptGeneration } from './schedulers/generateScheduledReceipts';
