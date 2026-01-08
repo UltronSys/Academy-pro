@@ -1022,23 +1022,25 @@ const PlayerDetails: React.FC = () => {
             {receipt.status !== 'deleted' && canWrite('finance') && (
               <>
                 {isUnpaid && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleOpenInvoiceDiscountModal(receipt)}
-                    className="text-xs px-2 py-1 text-primary-600 hover:text-primary-700 border-primary-300 hover:border-primary-400"
-                  >
-                    Discount
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleOpenInvoiceDiscountModal(receipt)}
+                      className="text-xs px-2 py-1 text-primary-600 hover:text-primary-700 border-primary-300 hover:border-primary-400"
+                    >
+                      Discount
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleEditInvoiceClick(receipt)}
+                      className="text-xs px-2 py-1"
+                    >
+                      Edit
+                    </Button>
+                  </>
                 )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleEditInvoiceClick(receipt)}
-                  className="text-xs px-2 py-1"
-                >
-                  Edit
-                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1220,7 +1222,22 @@ const PlayerDetails: React.FC = () => {
                   <div key={assignedProduct.productId} className="border rounded-lg p-4">
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
-                        <div className="font-medium text-secondary-900">{assignedProduct.productName}</div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium text-secondary-900">{assignedProduct.productName}</span>
+                          {/* Product Type Badge */}
+                          <Badge
+                            variant={assignedProduct.productType === 'recurring' ? 'primary' : 'secondary'}
+                            className="text-xs"
+                          >
+                            {assignedProduct.productType === 'recurring' ? 'Recurring' : 'One-time'}
+                          </Badge>
+                          {/* Show recurring duration if available */}
+                          {assignedProduct.productType === 'recurring' && assignedProduct.recurringDuration && (
+                            <span className="text-xs text-secondary-500">
+                              (Every {assignedProduct.recurringDuration.value} {assignedProduct.recurringDuration.unit})
+                            </span>
+                          )}
+                        </div>
                         <div className="text-sm text-secondary-600">
                           {hasDiscount ? (
                             <div className="flex items-center gap-2">
@@ -1259,13 +1276,24 @@ const PlayerDetails: React.FC = () => {
                             </div>
                           </div>
                         ) : (
-                          <div className="mt-2 text-sm">
+                          <div className="mt-2 text-sm space-y-1">
                             <div className="text-secondary-600">
                               Invoice Date: {assignedProduct.invoiceDate?.toDate().toLocaleDateString() || 'Not set'}
                             </div>
                             <div className="text-secondary-600">
                               Deadline: {assignedProduct.deadlineDate?.toDate().toLocaleDateString() || 'Not set'}
                             </div>
+                            {/* Upcoming Receipt Date for recurring/scheduled products */}
+                            {assignedProduct.nextReceiptDate && (
+                              <div className="text-primary-600 font-medium">
+                                Next Receipt: {assignedProduct.nextReceiptDate?.toDate().toLocaleDateString()}
+                              </div>
+                            )}
+                            {assignedProduct.receiptStatus === 'scheduled' && !assignedProduct.nextReceiptDate && (
+                              <div className="text-warning-600 text-xs">
+                                Receipt scheduled (date pending)
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

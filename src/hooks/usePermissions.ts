@@ -19,19 +19,10 @@ export const usePermissions = () => {
         return;
       }
 
-      // If no organizationId, grant full permissions
+      // If no organizationId, no permissions (user must have an organization)
       if (!organizationId) {
-        const fullPermissions: Permission[] = [
-          { resource: 'users', actions: ['read', 'write', 'delete'] },
-          { resource: 'settings', actions: ['read', 'write', 'delete'] },
-          { resource: 'players', actions: ['read', 'write', 'delete'] },
-          { resource: 'academies', actions: ['read', 'write', 'delete'] },
-          { resource: 'finance', actions: ['read', 'write', 'delete'] },
-          { resource: 'events', actions: ['read', 'write', 'delete'] },
-          { resource: 'training', actions: ['read', 'write', 'delete'] },
-          { resource: 'reports', actions: ['read', 'write', 'delete'] }
-        ];
-        setPermissions(fullPermissions);
+        console.warn('No organizationId found for user - no permissions granted');
+        setPermissions([]);
         setLoading(false);
         return;
       }
@@ -40,6 +31,7 @@ export const usePermissions = () => {
       const userRole = userData.roles.find(r => r.organizationId === organizationId);
 
       if (!userRole) {
+        console.warn('No role found for user in organization:', organizationId);
         setPermissions([]);
         setLoading(false);
         return;
@@ -62,6 +54,8 @@ export const usePermissions = () => {
             permission.actions.forEach(action => existing.add(action));
             allPermissions.set(permission.resource, existing);
           }
+        } else {
+          console.warn(`No permissions found in database for role: ${roleName}. Role will have no permissions.`);
         }
       }
 
@@ -87,9 +81,9 @@ export const usePermissions = () => {
         return false;
       }
 
-      // If no organizationId, grant full access (no organization restrictions)
+      // If no organizationId, deny access
       if (!organizationId) {
-        return true;
+        return false;
       }
 
       const userRole = userData.roles.find(r => r.organizationId === organizationId);

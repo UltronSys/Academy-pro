@@ -633,22 +633,24 @@ const ReceiptsView: React.FC = () => {
             {receipt.type === 'debit' && receipt.status !== 'deleted' && (
               <>
                 {isUnpaid && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleDiscountClick(receipt)}
-                    className="text-primary-600 hover:text-primary-700 border-primary-300 hover:border-primary-400"
-                  >
-                    Discount
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDiscountClick(receipt)}
+                      className="text-primary-600 hover:text-primary-700 border-primary-300 hover:border-primary-400"
+                    >
+                      Discount
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleEditClick(receipt)}
+                    >
+                      Edit
+                    </Button>
+                  </>
                 )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleEditClick(receipt)}
-                >
-                  Edit
-                </Button>
                 <Button
                   variant="danger"
                   size="sm"

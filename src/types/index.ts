@@ -64,6 +64,11 @@ export interface Player {
     deadlineDate: Timestamp; // Payment deadline for the invoice
     nextReceiptDate?: Timestamp; // For recurring products - when next receipt should be generated
     receiptStatus?: 'immediate' | 'scheduled' | 'generated'; // Status of receipt generation
+    productType: 'recurring' | 'one-time'; // Type of product
+    recurringDuration?: {
+      value: number;
+      unit: 'days' | 'weeks' | 'months' | 'years';
+    }; // Duration for recurring products
     discount?: {
       type: 'percentage' | 'fixed'; // Type of discount
       value: number; // Discount value (percentage 0-100 or fixed amount)
@@ -109,6 +114,9 @@ export interface Settings {
     defaultLanguage: string;
     timezone: string;
     currency: string;
+  };
+  financeSettings?: {
+    defaultDeadlineDays: number; // Default number of days for payment deadline (e.g., 30 days)
   };
   notificationSettings: {
     emailNotifications: boolean;

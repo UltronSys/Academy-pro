@@ -9,7 +9,6 @@ import {
   query,
   where,
   Timestamp,
-  writeBatch,
   arrayUnion
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -254,152 +253,124 @@ export const assignProductToPlayer = async (
   invoiceGeneration?: 'immediate' | 'scheduled'
 ): Promise<void> => {
   try {
-    console.log('🎯 assignProductToPlayer: Starting with:', { 
-      playerId, 
-      productId: product.id, 
-      organizationId, 
-      academyId 
+    console.log('🎯 assignProductToPlayer: Starting with:', {
+      playerId,
+      productId: product.id,
+      organizationId,
+      academyId,
+      productType: product.productType,
+      invoiceGeneration
     });
-    
-    const batch = writeBatch(db);
-    
+
     // Get current player data
     const playerRef = doc(db, COLLECTION_NAME, playerId);
     console.log('🔍 assignProductToPlayer: Getting player document:', playerRef.path);
-    
+
     const playerSnap = await getDoc(playerRef);
-    
+
     if (!playerSnap.exists()) {
       console.error('❌ assignProductToPlayer: Player document not found:', playerId);
       throw new Error('Player not found');
     }
-    
+
     const player = playerSnap.data() as Player;
-    console.log('✅ assignProductToPlayer: Player document found:', { 
-      playerId: player.id, 
+    console.log('✅ assignProductToPlayer: Player document found:', {
+      playerId: player.id,
       userId: player.userId,
       organizationId: player.organizationId
     });
-    
-    // Check if product is already assigned
-    const existingAssignment = player.assignedProducts?.find(p => p.productId === product.id);
-    if (existingAssignment && existingAssignment.status === 'active') {
-      console.log('⚠️ assignProductToPlayer: Product already assigned to this player, skipping');
-      throw new Error(`Product "${product.name}" is already assigned to this player`);
-    }
-    
+
     // Use provided dates or set defaults
     const now = new Date();
     const finalInvoiceDate = invoiceDate || now;
     const finalDeadlineDate = deadlineDate || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // Default 30 days
     const finalInvoiceGeneration = invoiceGeneration || 'immediate';
-    
-    // Add product to player's assigned products
-    const assignedProduct = {
-      productId: product.id,
-      productName: product.name,
-      price: product.price,
-      assignedDate: Timestamp.now(),
-      status: 'active' as const,
-      invoiceDate: Timestamp.fromDate(finalInvoiceDate),
-      deadlineDate: Timestamp.fromDate(finalDeadlineDate),
-      receiptStatus: finalInvoiceGeneration === 'immediate' ? 'immediate' as const : 'scheduled' as const
-    };
-    
-    const updatedAssignedProducts = player.assignedProducts ? 
-      [...player.assignedProducts.filter(p => p.productId !== product.id), assignedProduct] :
-      [assignedProduct];
-    
-    console.log('📋 assignProductToPlayer: Updated assigned products:', updatedAssignedProducts);
-    
-    // Update player document
-    batch.update(playerRef, {
-      assignedProducts: updatedAssignedProducts,
-      updatedAt: Timestamp.now()
-    });
-    
+
     // Get user reference for the receipt
     const userRef = doc(db, 'users', player.userId);
     const productRef = doc(db, 'products', product.id);
-    
-    console.log('📋 assignProductToPlayer: References created:', {
-      userRefPath: userRef.path,
-      productRefPath: productRef.path
+
+    // Determine if we should track this product in assignedProducts
+    // Only track: recurring products OR one-time scheduled products
+    // Don't track: one-time immediate products (just create receipt and done)
+    const isOneTimeImmediate = product.productType === 'one-time' && finalInvoiceGeneration === 'immediate';
+    const shouldTrackInAssignedProducts = !isOneTimeImmediate;
+
+    console.log('📋 assignProductToPlayer: Product tracking decision:', {
+      productType: product.productType,
+      invoiceGeneration: finalInvoiceGeneration,
+      isOneTimeImmediate,
+      shouldTrackInAssignedProducts
     });
-    
-    // Create debit receipt outside of batch (it has its own batch operations)
-    console.log('💾 assignProductToPlayer: Committing player update batch...');
-    await batch.commit();
-    console.log('✅ assignProductToPlayer: Player update batch committed');
 
-    // Update product's linkedPlayerIds and linkedPlayerNames
-    // Note: linkedPlayerIds uses the user's userId, not the player document ID
-    try {
-      const user = await getUserById(player.userId);
-      const playerName = user?.name || `Player ${player.userId}`;
-
-      // Check if player is already in the product's linked lists
-      const productDoc = await getDoc(productRef);
-      if (productDoc.exists()) {
-        const productData = productDoc.data();
-        const currentLinkedIds = productData.linkedPlayerIds || [];
-
-        // Only add if not already linked (using userId, not player document id)
-        if (!currentLinkedIds.includes(player.userId)) {
-          await updateDoc(productRef, {
-            linkedPlayerIds: arrayUnion(player.userId),
-            linkedPlayerNames: arrayUnion(playerName),
-            updatedAt: Timestamp.now()
-          });
-          console.log('✅ assignProductToPlayer: Product updated with linked player:', playerName, 'userId:', player.userId);
-        } else {
-          console.log('ℹ️ assignProductToPlayer: Player already in product linkedPlayerIds, skipping product update');
-        }
+    if (shouldTrackInAssignedProducts) {
+      // Check if product is already assigned (only for tracked products)
+      const existingAssignment = player.assignedProducts?.find(p => p.productId === product.id);
+      if (existingAssignment && existingAssignment.status === 'active') {
+        console.log('⚠️ assignProductToPlayer: Product already assigned to this player, skipping');
+        throw new Error(`Product "${product.name}" is already assigned to this player`);
       }
-    } catch (productUpdateError) {
-      console.error('⚠️ assignProductToPlayer: Failed to update product linkedPlayerIds:', productUpdateError);
-      // Don't throw - the main operation succeeded
-    }
 
-    // Create debit receipt based on invoice generation preference
-    if (finalInvoiceGeneration === 'immediate') {
-      // Create receipt immediately
-      console.log('🧾 assignProductToPlayer: Creating immediate debit receipt...');
-      
+      // Add product to player's assigned products
+      const assignedProduct: any = {
+        productId: product.id,
+        productName: product.name,
+        price: product.price,
+        assignedDate: Timestamp.now(),
+        status: 'active' as const,
+        invoiceDate: Timestamp.fromDate(finalInvoiceDate),
+        deadlineDate: Timestamp.fromDate(finalDeadlineDate),
+        receiptStatus: finalInvoiceGeneration === 'immediate' ? 'immediate' as const : 'scheduled' as const,
+        productType: product.productType || 'one-time',
+      };
+
+      // Add recurring duration if it's a recurring product
+      if (product.productType === 'recurring' && product.recurringDuration) {
+        assignedProduct.recurringDuration = product.recurringDuration;
+      }
+
+      const updatedAssignedProducts = player.assignedProducts ?
+        [...player.assignedProducts.filter(p => p.productId !== product.id), assignedProduct] :
+        [assignedProduct];
+
+      console.log('📋 assignProductToPlayer: Updated assigned products:', updatedAssignedProducts);
+
+      // Update player document with assigned product
+      await updateDoc(playerRef, {
+        assignedProducts: updatedAssignedProducts,
+        updatedAt: Timestamp.now()
+      });
+      console.log('✅ assignProductToPlayer: Player assigned products updated');
+
+      // Update product's linkedPlayerIds and linkedPlayerNames (only for tracked products)
       try {
-        const receipt = await createDebitReceipt(
-          userRef,
-          productRef,
-          {
-            name: product.name,
-            price: product.price,
-            invoiceDate: finalInvoiceDate,
-            deadline: finalDeadlineDate
-          },
-          organizationId,
-          academyId
-        );
-        
-        console.log('🎉 assignProductToPlayer: Receipt created immediately:', receipt.id);
-        console.log('📍 assignProductToPlayer: Receipt location: users/' + player.userId + '/receipts/' + receipt.id);
-      } catch (receiptError: any) {
-        console.error('❌ assignProductToPlayer: Failed to create debit receipt:', receiptError);
-        throw new Error(`Failed to create receipt: ${receiptError?.message || receiptError}`);
+        const user = await getUserById(player.userId);
+        const playerName = user?.name || `Player ${player.userId}`;
+
+        const productDoc = await getDoc(productRef);
+        if (productDoc.exists()) {
+          const productData = productDoc.data();
+          const currentLinkedIds = productData.linkedPlayerIds || [];
+
+          if (!currentLinkedIds.includes(player.userId)) {
+            await updateDoc(productRef, {
+              linkedPlayerIds: arrayUnion(player.userId),
+              linkedPlayerNames: arrayUnion(playerName),
+              updatedAt: Timestamp.now()
+            });
+            console.log('✅ assignProductToPlayer: Product updated with linked player:', playerName);
+          }
+        }
+      } catch (productUpdateError) {
+        console.error('⚠️ assignProductToPlayer: Failed to update product linkedPlayerIds:', productUpdateError);
       }
-    } else if (finalInvoiceGeneration === 'scheduled') {
-      // Schedule receipt creation based on product type
-      if (product.productType === 'one-time') {
-        // For one-time products, schedule on invoice date
-        console.log('📅 assignProductToPlayer: One-time product - receipt will be created on invoice date:', finalInvoiceDate.toLocaleDateString());
-      } else if (product.productType === 'recurring') {
-        // For recurring products, schedule receipt generation for end of period
-        console.log('📅 assignProductToPlayer: Scheduling debit receipt for recurring product at end of period...');
-        console.log('📅 Product recurring duration:', product.recurringDuration);
-        
-        // Calculate the end of the current subscription period
-        const now = new Date();
+
+      // Handle scheduled receipts for recurring products
+      if (finalInvoiceGeneration === 'scheduled' && product.productType === 'recurring') {
+        console.log('📅 assignProductToPlayer: Scheduling receipt for recurring product...');
+
         let receiptDueDate: Date;
-        
+
         if (product.recurringDuration) {
           switch (product.recurringDuration.unit) {
             case 'days':
@@ -417,37 +388,84 @@ export const assignProductToPlayer = async (
               receiptDueDate.setFullYear(now.getFullYear() + product.recurringDuration.value);
               break;
             default:
-              // Default to 1 month if unit is not recognized
               receiptDueDate = new Date(now);
               receiptDueDate.setMonth(now.getMonth() + 1);
           }
         } else {
-          // Default to 1 month if no duration specified
           receiptDueDate = new Date(now);
           receiptDueDate.setMonth(now.getMonth() + 1);
         }
-        
-        console.log(`📅 Recurring product receipt will be generated on: ${receiptDueDate.toLocaleDateString()}`);
-        
-        // Update the assigned product with receipt schedule info
-        const updatedAssignedProductsWithSchedule = updatedAssignedProducts.map(ap => 
+
+        console.log(`📅 Next receipt date: ${receiptDueDate.toLocaleDateString()}`);
+
+        // Update the assigned product with next receipt date
+        const currentAssignedProducts = (await getDoc(playerRef)).data()?.assignedProducts || [];
+        const updatedWithSchedule = currentAssignedProducts.map((ap: any) =>
           ap.productId === product.id ? {
             ...ap,
             nextReceiptDate: Timestamp.fromDate(receiptDueDate),
             receiptStatus: 'scheduled' as const
           } : ap
         );
-        
-        // Update player with scheduled receipt info
+
         await updateDoc(playerRef, {
-          assignedProducts: updatedAssignedProductsWithSchedule,
+          assignedProducts: updatedWithSchedule,
           updatedAt: Timestamp.now()
         });
-        
-        console.log('✅ assignProductToPlayer: Recurring product assigned. Receipt scheduled for:', receiptDueDate.toLocaleDateString());
+
+        console.log('✅ assignProductToPlayer: Recurring product scheduled for:', receiptDueDate.toLocaleDateString());
+      }
+
+      // Create immediate receipt for recurring products with immediate generation
+      if (finalInvoiceGeneration === 'immediate' && product.productType === 'recurring') {
+        console.log('🧾 assignProductToPlayer: Creating immediate receipt for recurring product...');
+
+        try {
+          const receipt = await createDebitReceipt(
+            userRef,
+            productRef,
+            {
+              name: product.name,
+              price: product.price,
+              invoiceDate: finalInvoiceDate,
+              deadline: finalDeadlineDate
+            },
+            organizationId,
+            academyId
+          );
+
+          console.log('🎉 assignProductToPlayer: Receipt created:', receipt.id);
+        } catch (receiptError: any) {
+          console.error('❌ assignProductToPlayer: Failed to create debit receipt:', receiptError);
+          throw new Error(`Failed to create receipt: ${receiptError?.message || receiptError}`);
+        }
+      }
+    } else {
+      // One-time immediate product: Just create the receipt, don't track
+      console.log('🧾 assignProductToPlayer: One-time immediate product - creating receipt only (not tracking in assignedProducts)');
+
+      try {
+        const receipt = await createDebitReceipt(
+          userRef,
+          productRef,
+          {
+            name: product.name,
+            price: product.price,
+            invoiceDate: finalInvoiceDate,
+            deadline: finalDeadlineDate
+          },
+          organizationId,
+          academyId
+        );
+
+        console.log('🎉 assignProductToPlayer: One-time receipt created:', receipt.id);
+        console.log('📍 Receipt location: users/' + player.userId + '/receipts/' + receipt.id);
+      } catch (receiptError: any) {
+        console.error('❌ assignProductToPlayer: Failed to create debit receipt:', receiptError);
+        throw new Error(`Failed to create receipt: ${receiptError?.message || receiptError}`);
       }
     }
-    
+
   } catch (error) {
     console.error('Error assigning product to player:', error);
     throw error;
