@@ -25,6 +25,7 @@ export interface AlgoliaUserRecord {
   hasGuardianRole?: boolean;
   hasAdminRole?: boolean;
   hasOwnerRole?: boolean;
+  hasAcademies?: boolean; // true if user belongs to at least one academy
 }
 
 // Search options interface
@@ -249,7 +250,8 @@ class AlgoliaService {
       hasCoachRole: roles.includes('coach'),
       hasGuardianRole: roles.includes('guardian'),
       hasAdminRole: roles.includes('admin'),
-      hasOwnerRole: roles.includes('owner')
+      hasOwnerRole: roles.includes('owner'),
+      hasAcademies: uniqueAcademies.length > 0 // true if user belongs to at least one academy
     };
   }
 
@@ -291,9 +293,8 @@ class AlgoliaService {
       }
       
       if (filters.academyId) {
-        // Include users with the specific academy OR organization-wide users (owner/admin/guardian roles)
-        // Guardians are organization-wide as they're linked to players, not academies
-        filterParts.push(`(academies:${filters.academyId} OR hasOwnerRole:true OR hasAdminRole:true OR hasGuardianRole:true)`);
+        // Filter by academy OR include organization-wide users (those with no academy)
+        filterParts.push(`(academies:${filters.academyId} OR hasAcademies:false)`);
         console.log('🏫 Adding academy filter (including org-wide users):', filters.academyId);
       }
       

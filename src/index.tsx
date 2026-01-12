@@ -7,6 +7,7 @@ import reportWebVitals from './reportWebVitals';
 // Import sync utilities to register window functions for console access
 import './utils/syncUsersToAlgolia';
 import './utils/syncPlayersToAlgolia';
+import './utils/configureAlgoliaIndex';
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement

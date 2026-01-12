@@ -41,14 +41,16 @@ export const UsersProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const organizationId = userData?.roles?.[0]?.organizationId;
   const academyId = selectedAcademy?.id;
 
-  // Load users from Algolia on mount or when organization/academy changes
+  // Load users from Algolia on mount or when organization changes
+  // Note: Academy filtering is handled by the Users component via searchUsers()
+  // to ensure role filters are applied correctly based on the active tab
   useEffect(() => {
     if (organizationId) {
       loadUsers();
     } else {
       setUsers([]);
     }
-  }, [organizationId, academyId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [organizationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadUsers = async () => {
     if (!organizationId) return;
