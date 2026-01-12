@@ -218,7 +218,7 @@ const UserDetails: React.FC = () => {
             </Button>
             <Button
               icon={<EditIcon />}
-              onClick={() => navigate(`/users/edit/${user.id}`)}
+              onClick={() => navigate('/users', { state: { editUserId: user.id } })}
               className="bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 shadow-sm"
             >
               Edit User

@@ -17,7 +17,7 @@ import { usePermissions } from '../../hooks/usePermissions';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { useUsers } from '../../contexts/UsersContext';
 import { User, UserRole, Academy, ParameterField, FieldCategory } from '../../types';
-import { updateUser as updateUserService, deleteUser as deleteUserService, createUser } from '../../services/userService';
+import { updateUser as updateUserService, deleteUser as deleteUserService, createUser, getUserById } from '../../services/userService';
 import { getAcademiesByOrganization } from '../../services/academyService';
 import { createPlayer, getPlayerByUserId, updatePlayer, getPlayersByOrganization, getPlayersByGuardianId } from '../../services/playerService';
 import { getFieldCategoriesForAcademy } from '../../services/settingsService';
@@ -352,17 +352,19 @@ const Users: React.FC = () => {
   const { selectedAcademy, setSelectedAcademy } = useApp();
 
   const isRolePreset = formData.roles.length > 0 && dialogMode === 'add' && activeTab !== 0;
+  const isAdminTab = activeTab === 4; // Admin tab skips Role Assignment step
+  const skipRoleAssignmentStep = isRolePreset || isAdminTab;
   const isPlayerRole = formData.roles.includes('player');
-  const steps = dialogMode === 'edit' 
+  const steps = dialogMode === 'edit'
     ? (isPlayerRole ? ['User Information', 'Contact Information', 'Player Details'] : ['User Information', 'Contact Information'])
-    : isRolePreset 
+    : skipRoleAssignmentStep
       ? ['Full Name', 'Contact Information', 'Player Details']
       : ['Full Name', 'Role Assignment', 'Contact Information', 'Player Details'];
   const shouldShowPlayerStep = isPlayerRole; // Show player step for both add and edit modes
-  const effectiveSteps = shouldShowPlayerStep 
-    ? steps 
-    : isRolePreset 
-      ? steps.slice(0, 2) 
+  const effectiveSteps = shouldShowPlayerStep
+    ? steps
+    : skipRoleAssignmentStep
+      ? steps.slice(0, 2)
       : steps.slice(0, 3);
 
 
@@ -697,6 +699,79 @@ const Users: React.FC = () => {
       // Clear the navigation state
       window.history.replaceState({}, document.title);
     }
+
+    // Handle opening edit modal from navigation state (e.g., from UserDetails page)
+    if (state?.editUserId) {
+      const loadAndEditUser = async () => {
+        try {
+          const userToEdit = await getUserById(state.editUserId);
+          if (userToEdit) {
+            setSelectedUser(userToEdit);
+            setDialogMode('edit');
+            setOpenDialog(true);
+
+            // Load player data if user has player role
+            if (userToEdit.roles?.some(role => role.role.includes('player'))) {
+              try {
+                const playerData = await getPlayerByUserId(userToEdit.id);
+                if (playerData) {
+                  // Format date for form
+                  let dobStr = '';
+                  if (playerData.dob) {
+                    const dob = playerData.dob instanceof Date
+                      ? playerData.dob
+                      : (playerData.dob as any).toDate?.() || new Date(playerData.dob as any);
+                    dobStr = dob.toISOString().split('T')[0];
+                  }
+
+                  setFormData({
+                    name: userToEdit.name,
+                    email: userToEdit.email,
+                    phone: userToEdit.phone || '',
+                    password: '',
+                    roles: userToEdit.roles?.flatMap(r => r.role) || [],
+                    academyId: userToEdit.roles?.flatMap(r => r.academyId) || [],
+                    dateOfBirth: dobStr,
+                    gender: playerData.gender || '',
+                    guardianId: playerData.guardianId || [],
+                    status: playerData.status || '',
+                    dynamicFields: playerData.playerParameters || {}
+                  });
+                }
+              } catch (err) {
+                console.error('Error loading player data:', err);
+              }
+            } else {
+              setFormData({
+                name: userToEdit.name,
+                email: userToEdit.email,
+                phone: userToEdit.phone || '',
+                password: '',
+                roles: userToEdit.roles?.flatMap(r => r.role) || [],
+                academyId: userToEdit.roles?.flatMap(r => r.academyId) || [],
+                dateOfBirth: '',
+                gender: '',
+                guardianId: [],
+                status: '',
+                dynamicFields: {}
+              });
+            }
+
+            // Set profile image preview if exists
+            if (userToEdit.photoURL) {
+              setProfileImagePreview(userToEdit.photoURL);
+            }
+          }
+        } catch (err) {
+          console.error('Error loading user for edit:', err);
+          setError('Failed to load user for editing');
+        }
+      };
+
+      loadAndEditUser();
+      // Clear the navigation state
+      window.history.replaceState({}, document.title);
+    }
   }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -723,7 +798,11 @@ const Users: React.FC = () => {
       if (activeTab === 1) roleFilterValue = 'player';
       else if (activeTab === 2) roleFilterValue = 'coach';
       else if (activeTab === 3) roleFilterValue = 'guardian';
-      else if (activeTab === 4) roleFilterValue = 'admin,owner'; // Admin tab includes owners
+      else if (activeTab === 4) {
+        // Admin tab includes admin, owner, and all custom roles (administrative roles)
+        const customRoles = organizationSettings?.customRoles || [];
+        roleFilterValue = ['admin', 'owner', ...customRoles].join(',');
+      }
       else if (activeTab === 0) {
         // For "All Users" tab, use the dropdown filter value
         roleFilterValue = roleFilter;
@@ -1219,12 +1298,12 @@ service firebase.storage {
         setError('Please enter the full name');
         return;
       }
-    } else if (activeStep === 1 && !isRolePreset) {
+    } else if (activeStep === 1 && !skipRoleAssignmentStep) {
       if (formData.roles.length === 0) {
         setError('Please select at least one role');
         return;
       }
-    } else if ((activeStep === 1 && isRolePreset) || (activeStep === 2 && !isRolePreset)) {
+    } else if ((activeStep === 1 && skipRoleAssignmentStep) || (activeStep === 2 && !skipRoleAssignmentStep)) {
       const isPlayerRole = formData.roles.includes('player');
       const isOnlyGuardian = formData.roles.every(role => role === 'guardian');
 
@@ -1703,10 +1782,12 @@ service firebase.storage {
         ));
         break;
       case 4:
-        filteredByTab = users.filter(user => user.roles?.some(role => 
-          Array.isArray(role.role) 
-            ? role.role.includes('admin') || role.role.includes('owner')
-            : role.role === 'admin' || role.role === 'owner'
+        // Admin tab shows admin, owner, and all custom roles (administrative roles)
+        const adminRoles = ['admin', 'owner', ...(organizationSettings?.customRoles || [])];
+        filteredByTab = users.filter(user => user.roles?.some(role =>
+          Array.isArray(role.role)
+            ? role.role.some(r => adminRoles.includes(r))
+            : adminRoles.includes(role.role)
         ));
         break;
       default:
@@ -1951,7 +2032,8 @@ service firebase.storage {
                   presetRole = 'guardian';
                   break;
                 case 4:
-                  presetRole = 'admin';
+                  // Don't preset admin role - let user select roles
+                  presetRole = undefined;
                   break;
                 default:
                   presetRole = undefined;
@@ -2614,10 +2696,10 @@ service firebase.storage {
                         formData.roles.includes('admin') ? 'Edit Admin' :
                         'Edit User'
                       ) : (
-                        isRolePreset && formData.roles[0] === 'player' ? 'Add New Player' :
-                        isRolePreset && formData.roles[0] === 'coach' ? 'Add New Coach' :
-                        isRolePreset && formData.roles[0] === 'guardian' ? 'Add New Guardian' :
-                        isRolePreset && formData.roles[0] === 'admin' ? 'Add New Admin' :
+                        activeTab === 1 ? 'Add New Player' :
+                        activeTab === 2 ? 'Add New Coach' :
+                        activeTab === 3 ? 'Add New Guardian' :
+                        activeTab === 4 ? 'Add New Admin' :
                         'Add New User'
                       )}
                     </h3>
@@ -2625,10 +2707,10 @@ service firebase.storage {
                       {dialogMode === 'edit' ? (
                         'Update user information and settings'
                       ) : (
-                        isRolePreset && formData.roles[0] === 'player' ? 'Create a new player account' :
-                        isRolePreset && formData.roles[0] === 'coach' ? 'Create a new coach account' :
-                        isRolePreset && formData.roles[0] === 'guardian' ? 'Create a new guardian account' :
-                        isRolePreset && formData.roles[0] === 'admin' ? 'Create a new admin account' :
+                        activeTab === 1 ? 'Create a new player account' :
+                        activeTab === 2 ? 'Create a new coach account' :
+                        activeTab === 3 ? 'Create a new guardian account' :
+                        activeTab === 4 ? 'Create a new admin account' :
                         'Create a new member account'
                       )}
                     </p>
@@ -3228,7 +3310,7 @@ service firebase.storage {
                 )}
                 
                 {/* Step 2: Role Assignment - Skip if role is preset or edit mode */}
-                {activeStep === 1 && !isRolePreset && dialogMode === 'add' && (
+                {activeStep === 1 && !skipRoleAssignmentStep && dialogMode === 'add' && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="text-center mb-8">
                       <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -3359,7 +3441,7 @@ service firebase.storage {
                 )}
                 
                 {/* Step 2 or 3: Contact Information (depending on if role is preset) */}
-                {((activeStep === 1 && isRolePreset) || (activeStep === 2 && !isRolePreset)) && (
+                {((activeStep === 1 && skipRoleAssignmentStep) || (activeStep === 2 && !skipRoleAssignmentStep)) && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="text-center mb-8">
                       <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -3377,7 +3459,7 @@ service firebase.storage {
                     </div>
                     
                     {/* Academy Selection - Show when role is preset */}
-                    {isRolePreset && (
+                    {skipRoleAssignmentStep && (
                       <div className="bg-secondary-50 rounded-xl p-6 mb-6">
                         <div className="flex items-center gap-3 mb-4">
                           <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">
@@ -3433,6 +3515,82 @@ service firebase.storage {
                         <p className="text-xs text-secondary-600 font-normal mt-3">
                           {formData.academyId.length === 0 ? 'Organization-wide access' : `${formData.academyId.length} academy(ies) selected`}
                         </p>
+                      </div>
+                    )}
+
+                    {/* Role Selection - Show for Admin tab (activeTab === 4) */}
+                    {activeTab === 4 && (
+                      <div className="bg-secondary-50 rounded-xl p-6 mb-6">
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">
+                            <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                            </svg>
+                          </div>
+                          <div>
+                            <h3 className="font-semibold text-secondary-900">User Roles</h3>
+                            <p className="text-xs text-secondary-600 font-normal">Assign roles to this user</p>
+                          </div>
+                        </div>
+
+                        <Select
+                          value=""
+                          onChange={(e) => {
+                            if (e.target.value && !formData.roles.includes(e.target.value)) {
+                              setFormData({ ...formData, roles: [...formData.roles, e.target.value] });
+                            }
+                          }}
+                        >
+                          <option value="">{formData.roles.length === 0 ? 'Select a role' : 'Add another role'}</option>
+                          {[
+                            'admin',
+                            ...(organizationSettings?.customRoles || [])
+                          ].filter(role => !formData.roles.includes(role)).map((role) => (
+                            <option key={role} value={role}>
+                              {role.charAt(0).toUpperCase() + role.slice(1)}
+                            </option>
+                          ))}
+                        </Select>
+
+                        {formData.roles.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            {formData.roles.map((role) => (
+                              <Badge
+                                key={role}
+                                variant={role === 'admin' ? 'warning' : 'primary'}
+                                className="flex items-center gap-2"
+                              >
+                                {role.charAt(0).toUpperCase() + role.slice(1)}
+                                <button
+                                  onClick={() => setFormData({
+                                    ...formData,
+                                    roles: formData.roles.filter(r => r !== role)
+                                  })}
+                                  className="hover:text-current"
+                                >
+                                  <DeleteIcon />
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+
+                        <p className="text-xs text-secondary-600 font-normal mt-3">
+                          {formData.roles.length === 0
+                            ? <span className="text-error-500">At least one role is required</span>
+                            : `${formData.roles.length} role(s) assigned`
+                          }
+                        </p>
+                        {organizationSettings?.customRoles && organizationSettings.customRoles.length > 0 && (
+                          <p className="text-xs text-secondary-500 mt-1">
+                            Available custom roles: {organizationSettings.customRoles.join(', ')}
+                          </p>
+                        )}
+                        {(!organizationSettings?.customRoles || organizationSettings.customRoles.length === 0) && (
+                          <p className="text-xs text-amber-600 mt-1">
+                            No custom roles configured. Add custom roles in Settings → Role Permissions.
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -3549,7 +3707,7 @@ service firebase.storage {
                 )}
                 
                 {/* Step 3 or 4: Player Details (depending on if role is preset) */}
-                {((activeStep === 2 && isRolePreset && isPlayerRole) || (activeStep === 3 && !isRolePreset && isPlayerRole)) && (
+                {((activeStep === 2 && skipRoleAssignmentStep && isPlayerRole) || (activeStep === 3 && !skipRoleAssignmentStep && isPlayerRole)) && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="text-center mb-8">
                       <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -4051,9 +4209,11 @@ service firebase.storage {
                       onClick={handleNext}
                       disabled={
                         activeStep === 0 ? !formData.name :
-                        (activeStep === 1 && !isRolePreset) ? formData.roles.length === 0 :
-                        ((activeStep === 1 && isRolePreset) || (activeStep === 2 && !isRolePreset)) ? (
+                        (activeStep === 1 && !skipRoleAssignmentStep) ? formData.roles.length === 0 :
+                        ((activeStep === 1 && skipRoleAssignmentStep) || (activeStep === 2 && !skipRoleAssignmentStep)) ? (
                           // Check for validation errors or invalid format
+                          // Also check for roles when admin tab (roles selected in contact step)
+                          (isAdminTab && formData.roles.length === 0) ||
                           !!emailError || !!phoneError ||
                           (formData.email && !isValidEmail(formData.email)) ||
                           (formData.phone && !isValidPhone(formData.phone)) ||
@@ -4080,7 +4240,7 @@ service firebase.storage {
                         (formData.email && !isValidEmail(formData.email)) ||
                         (formData.phone && !isValidPhone(formData.phone)) ||
                         (!formData.roles.includes('player') && !formData.roles.every(role => role === 'guardian') && (!formData.email || !formData.phone || !formData.password)) ||
-                        (isPlayerRole && ((activeStep === 2 && isRolePreset) || (activeStep === 3 && !isRolePreset)) && !isParameterFieldsValid())
+                        (isPlayerRole && ((activeStep === 2 && skipRoleAssignmentStep) || (activeStep === 3 && !skipRoleAssignmentStep)) && !isParameterFieldsValid())
                       }
                       icon={<SaveIcon />}
                       className="bg-gradient-to-r from-success-600 to-success-700 hover:from-success-700 hover:to-success-800 px-8 py-3 shadow-lg"
