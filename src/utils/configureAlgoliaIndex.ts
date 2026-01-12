@@ -38,7 +38,8 @@ export const configureAlgoliaIndex = async () => {
         'filterOnly(hasCoachRole)',
         'filterOnly(hasGuardianRole)',
         'filterOnly(hasAdminRole)',
-        'filterOnly(hasOwnerRole)'
+        'filterOnly(hasOwnerRole)',
+        'filterOnly(hasAcademies)'  // Filter for organization-wide users
       ],
       customRanking: [
         'desc(updatedAt)',
