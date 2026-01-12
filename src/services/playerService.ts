@@ -435,6 +435,47 @@ export const assignProductToPlayer = async (
           );
 
           console.log('🎉 assignProductToPlayer: Receipt created:', receipt.id);
+
+          // Calculate and set nextReceiptDate for the cloud function to pick up
+          const duration = product.recurringDuration || { value: 1, unit: 'months' as const };
+          let nextReceiptDate: Date;
+
+          switch (duration.unit) {
+            case 'days':
+              nextReceiptDate = new Date(now.getTime() + (duration.value * 24 * 60 * 60 * 1000));
+              break;
+            case 'weeks':
+              nextReceiptDate = new Date(now.getTime() + (duration.value * 7 * 24 * 60 * 60 * 1000));
+              break;
+            case 'months':
+              nextReceiptDate = new Date(now);
+              nextReceiptDate.setMonth(now.getMonth() + duration.value);
+              break;
+            case 'years':
+              nextReceiptDate = new Date(now);
+              nextReceiptDate.setFullYear(now.getFullYear() + duration.value);
+              break;
+            default:
+              nextReceiptDate = new Date(now);
+              nextReceiptDate.setMonth(now.getMonth() + 1);
+          }
+
+          // Update assignedProduct with nextReceiptDate so cloud function knows when to generate next receipt
+          const currentAssignedProducts = (await getDoc(playerRef)).data()?.assignedProducts || [];
+          const updatedWithNextDate = currentAssignedProducts.map((ap: any) =>
+            ap.productId === product.id ? {
+              ...ap,
+              nextReceiptDate: Timestamp.fromDate(nextReceiptDate),
+              receiptStatus: 'scheduled' // Change to scheduled so cloud function picks it up
+            } : ap
+          );
+
+          await updateDoc(playerRef, {
+            assignedProducts: updatedWithNextDate,
+            updatedAt: Timestamp.now()
+          });
+
+          console.log('✅ assignProductToPlayer: Next receipt scheduled for:', nextReceiptDate.toLocaleDateString());
         } catch (receiptError: any) {
           console.error('❌ assignProductToPlayer: Failed to create debit receipt:', receiptError);
           throw new Error(`Failed to create receipt: ${receiptError?.message || receiptError}`);

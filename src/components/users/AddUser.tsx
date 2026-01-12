@@ -82,10 +82,6 @@ const AddUser: React.FC = () => {
   const isPlayerRole = formData.roles.includes('player');
   const shouldShowPlayerStep = isPlayerRole;
   const effectiveSteps = shouldShowPlayerStep ? steps : steps.slice(0, 3);
-  
-  // Debug: Log current state
-  console.log('AddUser render - current roles:', formData.roles);
-  console.log('AddUser render - activeStep:', activeStep);
 
   useEffect(() => {
     if (userData) {
@@ -108,58 +104,26 @@ const AddUser: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    console.log('===== AddUser useEffect START =====');
-    console.log('AddUser: organizationSettings:', organizationSettings);
-    console.log('AddUser: organizationSettings?.fieldCategories:', organizationSettings?.fieldCategories);
-    console.log('AddUser: formData.academyId:', formData.academyId);
-    
     if (organizationSettings) {
       let categories: FieldCategory[] = [];
-      
+
       if (formData.academyId.length > 0) {
         const academyId = formData.academyId[0];
-        console.log('AddUser: Getting academy-specific categories for academy:', academyId);
         categories = getFieldCategoriesForAcademy(organizationSettings, academyId) || [];
-        console.log('AddUser: Academy-specific categories result:', categories);
       } else {
-        // Use organization-wide categories when no academy is selected
-        console.log('AddUser: No academy selected, using organization-wide categories');
         categories = organizationSettings.fieldCategories || [];
-        console.log('AddUser: Organization fieldCategories result:', categories);
       }
-      
-      console.log('AddUser: Final categories before sort:', categories);
+
       const sortedCategories = categories.sort((a, b) => a.order - b.order);
-      console.log('AddUser: Setting fieldCategories to:', sortedCategories);
-
-      // Debug: Log field details for multiselect fields
-      sortedCategories.forEach(cat => {
-        cat.fields?.forEach(field => {
-          if (field.type === 'multiselect') {
-            console.log('🔍 Found multiselect field in category:', {
-              category: cat.name,
-              fieldName: field.name,
-              fieldType: field.type,
-              options: field.options,
-              optionsCount: field.options?.length
-            });
-          }
-        });
-      });
-
       setFieldCategories(sortedCategories);
     } else {
-      console.log('AddUser: No organization settings found, setting empty array');
       setFieldCategories([]);
     }
-    console.log('===== AddUser useEffect END =====');
   }, [organizationSettings, formData.academyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initialize default values when fieldCategories change
   useEffect(() => {
     if (fieldCategories.length === 0) return;
-
-    console.log('🔄 Initializing default values for fieldCategories:', fieldCategories.length);
 
     const newDynamicFields: Record<string, any> = { ...formData.dynamicFields };
     let hasChanges = false;
@@ -169,15 +133,6 @@ const AddUser: React.FC = () => {
         category.fields?.forEach(field => {
           const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
 
-          console.log(`🔍 Checking field "${field.name}":`, {
-            fieldKey,
-            currentValue: newDynamicFields[fieldKey],
-            defaultValue: field.defaultValue,
-            type: field.type
-          });
-
-          // Only set default if field doesn't have a value AND defaultValue exists
-          // For arrays (multiselect), also check if array has elements
           const hasDefaultValue = field.defaultValue !== undefined &&
                                   field.defaultValue !== null &&
                                   field.defaultValue !== '' &&
@@ -226,14 +181,12 @@ const AddUser: React.FC = () => {
 
             newDynamicFields[fieldKey] = defaultVal;
             hasChanges = true;
-            console.log(`✅ Set default for "${field.name}":`, defaultVal);
           }
         });
       }
     });
 
     if (hasChanges) {
-      console.log('📝 Updating formData.dynamicFields with defaults:', newDynamicFields);
       setFormData(prev => ({
         ...prev,
         dynamicFields: newDynamicFields
@@ -245,19 +198,14 @@ const AddUser: React.FC = () => {
     try {
       setLoading(true);
       const organizationId = userData?.roles?.[0]?.organizationId;
-      
-      console.log('AddUser: loadInitialData - organizationId:', organizationId);
-      
+
       if (organizationId) {
         const [academyData, userData_list, settings] = await Promise.all([
           getAcademiesByOrganization(organizationId),
           getUsersByOrganization(organizationId),
           getSettingsByOrganization(organizationId)
         ]);
-        
-        console.log('AddUser: loadInitialData - settings loaded:', settings);
-        console.log('AddUser: loadInitialData - settings.fieldCategories:', settings?.fieldCategories);
-        
+
         setAcademies(academyData);
         setOrganizationSettings(settings);
         
@@ -407,7 +355,6 @@ const AddUser: React.FC = () => {
           roles: userRoles,
           ...(profilePictureURL && { photoURL: profilePictureURL })
         });
-        console.log('User roles assigned');
 
         // Build complete user data for optimistic update
         createdUserData = {
@@ -471,7 +418,6 @@ const AddUser: React.FC = () => {
 
       // Add to context for instant UI update
       addUser(createdUserData);
-      console.log('✅ User added to context');
 
       // Navigate back
       navigate('/users', {
@@ -489,21 +435,9 @@ const AddUser: React.FC = () => {
 
   const renderParameterField = (field: ParameterField) => {
     const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
-    // Use !== undefined to properly handle false and 0 values
     const currentValue = formData.dynamicFields[fieldKey] !== undefined
       ? formData.dynamicFields[fieldKey]
       : field.defaultValue;
-
-    // Debug logging for multiselect fields
-    if (field.type === 'multiselect') {
-      console.log('🔍 Rendering multiselect field:', {
-        name: field.name,
-        type: field.type,
-        options: field.options,
-        optionsLength: field.options?.length,
-        currentValue
-      });
-    }
 
     const handleFieldChange = (value: any) => {
       setFormData({
@@ -790,12 +724,9 @@ const AddUser: React.FC = () => {
 
   const addRole = (roleToAdd: string) => {
     if (!formData.roles.includes(roleToAdd)) {
-      const newRoles = [...formData.roles, roleToAdd];
-      console.log('Adding role:', roleToAdd);
-      console.log('New roles array:', newRoles);
       setFormData({
         ...formData,
-        roles: newRoles
+        roles: [...formData.roles, roleToAdd]
       });
     }
   };
@@ -1000,7 +931,9 @@ const AddUser: React.FC = () => {
               {/* Roles */}
               <div className="space-y-4">
                 <label className="block text-sm font-medium text-gray-700">Roles</label>
-                <Select
+
+                <select
+                  className="block w-full px-3 py-2 text-sm border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                   value=""
                   onChange={(e) => {
                     if (e.target.value) {
@@ -1009,18 +942,19 @@ const AddUser: React.FC = () => {
                   }}
                 >
                   <option value="">Select a role to add</option>
-                  {['owner', 'admin', 'coach', 'player', 'guardian'].filter(role => !formData.roles.includes(role)).map((role) => (
+                  <option value="admin">Admin</option>
+                  {(organizationSettings?.customRoles || []).map((role) => (
                     <option key={role} value={role}>
                       {role.charAt(0).toUpperCase() + role.slice(1)}
                     </option>
                   ))}
-                </Select>
-                
+                </select>
+
                 {formData.roles.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {formData.roles.map((role) => (
-                      <Badge 
-                        key={role} 
+                      <Badge
+                        key={role}
                         variant={role === 'owner' ? 'error' : role === 'admin' ? 'warning' : 'default'}
                         className="flex items-center gap-2"
                       >
@@ -1035,10 +969,21 @@ const AddUser: React.FC = () => {
                     ))}
                   </div>
                 )}
-                
+
                 <p className="text-sm text-gray-500">
                   {formData.roles.length === 0 ? 'At least one role is required' : `Selected ${formData.roles.length} role(s)`}
                 </p>
+
+                {/* Show available custom roles info */}
+                {organizationSettings?.customRoles && organizationSettings.customRoles.length > 0 ? (
+                  <p className="text-xs text-gray-400">
+                    Custom roles available: {organizationSettings.customRoles.join(', ')}
+                  </p>
+                ) : (
+                  <p className="text-xs text-amber-600">
+                    No custom roles configured. Add custom roles in Settings &gt; Role Permissions.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -1047,29 +992,15 @@ const AddUser: React.FC = () => {
           {activeStep === 2 && (
             <div className="space-y-6">
               <h2 className="text-xl font-semibold text-gray-900">Contact Information</h2>
-              
-              {/* DEBUG INFO - Remove this later */}
-              <div className="p-3 bg-yellow-100 border border-yellow-300 rounded">
-                <p><strong>Debug Info:</strong></p>
-                <p>Current roles: {JSON.stringify(formData.roles)}</p>
-                <p>Has login role: {formData.roles.some(role => !['player', 'guardian'].includes(role)) ? 'YES' : 'NO'}</p>
-                <p>Only player/guardian: {formData.roles.every(role => ['player', 'guardian'].includes(role)) ? 'YES' : 'NO'}</p>
-              </div>
-              
+
               {(() => {
                 const hasLoginRole = formData.roles.some(role => 
                   !['player', 'guardian'].includes(role)
                 );
-                const onlyPlayerGuardian = formData.roles.every(role => 
+                const onlyPlayerGuardian = formData.roles.every(role =>
                   ['player', 'guardian'].includes(role)
                 );
-                
-                // Debug logging
-                console.log('AddUser Contact Step Debug:');
-                console.log('formData.roles:', formData.roles);
-                console.log('hasLoginRole:', hasLoginRole);
-                console.log('onlyPlayerGuardian:', onlyPlayerGuardian);
-                
+
                 if (onlyPlayerGuardian) {
                   const hasEmail = formData.email.trim().length > 0;
                   const hasPhone = formData.phone.trim().length > 0;
@@ -1122,25 +1053,16 @@ const AddUser: React.FC = () => {
                         required
                         helperText="Required for this role"
                       />
-                      {(() => {
-                        console.log('Password field check - hasLoginRole:', hasLoginRole);
-                        if (hasLoginRole) {
-                          console.log('Rendering password field');
-                          return (
-                            <Input
-                              label="Password"
-                              type="password"
-                              value={formData.password}
-                              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                              required
-                              helperText="User will use this password to login"
-                            />
-                          );
-                        } else {
-                          console.log('Not rendering password field');
-                          return null;
-                        }
-                      })()}
+                      {hasLoginRole && (
+                        <Input
+                          label="Password"
+                          type="password"
+                          value={formData.password}
+                          onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                          required
+                          helperText="User will use this password to login"
+                        />
+                      )}
                     </div>
                   );
                 }
@@ -1149,14 +1071,7 @@ const AddUser: React.FC = () => {
           )}
           
           {/* Step 4: Player Details */}
-          {activeStep === 3 && isPlayerRole && (() => {
-            // Debug logging moved outside JSX
-            console.log('AddUser: Rendering player details, fieldCategories.length:', fieldCategories.length);
-            console.log('AddUser: fieldCategories:', fieldCategories);
-            console.log('AddUser: organizationSettings:', organizationSettings);
-            console.log('AddUser: formData.academyId:', formData.academyId);
-            
-            return (
+          {activeStep === 3 && isPlayerRole && (
               <div className="space-y-6">
                 <h2 className="text-xl font-semibold text-gray-900">Player Details</h2>
                 
@@ -1194,15 +1109,10 @@ const AddUser: React.FC = () => {
                   <div className="space-y-6">
                     <h3 className="text-lg font-medium text-gray-900">Additional Information</h3>
                     {fieldCategories
-                      .filter(category => {
-                        console.log('AddUser: Filtering category:', category.name, 'type:', category.type);
-                        return category.type === 'parameter' || category.type === 'mixed';
-                      })
+                      .filter(category => category.type === 'parameter' || category.type === 'mixed')
                       .sort((a, b) => a.order - b.order)
                       .map(category => {
                         const categoryFields = category.fields || [];
-                        console.log('AddUser: Category:', category.name, 'Fields:', categoryFields);
-                        
                         return categoryFields.length > 0 ? (
                           <Card key={category.id} className="overflow-visible">
                             <CardBody>
@@ -1225,22 +1135,14 @@ const AddUser: React.FC = () => {
                       })}
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-medium text-gray-900">Additional Information</h3>
-                    <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
-                      <p className="text-gray-600">
-                        DEBUG: No field categories found. 
-                        Organization settings loaded: {organizationSettings ? 'YES' : 'NO'}
-                        {organizationSettings && (
-                          <span> | Categories: {organizationSettings.fieldCategories?.length || 0}</span>
-                        )}
-                      </p>
-                    </div>
+                  <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                    <p className="text-gray-600">
+                      No additional fields configured for this academy. You can add custom fields in Settings.
+                    </p>
                   </div>
                 )}
               </div>
-            );
-          })()}
+          )}
           
           {/* Action Buttons */}
           <div className="flex flex-col sm:flex-row sm:justify-between pt-6 border-t border-gray-200 gap-3">

@@ -314,24 +314,57 @@ const PlayerDetails: React.FC = () => {
   const handleSubmitProductLink = async () => {
     if (!player || !selectedProductId || !selectedOrganization?.id) return;
 
-    // Validate inputs
-    if (!linkingInvoiceDate || !linkingDeadlineDate) {
-      showToast('Please select both invoice date and deadline date', 'error');
-      return;
-    }
-
-    const invoiceDateObj = new Date(linkingInvoiceDate);
-    const deadlineDateObj = new Date(linkingDeadlineDate);
-
-    if (deadlineDateObj <= invoiceDateObj) {
-      showToast('Deadline date must be after invoice date', 'error');
-      return;
-    }
-
     const selectedProduct = availableProducts.find(p => p.id === selectedProductId);
     if (!selectedProduct) {
       showToast('Please select a product', 'error');
       return;
+    }
+
+    const isOneTimeProduct = selectedProduct.productType === 'one-time';
+
+    // Validate inputs based on product type and generation option
+    let invoiceDateObj: Date;
+    let deadlineDateObj: Date;
+
+    if (linkingInvoiceGeneration === 'immediate') {
+      if (isOneTimeProduct) {
+        // One-time immediate: only deadline required, invoice date = today
+        if (!linkingDeadlineDate) {
+          showToast('Please select a payment deadline', 'error');
+          return;
+        }
+        invoiceDateObj = new Date();
+        invoiceDateObj.setHours(0, 0, 0, 0);
+        deadlineDateObj = new Date(linkingDeadlineDate);
+        if (deadlineDateObj <= invoiceDateObj) {
+          showToast('Deadline date must be after today', 'error');
+          return;
+        }
+      } else {
+        // Recurring immediate: both dates required
+        if (!linkingInvoiceDate || !linkingDeadlineDate) {
+          showToast('Please select both invoice date and deadline date', 'error');
+          return;
+        }
+        invoiceDateObj = new Date(linkingInvoiceDate);
+        deadlineDateObj = new Date(linkingDeadlineDate);
+        if (deadlineDateObj <= invoiceDateObj) {
+          showToast('Deadline date must be after invoice date', 'error');
+          return;
+        }
+      }
+    } else {
+      // Scheduled - both dates required for all product types
+      if (!linkingInvoiceDate || !linkingDeadlineDate) {
+        showToast('Please select both invoice date and deadline date', 'error');
+        return;
+      }
+      invoiceDateObj = new Date(linkingInvoiceDate);
+      deadlineDateObj = new Date(linkingDeadlineDate);
+      if (deadlineDateObj <= invoiceDateObj) {
+        showToast('Deadline date must be after invoice date', 'error');
+        return;
+      }
     }
 
     try {
@@ -1588,39 +1621,8 @@ const PlayerDetails: React.FC = () => {
                   <div className="border-t border-secondary-200 pt-5 mt-2">
                     <h4 className="text-sm font-medium text-secondary-700 mb-4">Configure Invoice Settings</h4>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="linking-invoice-date">Invoice Date</Label>
-                        <Input
-                          id="linking-invoice-date"
-                          type="date"
-                          value={linkingInvoiceDate}
-                          onChange={(e) => setLinkingInvoiceDate(e.target.value)}
-                          required
-                          min={new Date().toISOString().split('T')[0]}
-                        />
-                        <p className="text-xs text-secondary-500 mt-1">
-                          When the invoice will be created
-                        </p>
-                      </div>
-
-                      <div>
-                        <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
-                        <Input
-                          id="linking-deadline-date"
-                          type="date"
-                          value={linkingDeadlineDate}
-                          onChange={(e) => setLinkingDeadlineDate(e.target.value)}
-                          required
-                          min={linkingInvoiceDate || new Date().toISOString().split('T')[0]}
-                        />
-                        <p className="text-xs text-secondary-500 mt-1">
-                          Payment must be made by this date
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4">
+                    {/* Invoice Generation - Show first */}
+                    <div className="mb-4">
                       <Label>Invoice Generation</Label>
                       <div className="flex flex-wrap gap-3 mt-2">
                         <label className={`
@@ -1664,12 +1666,115 @@ const PlayerDetails: React.FC = () => {
                       </div>
                       <p className="text-xs text-secondary-500 mt-2">
                         {linkingInvoiceGeneration === 'immediate'
-                          ? 'A debit receipt will be created immediately for this product.'
+                          ? availableProducts.find(p => p.id === selectedProductId)?.productType === 'one-time'
+                            ? 'A debit receipt will be created immediately with today\'s date.'
+                            : 'A debit receipt will be created immediately for this product.'
                           : availableProducts.find(p => p.id === selectedProductId)?.productType === 'recurring'
-                          ? 'Receipt will be created at the start of the billing cycle.'
-                          : 'Receipt will be created on the invoice date.'}
+                            ? 'The product will be linked but no invoice will be created yet.'
+                            : 'The product will be linked and invoice will be created on the scheduled date.'}
                       </p>
                     </div>
+
+                    {/* Date fields - Show based on product type and generation option */}
+                    {(() => {
+                      const selectedProduct = availableProducts.find(p => p.id === selectedProductId);
+                      const isOneTime = selectedProduct?.productType === 'one-time';
+
+                      if (isOneTime) {
+                        // One-time products
+                        if (linkingInvoiceGeneration === 'immediate') {
+                          // Only show deadline (invoice date = today)
+                          return (
+                            <div className="grid grid-cols-1 gap-4 mb-4">
+                              <div>
+                                <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
+                                <Input
+                                  id="linking-deadline-date"
+                                  type="date"
+                                  value={linkingDeadlineDate}
+                                  onChange={(e) => setLinkingDeadlineDate(e.target.value)}
+                                  required
+                                  min={new Date().toISOString().split('T')[0]}
+                                />
+                                <p className="text-xs text-secondary-500 mt-1">
+                                  Payment must be made by this date
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        } else {
+                          // Scheduled: show both invoice date and deadline
+                          return (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                              <div>
+                                <Label htmlFor="linking-invoice-date">Invoice Date</Label>
+                                <Input
+                                  id="linking-invoice-date"
+                                  type="date"
+                                  value={linkingInvoiceDate}
+                                  onChange={(e) => setLinkingInvoiceDate(e.target.value)}
+                                  required
+                                  min={new Date().toISOString().split('T')[0]}
+                                />
+                                <p className="text-xs text-secondary-500 mt-1">
+                                  When the invoice will be created
+                                </p>
+                              </div>
+                              <div>
+                                <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
+                                <Input
+                                  id="linking-deadline-date"
+                                  type="date"
+                                  value={linkingDeadlineDate}
+                                  onChange={(e) => setLinkingDeadlineDate(e.target.value)}
+                                  required
+                                  min={linkingInvoiceDate || new Date().toISOString().split('T')[0]}
+                                />
+                                <p className="text-xs text-secondary-500 mt-1">
+                                  Payment must be made by this date
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        }
+                      } else {
+                        // Recurring products - always show both dates
+                        return (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <Label htmlFor="linking-invoice-date">Invoice Date</Label>
+                              <Input
+                                id="linking-invoice-date"
+                                type="date"
+                                value={linkingInvoiceDate}
+                                onChange={(e) => setLinkingInvoiceDate(e.target.value)}
+                                required
+                                min={new Date().toISOString().split('T')[0]}
+                              />
+                              <p className="text-xs text-secondary-500 mt-1">
+                                {linkingInvoiceGeneration === 'immediate'
+                                  ? 'When the invoice will be created'
+                                  : 'When the first invoice will be created'}
+                              </p>
+                            </div>
+                            <div>
+                              <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
+                              <Input
+                                id="linking-deadline-date"
+                                type="date"
+                                value={linkingDeadlineDate}
+                                onChange={(e) => setLinkingDeadlineDate(e.target.value)}
+                                required
+                                min={linkingInvoiceDate || new Date().toISOString().split('T')[0]}
+                              />
+                              <p className="text-xs text-secondary-500 mt-1">
+                                Payment must be made by this date
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      }
+                    })()}
 
                     {/* Summary */}
                     {(() => {
