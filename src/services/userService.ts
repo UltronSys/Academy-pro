@@ -20,6 +20,7 @@ export const createUser = async (userData: Omit<User, 'createdAt' | 'updatedAt'>
     const timestamp = new Date();
     const userWithTimestamps = {
       ...userData,
+      name: userData.name?.trim() || '', // Trim whitespace from name
       balance: 0, // Initialize balance to 0
       outstandingBalance: {}, // Initialize outstanding balance per organization
       availableCredits: {}, // Initialize available credits per organization
@@ -71,10 +72,15 @@ export const getUserById = async (userId: string): Promise<User | null> => {
 
 export const updateUser = async (userId: string, data: Partial<User>) => {
   try {
-    console.log('updateUser: Updating user', userId, 'with data:', data);
+    // Trim name if it's being updated
+    const processedData = {
+      ...data,
+      ...(data.name !== undefined && { name: data.name.trim() })
+    };
+    console.log('updateUser: Updating user', userId, 'with data:', processedData);
     const userRef = doc(db, 'users', userId);
     await updateDoc(userRef, {
-      ...data,
+      ...processedData,
       updatedAt: serverTimestamp()
     });
     console.log('updateUser: User updated successfully');

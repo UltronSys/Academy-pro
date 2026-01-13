@@ -41,7 +41,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.fixRecurringProductsDates = void 0;
+exports.backfillPlayerNextReceiptDates = exports.fixRecurringProductsDates = void 0;
 const functions = __importStar(require("firebase-functions"));
 const firebase_1 = require("../config/firebase");
 /**
@@ -142,6 +142,106 @@ exports.fixRecurringProductsDates = functions.https.onRequest(async (req, res) =
     }
     catch (error) {
         console.error('❌ Migration error:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+/**
+ * Calculate the earliest nextReceiptDate from assigned products
+ */
+function calculateEarliestReceiptDate(assignedProducts) {
+    if (!assignedProducts || assignedProducts.length === 0) {
+        return null;
+    }
+    // Filter for active, scheduled products with a nextReceiptDate
+    const scheduledProducts = assignedProducts.filter(ap => ap.status === 'active' &&
+        ap.receiptStatus === 'scheduled' &&
+        ap.nextReceiptDate);
+    if (scheduledProducts.length === 0) {
+        return null;
+    }
+    // Find the earliest date
+    let earliest = null;
+    for (const product of scheduledProducts) {
+        if (product.nextReceiptDate) {
+            if (!earliest || product.nextReceiptDate.toMillis() < earliest.toMillis()) {
+                earliest = product.nextReceiptDate;
+            }
+        }
+    }
+    return earliest;
+}
+/**
+ * One-time migration to set player-level nextReceiptDate field
+ * This field is used by the scheduler to efficiently query players with due receipts
+ *
+ * Run via HTTP POST to: /backfillPlayerNextReceiptDates
+ */
+exports.backfillPlayerNextReceiptDates = functions.https.onRequest(async (req, res) => {
+    // Only allow POST requests
+    if (req.method !== 'POST') {
+        res.status(405).send('Method not allowed. Use POST.');
+        return;
+    }
+    console.log('🔧 Starting backfill of player-level nextReceiptDate...');
+    let totalPlayers = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+    try {
+        // Query all players
+        const playersSnapshot = await firebase_1.db.collection('players').get();
+        totalPlayers = playersSnapshot.size;
+        console.log(`📊 Found ${totalPlayers} players to process`);
+        for (const playerDoc of playersSnapshot.docs) {
+            const playerId = playerDoc.id;
+            const playerData = playerDoc.data();
+            const assignedProducts = playerData.assignedProducts || [];
+            try {
+                // Calculate the earliest nextReceiptDate from assigned products
+                const earliestDate = calculateEarliestReceiptDate(assignedProducts);
+                // Check current value
+                const currentNextReceiptDate = playerData.nextReceiptDate;
+                if (earliestDate) {
+                    // Has scheduled products - set nextReceiptDate
+                    await firebase_1.db.collection('players').doc(playerId).update({
+                        nextReceiptDate: earliestDate,
+                        updatedAt: firebase_1.admin.firestore.FieldValue.serverTimestamp()
+                    });
+                    updatedCount++;
+                    console.log(`✅ Updated player ${playerId} with nextReceiptDate: ${earliestDate.toDate().toLocaleDateString()}`);
+                }
+                else if (currentNextReceiptDate !== null && currentNextReceiptDate !== undefined) {
+                    // No scheduled products but has a nextReceiptDate - clear it
+                    await firebase_1.db.collection('players').doc(playerId).update({
+                        nextReceiptDate: null,
+                        updatedAt: firebase_1.admin.firestore.FieldValue.serverTimestamp()
+                    });
+                    updatedCount++;
+                    console.log(`✅ Cleared nextReceiptDate for player ${playerId} (no scheduled products)`);
+                }
+                else {
+                    // No scheduled products and no existing nextReceiptDate - skip
+                    skippedCount++;
+                }
+            }
+            catch (error) {
+                errorCount++;
+                console.error(`❌ Error processing player ${playerId}:`, error);
+            }
+        }
+        const summary = {
+            message: 'Backfill completed',
+            totalPlayers,
+            updatedCount,
+            skippedCount,
+            errorCount,
+            timestamp: new Date().toISOString()
+        };
+        console.log('🎉 Backfill completed:', summary);
+        res.status(200).json(summary);
+    }
+    catch (error) {
+        console.error('❌ Error in backfill:', error);
         res.status(500).json({ error: error.message || 'Internal server error' });
     }
 });

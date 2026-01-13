@@ -43,6 +43,10 @@ const PlayerDetails: React.FC = () => {
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [linkingInvoiceDate, setLinkingInvoiceDate] = useState<string>('');
   const [linkingDeadlineDate, setLinkingDeadlineDate] = useState<string>('');
+  const [linkingBillingDay, setLinkingBillingDay] = useState<number>(1); // Day of month (1-28) for recurring
+  const [linkingBillingDayOption, setLinkingBillingDayOption] = useState<'beginning' | 'end' | 'custom'>('beginning');
+  const [linkingDeadlineDays, setLinkingDeadlineDays] = useState<number>(30); // Days after invoice for payment
+  const [linkingCreateCurrentMonth, setLinkingCreateCurrentMonth] = useState<boolean>(true); // Create invoice for current month
   const [linkingInvoiceGeneration, setLinkingInvoiceGeneration] = useState<'immediate' | 'scheduled'>('immediate');
   const [linkingProduct, setLinkingProduct] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
@@ -290,6 +294,10 @@ const PlayerDetails: React.FC = () => {
       
       setLinkingInvoiceDate(today.toISOString().split('T')[0]);
       setLinkingDeadlineDate(defaultDeadline.toISOString().split('T')[0]);
+      setLinkingBillingDay(1);
+      setLinkingBillingDayOption('beginning');
+      setLinkingDeadlineDays(30);
+      setLinkingCreateCurrentMonth(true);
       setSelectedProductId('');
       setLinkingInvoiceGeneration('immediate');
       
@@ -307,6 +315,10 @@ const PlayerDetails: React.FC = () => {
     setSelectedProductId('');
     setLinkingInvoiceDate('');
     setLinkingDeadlineDate('');
+    setLinkingBillingDay(1);
+    setLinkingBillingDayOption('beginning');
+    setLinkingDeadlineDays(30);
+    setLinkingCreateCurrentMonth(true);
     setLinkingInvoiceGeneration('immediate');
     setProductSearchQuery('');
   };
@@ -320,41 +332,70 @@ const PlayerDetails: React.FC = () => {
       return;
     }
 
-    const isOneTimeProduct = selectedProduct.productType === 'one-time';
+    const isRecurringProduct = selectedProduct.productType === 'recurring';
+
+    // Get actual billing day based on option
+    const getActualBillingDay = (): number => {
+      if (linkingBillingDayOption === 'beginning') return 1;
+      if (linkingBillingDayOption === 'end') return 28;
+      return linkingBillingDay;
+    };
+
+    // Helper to calculate first invoice date from billing day (for next occurrence)
+    const calculateNextBillingDate = (billingDay: number): Date => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const currentDay = today.getDate();
+
+      let firstInvoice = new Date(today);
+      if (currentDay < billingDay) {
+        // Billing day is still ahead this month
+        firstInvoice.setDate(billingDay);
+      } else {
+        // Billing day has passed, use next month
+        firstInvoice.setMonth(firstInvoice.getMonth() + 1);
+        firstInvoice.setDate(billingDay);
+      }
+      return firstInvoice;
+    };
 
     // Validate inputs based on product type and generation option
     let invoiceDateObj: Date;
     let deadlineDateObj: Date;
+    let effectiveInvoiceGeneration: 'immediate' | 'scheduled' = linkingInvoiceGeneration;
 
-    if (linkingInvoiceGeneration === 'immediate') {
-      if (isOneTimeProduct) {
-        // One-time immediate: only deadline required, invoice date = today
-        if (!linkingDeadlineDate) {
-          showToast('Please select a payment deadline', 'error');
-          return;
-        }
+    if (isRecurringProduct) {
+      // For recurring products, use the new checkbox logic
+      if (linkingCreateCurrentMonth) {
+        // Create invoice for current month (immediate)
         invoiceDateObj = new Date();
         invoiceDateObj.setHours(0, 0, 0, 0);
-        deadlineDateObj = new Date(linkingDeadlineDate);
-        if (deadlineDateObj <= invoiceDateObj) {
-          showToast('Deadline date must be after today', 'error');
-          return;
-        }
+        deadlineDateObj = new Date(invoiceDateObj);
+        deadlineDateObj.setDate(deadlineDateObj.getDate() + linkingDeadlineDays);
+        effectiveInvoiceGeneration = 'immediate';
       } else {
-        // Recurring immediate: both dates required
-        if (!linkingInvoiceDate || !linkingDeadlineDate) {
-          showToast('Please select both invoice date and deadline date', 'error');
-          return;
-        }
-        invoiceDateObj = new Date(linkingInvoiceDate);
-        deadlineDateObj = new Date(linkingDeadlineDate);
-        if (deadlineDateObj <= invoiceDateObj) {
-          showToast('Deadline date must be after invoice date', 'error');
-          return;
-        }
+        // Start from the chosen billing day (scheduled)
+        const actualBillingDay = getActualBillingDay();
+        invoiceDateObj = calculateNextBillingDate(actualBillingDay);
+        deadlineDateObj = new Date(invoiceDateObj);
+        deadlineDateObj.setDate(deadlineDateObj.getDate() + linkingDeadlineDays);
+        effectiveInvoiceGeneration = 'scheduled';
+      }
+    } else if (linkingInvoiceGeneration === 'immediate') {
+      // One-time immediate: only deadline required, invoice date = today
+      if (!linkingDeadlineDate) {
+        showToast('Please select a payment deadline', 'error');
+        return;
+      }
+      invoiceDateObj = new Date();
+      invoiceDateObj.setHours(0, 0, 0, 0);
+      deadlineDateObj = new Date(linkingDeadlineDate);
+      if (deadlineDateObj <= invoiceDateObj) {
+        showToast('Deadline date must be after today', 'error');
+        return;
       }
     } else {
-      // Scheduled - both dates required for all product types
+      // One-time scheduled: both dates required
       if (!linkingInvoiceDate || !linkingDeadlineDate) {
         showToast('Please select both invoice date and deadline date', 'error');
         return;
@@ -378,7 +419,7 @@ const PlayerDetails: React.FC = () => {
         selectedProduct.academyId,
         invoiceDateObj,
         deadlineDateObj,
-        linkingInvoiceGeneration
+        effectiveInvoiceGeneration
       );
 
       showToast('Product linked successfully!', 'success');
@@ -1621,124 +1662,213 @@ const PlayerDetails: React.FC = () => {
                   <div className="border-t border-secondary-200 pt-5 mt-2">
                     <h4 className="text-sm font-medium text-secondary-700 mb-4">Configure Invoice Settings</h4>
 
-                    {/* Invoice Generation - Show first */}
-                    <div className="mb-4">
-                      <Label>Invoice Generation</Label>
-                      <div className="flex flex-wrap gap-3 mt-2">
-                        <label className={`
-                          flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
-                          ${linkingInvoiceGeneration === 'immediate'
-                            ? 'border-primary-500 bg-primary-50 text-primary-700'
-                            : 'border-secondary-200 hover:border-secondary-300'
-                          }
-                        `}>
-                          <input
-                            type="radio"
-                            value="immediate"
-                            checked={linkingInvoiceGeneration === 'immediate'}
-                            onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
-                            className="sr-only"
-                          />
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                          </svg>
-                          <span className="text-sm font-medium">Create immediately</span>
-                        </label>
-                        <label className={`
-                          flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
-                          ${linkingInvoiceGeneration === 'scheduled'
-                            ? 'border-primary-500 bg-primary-50 text-primary-700'
-                            : 'border-secondary-200 hover:border-secondary-300'
-                          }
-                        `}>
-                          <input
-                            type="radio"
-                            value="scheduled"
-                            checked={linkingInvoiceGeneration === 'scheduled'}
-                            onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
-                            className="sr-only"
-                          />
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          <span className="text-sm font-medium">Schedule for later</span>
-                        </label>
-                      </div>
-                      <p className="text-xs text-secondary-500 mt-2">
-                        {linkingInvoiceGeneration === 'immediate'
-                          ? availableProducts.find(p => p.id === selectedProductId)?.productType === 'one-time'
-                            ? 'A debit receipt will be created immediately with today\'s date.'
-                            : 'A debit receipt will be created immediately for this product.'
-                          : availableProducts.find(p => p.id === selectedProductId)?.productType === 'recurring'
-                            ? 'The product will be linked but no invoice will be created yet.'
-                            : 'The product will be linked and invoice will be created on the scheduled date.'}
-                      </p>
-                    </div>
+                    {/* Invoice Generation Settings */}
+                    {(() => {
+                      const selectedProduct = availableProducts.find(p => p.id === selectedProductId);
+                      const isRecurring = selectedProduct?.productType === 'recurring';
 
-                    {/* Date fields - Show based on product type and generation option */}
+                      if (isRecurring) {
+                        // Recurring product - new simplified UI
+                        return (
+                          <>
+                            {/* Billing Day Selection */}
+                            <div className="mb-4">
+                              <Label>When will invoices be generated each month?</Label>
+                              <div className="flex flex-wrap gap-3 mt-2">
+                                <label className={`
+                                  flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                                  ${linkingBillingDayOption === 'beginning'
+                                    ? 'border-primary-500 bg-primary-50 text-primary-700'
+                                    : 'border-secondary-200 hover:border-secondary-300'
+                                  }
+                                `}>
+                                  <input
+                                    type="radio"
+                                    value="beginning"
+                                    checked={linkingBillingDayOption === 'beginning'}
+                                    onChange={() => setLinkingBillingDayOption('beginning')}
+                                    className="sr-only"
+                                  />
+                                  <span className="text-sm font-medium">Beginning of month (1st)</span>
+                                </label>
+                                <label className={`
+                                  flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                                  ${linkingBillingDayOption === 'end'
+                                    ? 'border-primary-500 bg-primary-50 text-primary-700'
+                                    : 'border-secondary-200 hover:border-secondary-300'
+                                  }
+                                `}>
+                                  <input
+                                    type="radio"
+                                    value="end"
+                                    checked={linkingBillingDayOption === 'end'}
+                                    onChange={() => setLinkingBillingDayOption('end')}
+                                    className="sr-only"
+                                  />
+                                  <span className="text-sm font-medium">End of month (28th)</span>
+                                </label>
+                                <label className={`
+                                  flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                                  ${linkingBillingDayOption === 'custom'
+                                    ? 'border-primary-500 bg-primary-50 text-primary-700'
+                                    : 'border-secondary-200 hover:border-secondary-300'
+                                  }
+                                `}>
+                                  <input
+                                    type="radio"
+                                    value="custom"
+                                    checked={linkingBillingDayOption === 'custom'}
+                                    onChange={() => setLinkingBillingDayOption('custom')}
+                                    className="sr-only"
+                                  />
+                                  <span className="text-sm font-medium">Custom day</span>
+                                </label>
+                              </div>
+
+                              {/* Custom day dropdown */}
+                              {linkingBillingDayOption === 'custom' && (
+                                <div className="mt-3">
+                                  <select
+                                    value={linkingBillingDay}
+                                    onChange={(e) => setLinkingBillingDay(Number(e.target.value))}
+                                    className="w-full sm:w-48 px-3 py-2 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                                  >
+                                    {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
+                                      <option key={day} value={day}>
+                                        {day === 1 ? '1st' : day === 2 ? '2nd' : day === 3 ? '3rd' : `${day}th`} of each month
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Payment Due After */}
+                            <div className="mb-4">
+                              <Label htmlFor="linking-deadline-days">Payment Due After</Label>
+                              <select
+                                id="linking-deadline-days"
+                                value={linkingDeadlineDays}
+                                onChange={(e) => setLinkingDeadlineDays(Number(e.target.value))}
+                                className="w-full sm:w-48 px-3 py-2 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent mt-2"
+                              >
+                                <option value={7}>7 days</option>
+                                <option value={14}>14 days</option>
+                                <option value={21}>21 days</option>
+                                <option value={30}>30 days</option>
+                                <option value={45}>45 days</option>
+                                <option value={60}>60 days</option>
+                              </select>
+                              <p className="text-xs text-secondary-500 mt-1">
+                                Payment must be made within this period after each invoice
+                              </p>
+                            </div>
+
+                            {/* Create for current month checkbox */}
+                            <div className="mb-4 p-3 bg-secondary-50 rounded-lg">
+                              <label className="flex items-start gap-3 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={linkingCreateCurrentMonth}
+                                  onChange={(e) => setLinkingCreateCurrentMonth(e.target.checked)}
+                                  className="mt-0.5 w-4 h-4 text-primary-600 border-secondary-300 rounded focus:ring-primary-500"
+                                />
+                                <div>
+                                  <span className="text-sm font-medium text-secondary-900">Create invoice for current month</span>
+                                  <p className="text-xs text-secondary-500 mt-0.5">
+                                    {linkingCreateCurrentMonth
+                                      ? 'An invoice will be created now, and future invoices will be generated automatically.'
+                                      : 'No invoice will be created now. Billing will start from the next scheduled date.'}
+                                  </p>
+                                </div>
+                              </label>
+                            </div>
+                          </>
+                        );
+                      } else {
+                        // One-time product - keep existing UI
+                        return (
+                          <div className="mb-4">
+                            <Label>Invoice Generation</Label>
+                            <div className="flex flex-wrap gap-3 mt-2">
+                              <label className={`
+                                flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                                ${linkingInvoiceGeneration === 'immediate'
+                                  ? 'border-primary-500 bg-primary-50 text-primary-700'
+                                  : 'border-secondary-200 hover:border-secondary-300'
+                                }
+                              `}>
+                                <input
+                                  type="radio"
+                                  value="immediate"
+                                  checked={linkingInvoiceGeneration === 'immediate'}
+                                  onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
+                                  className="sr-only"
+                                />
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                                <span className="text-sm font-medium">Create immediately</span>
+                              </label>
+                              <label className={`
+                                flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
+                                ${linkingInvoiceGeneration === 'scheduled'
+                                  ? 'border-primary-500 bg-primary-50 text-primary-700'
+                                  : 'border-secondary-200 hover:border-secondary-300'
+                                }
+                              `}>
+                                <input
+                                  type="radio"
+                                  value="scheduled"
+                                  checked={linkingInvoiceGeneration === 'scheduled'}
+                                  onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
+                                  className="sr-only"
+                                />
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span className="text-sm font-medium">Schedule for later</span>
+                              </label>
+                            </div>
+                            <p className="text-xs text-secondary-500 mt-2">
+                              {linkingInvoiceGeneration === 'immediate'
+                                ? 'A debit receipt will be created immediately with today\'s date.'
+                                : 'The invoice will be created on the scheduled date.'}
+                            </p>
+                          </div>
+                        );
+                      }
+                    })()}
+
+                    {/* Date fields - Only for one-time products */}
                     {(() => {
                       const selectedProduct = availableProducts.find(p => p.id === selectedProductId);
                       const isOneTime = selectedProduct?.productType === 'one-time';
 
-                      if (isOneTime) {
-                        // One-time products
-                        if (linkingInvoiceGeneration === 'immediate') {
-                          // Only show deadline (invoice date = today)
-                          return (
-                            <div className="grid grid-cols-1 gap-4 mb-4">
-                              <div>
-                                <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
-                                <Input
-                                  id="linking-deadline-date"
-                                  type="date"
-                                  value={linkingDeadlineDate}
-                                  onChange={(e) => setLinkingDeadlineDate(e.target.value)}
-                                  required
-                                  min={new Date().toISOString().split('T')[0]}
-                                />
-                                <p className="text-xs text-secondary-500 mt-1">
-                                  Payment must be made by this date
-                                </p>
-                              </div>
+                      if (!isOneTime) return null; // Recurring products are handled above
+
+                      if (linkingInvoiceGeneration === 'immediate') {
+                        // Only show deadline (invoice date = today)
+                        return (
+                          <div className="grid grid-cols-1 gap-4 mb-4">
+                            <div>
+                              <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
+                              <Input
+                                id="linking-deadline-date"
+                                type="date"
+                                value={linkingDeadlineDate}
+                                onChange={(e) => setLinkingDeadlineDate(e.target.value)}
+                                required
+                                min={new Date().toISOString().split('T')[0]}
+                              />
+                              <p className="text-xs text-secondary-500 mt-1">
+                                Payment must be made by this date
+                              </p>
                             </div>
-                          );
-                        } else {
-                          // Scheduled: show both invoice date and deadline
-                          return (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                              <div>
-                                <Label htmlFor="linking-invoice-date">Invoice Date</Label>
-                                <Input
-                                  id="linking-invoice-date"
-                                  type="date"
-                                  value={linkingInvoiceDate}
-                                  onChange={(e) => setLinkingInvoiceDate(e.target.value)}
-                                  required
-                                  min={new Date().toISOString().split('T')[0]}
-                                />
-                                <p className="text-xs text-secondary-500 mt-1">
-                                  When the invoice will be created
-                                </p>
-                              </div>
-                              <div>
-                                <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
-                                <Input
-                                  id="linking-deadline-date"
-                                  type="date"
-                                  value={linkingDeadlineDate}
-                                  onChange={(e) => setLinkingDeadlineDate(e.target.value)}
-                                  required
-                                  min={linkingInvoiceDate || new Date().toISOString().split('T')[0]}
-                                />
-                                <p className="text-xs text-secondary-500 mt-1">
-                                  Payment must be made by this date
-                                </p>
-                              </div>
-                            </div>
-                          );
-                        }
+                          </div>
+                        );
                       } else {
-                        // Recurring products - always show both dates
+                        // Scheduled: show both invoice date and deadline
                         return (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                             <div>
@@ -1752,9 +1882,7 @@ const PlayerDetails: React.FC = () => {
                                 min={new Date().toISOString().split('T')[0]}
                               />
                               <p className="text-xs text-secondary-500 mt-1">
-                                {linkingInvoiceGeneration === 'immediate'
-                                  ? 'When the invoice will be created'
-                                  : 'When the first invoice will be created'}
+                                When the invoice will be created
                               </p>
                             </div>
                             <div>
@@ -1780,15 +1908,185 @@ const PlayerDetails: React.FC = () => {
                     {(() => {
                       const selectedProduct = availableProducts.find(p => p.id === selectedProductId);
                       if (!selectedProduct) return null;
+
+                      const isRecurring = selectedProduct.productType === 'recurring';
+                      const duration = selectedProduct.recurringDuration;
+
+                      // Get actual billing day based on option
+                      const getActualBillingDay = (): number => {
+                        if (linkingBillingDayOption === 'beginning') return 1;
+                        if (linkingBillingDayOption === 'end') return 28;
+                        return linkingBillingDay;
+                      };
+
+                      // Helper to calculate next billing date from billing day
+                      const calculateNextBillingDate = (billingDay: number): Date => {
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        const currentDay = today.getDate();
+
+                        let firstInvoice = new Date(today);
+                        if (currentDay < billingDay) {
+                          firstInvoice.setDate(billingDay);
+                        } else {
+                          firstInvoice.setMonth(firstInvoice.getMonth() + 1);
+                          firstInvoice.setDate(billingDay);
+                        }
+                        return firstInvoice;
+                      };
+
+                      // Calculate first invoice date based on settings
+                      const getFirstInvoiceDate = (): Date => {
+                        if (isRecurring) {
+                          if (linkingCreateCurrentMonth) {
+                            return new Date();
+                          } else {
+                            return calculateNextBillingDate(getActualBillingDay());
+                          }
+                        } else {
+                          // One-time products
+                          return linkingInvoiceGeneration === 'immediate'
+                            ? new Date()
+                            : linkingInvoiceDate ? new Date(linkingInvoiceDate) : new Date();
+                        }
+                      };
+
+                      // Calculate next invoice date for recurring products
+                      const getNextInvoiceDate = () => {
+                        if (!isRecurring || !duration) return null;
+
+                        // For monthly billing with a specific billing day, always use the billing day
+                        if (duration.unit === 'months') {
+                          const today = new Date();
+                          today.setHours(0, 0, 0, 0);
+                          const billingDay = getActualBillingDay();
+
+                          // Calculate next billing date based on the billing day
+                          let nextDate = new Date(today);
+                          if (today.getDate() < billingDay) {
+                            // Billing day is still ahead this month
+                            nextDate.setDate(billingDay);
+                          } else {
+                            // Billing day has passed or is today, use next month
+                            nextDate.setMonth(nextDate.getMonth() + 1);
+                            nextDate.setDate(billingDay);
+                          }
+
+                          // nextDate is now the next occurrence of the billing day
+                          // This IS the next invoice date (no need to add more months)
+                          return nextDate;
+                        }
+
+                        // For other duration types (days, weeks, years), calculate from first invoice
+                        const nextDate = new Date(firstInvoiceDate);
+                        switch (duration.unit) {
+                          case 'days':
+                            nextDate.setDate(nextDate.getDate() + duration.value);
+                            break;
+                          case 'weeks':
+                            nextDate.setDate(nextDate.getDate() + (duration.value * 7));
+                            break;
+                          case 'years':
+                            nextDate.setFullYear(nextDate.getFullYear() + duration.value);
+                            break;
+                        }
+                        return nextDate;
+                      };
+
+                      const formatDuration = () => {
+                        if (!duration) return 'month';
+                        const value = duration.value;
+                        const unit = duration.unit;
+                        if (value === 1) {
+                          return unit.slice(0, -1); // Remove 's' for singular
+                        }
+                        return `${value} ${unit}`;
+                      };
+
+                      const formatBillingDay = (day: number) => {
+                        if (day === 1) return '1st';
+                        if (day === 2) return '2nd';
+                        if (day === 3) return '3rd';
+                        return `${day}th`;
+                      };
+
+                      const firstInvoiceDate = getFirstInvoiceDate();
+                      const actualBillingDay = getActualBillingDay();
+
+                      // Calculate payment due date
+                      const getPaymentDueDate = (): Date | null => {
+                        if (isRecurring) {
+                          const dueDate = new Date(firstInvoiceDate);
+                          dueDate.setDate(dueDate.getDate() + linkingDeadlineDays);
+                          return dueDate;
+                        } else {
+                          return linkingDeadlineDate ? new Date(linkingDeadlineDate) : null;
+                        }
+                      };
+
+                      const paymentDueDate = getPaymentDueDate();
+                      const nextInvoiceDate = getNextInvoiceDate();
+
                       return (
                         <div className="mt-5 p-4 bg-secondary-50 rounded-lg">
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between mb-3">
                             <span className="text-sm text-secondary-600">Amount to be invoiced:</span>
                             <span className="text-lg font-bold text-secondary-900">
                               {currency} {selectedProduct.price.toFixed(2)}
                             </span>
                           </div>
-                          {linkingInvoiceGeneration === 'immediate' && (
+
+                          {/* Billing Schedule Preview for Recurring Products */}
+                          {isRecurring && (
+                            <div className="mt-3 pt-3 border-t border-secondary-200">
+                              <p className="text-xs font-semibold text-secondary-700 mb-2 flex items-center gap-1">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                Billing Schedule Preview
+                              </p>
+                              <div className="space-y-1.5 text-xs">
+                                <div className="flex items-start gap-2">
+                                  <span className="text-secondary-400 mt-0.5">├─</span>
+                                  <span className="text-secondary-600">First invoice:</span>
+                                  <span className="font-medium text-secondary-800">
+                                    {firstInvoiceDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    {linkingCreateCurrentMonth && <span className="text-primary-600 ml-1">(today)</span>}
+                                  </span>
+                                </div>
+                                {paymentDueDate && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-secondary-400 mt-0.5">├─</span>
+                                    <span className="text-secondary-600">Payment due:</span>
+                                    <span className="font-medium text-secondary-800">
+                                      {paymentDueDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </span>
+                                  </div>
+                                )}
+                                {nextInvoiceDate && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-secondary-400 mt-0.5">├─</span>
+                                    <span className="text-secondary-600">Next invoice:</span>
+                                    <span className="font-medium text-primary-700">
+                                      {nextInvoiceDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </span>
+                                  </div>
+                                )}
+                                <div className="flex items-start gap-2">
+                                  <span className="text-secondary-400 mt-0.5">└─</span>
+                                  <span className="text-secondary-600">Then every</span>
+                                  <span className="font-medium text-secondary-800">{formatDuration()}</span>
+                                  {duration?.unit === 'months' && (
+                                    <span className="text-secondary-600">on the {formatBillingDay(actualBillingDay)}</span>
+                                  )}
+                                  <span className="text-secondary-500 italic">automatically</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Confirmation message for non-recurring */}
+                          {!isRecurring && linkingInvoiceGeneration === 'immediate' && (
                             <p className="text-xs text-primary-600 mt-2 flex items-center gap-1">
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />

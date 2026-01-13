@@ -4,7 +4,7 @@
  * WhatsApp Messaging via Twilio
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.fixRecurringProductsDates = exports.triggerReceiptGeneration = exports.generateScheduledReceipts = exports.markConversationRead = exports.sendWhatsAppMessage = exports.whatsappStatusCallback = exports.whatsappWebhook = void 0;
+exports.backfillPlayerNextReceiptDates = exports.fixRecurringProductsDates = exports.triggerReceiptGeneration = exports.generateScheduledReceipts = exports.markConversationRead = exports.sendWhatsAppMessage = exports.whatsappStatusCallback = exports.whatsappWebhook = void 0;
 // Webhook handlers
 var whatsappWebhook_1 = require("./webhooks/whatsappWebhook");
 Object.defineProperty(exports, "whatsappWebhook", { enumerable: true, get: function () { return whatsappWebhook_1.whatsappWebhook; } });
@@ -21,4 +21,5 @@ Object.defineProperty(exports, "triggerReceiptGeneration", { enumerable: true, g
 // Migration scripts (one-time use)
 var fixRecurringProducts_1 = require("./migrations/fixRecurringProducts");
 Object.defineProperty(exports, "fixRecurringProductsDates", { enumerable: true, get: function () { return fixRecurringProducts_1.fixRecurringProductsDates; } });
+Object.defineProperty(exports, "backfillPlayerNextReceiptDates", { enumerable: true, get: function () { return fixRecurringProducts_1.backfillPlayerNextReceiptDates; } });
 //# sourceMappingURL=index.js.map

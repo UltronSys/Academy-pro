@@ -10,17 +10,18 @@ import { createUser } from './userService';
 
 export const signUp = async (email: string, password: string, name: string) => {
   try {
+    const trimmedName = name.trim();
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
-    
+
     // Update the user's profile with their name
-    await updateProfile(user, { displayName: name });
-    
+    await updateProfile(user, { displayName: trimmedName });
+
     // Create user document in Firestore
     await createUser({
       id: user.uid,
       email: user.email!,
-      name,
+      name: trimmedName,
       roles: []
     });
     
@@ -73,26 +74,27 @@ export const updateUserProfile = async (data: { displayName?: string; photoURL?:
 // Uses a secondary Firebase app instance to avoid affecting the main auth state
 export const createUserAsAdmin = async (email: string, password: string, name: string) => {
   try {
-    console.log('createUserAsAdmin: Starting user creation with:', { email, name });
-    
+    const trimmedName = name.trim();
+    console.log('createUserAsAdmin: Starting user creation with:', { email, name: trimmedName });
+
     // Create the new user using the secondary auth instance
     // This won't affect the main auth state, so the admin stays logged in
     console.log('createUserAsAdmin: Creating Firebase Auth account...');
     const userCredential = await createUserWithEmailAndPassword(adminAuth, email, password);
     const newUser = userCredential.user;
     console.log('createUserAsAdmin: Firebase Auth account created with UID:', newUser.uid);
-    
+
     // Update the new user's profile
     console.log('createUserAsAdmin: Updating user profile...');
-    await updateProfile(newUser, { displayName: name });
+    await updateProfile(newUser, { displayName: trimmedName });
     console.log('createUserAsAdmin: Profile updated successfully');
-    
+
     // Create user document in Firestore
     console.log('createUserAsAdmin: Creating Firestore document...');
     await createUser({
       id: newUser.uid,
       email: newUser.email!,
-      name,
+      name: trimmedName,
       roles: []
     });
     console.log('createUserAsAdmin: Firestore document created successfully');
