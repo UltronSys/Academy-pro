@@ -19,6 +19,36 @@ import { syncPlayerToAlgolia, deletePlayerFromAlgolia, isAlgoliaConfigured } fro
 
 const COLLECTION_NAME = 'players';
 
+// Helper function to calculate the earliest nextReceiptDate from assigned products
+const calculateEarliestReceiptDate = (assignedProducts: Player['assignedProducts']): Timestamp | null => {
+  if (!assignedProducts || assignedProducts.length === 0) {
+    return null;
+  }
+
+  // Filter for active, scheduled products with a nextReceiptDate
+  const scheduledProducts = assignedProducts.filter(
+    ap => ap.status === 'active' &&
+          ap.receiptStatus === 'scheduled' &&
+          ap.nextReceiptDate
+  );
+
+  if (scheduledProducts.length === 0) {
+    return null;
+  }
+
+  // Find the earliest date
+  let earliest: Timestamp | null = null;
+  for (const product of scheduledProducts) {
+    if (product.nextReceiptDate) {
+      if (!earliest || product.nextReceiptDate.toMillis() < earliest.toMillis()) {
+        earliest = product.nextReceiptDate;
+      }
+    }
+  }
+
+  return earliest;
+};
+
 export const createPlayer = async (playerData: Omit<Player, 'createdAt' | 'updatedAt'>): Promise<Player> => {
   try {
     const docRef = doc(db, COLLECTION_NAME, playerData.id);
@@ -408,12 +438,17 @@ export const assignProductToPlayer = async (
           } : ap
         );
 
+        // Calculate the earliest nextReceiptDate for player-level field
+        const earliestReceiptDate = calculateEarliestReceiptDate(updatedWithSchedule);
+
         await updateDoc(playerRef, {
           assignedProducts: updatedWithSchedule,
+          nextReceiptDate: earliestReceiptDate,
           updatedAt: Timestamp.now()
         });
 
         console.log('✅ assignProductToPlayer: Recurring product scheduled for:', receiptDueDate.toLocaleDateString());
+        console.log('✅ assignProductToPlayer: Player nextReceiptDate set to:', earliestReceiptDate?.toDate().toLocaleDateString());
       }
 
       // Create immediate receipt for recurring products with immediate generation
@@ -470,12 +505,17 @@ export const assignProductToPlayer = async (
             } : ap
           );
 
+          // Calculate the earliest nextReceiptDate for player-level field
+          const earliestReceiptDate = calculateEarliestReceiptDate(updatedWithNextDate);
+
           await updateDoc(playerRef, {
             assignedProducts: updatedWithNextDate,
+            nextReceiptDate: earliestReceiptDate,
             updatedAt: Timestamp.now()
           });
 
           console.log('✅ assignProductToPlayer: Next receipt scheduled for:', nextReceiptDate.toLocaleDateString());
+          console.log('✅ assignProductToPlayer: Player nextReceiptDate set to:', earliestReceiptDate?.toDate().toLocaleDateString());
         } catch (receiptError: any) {
           console.error('❌ assignProductToPlayer: Failed to create debit receipt:', receiptError);
           throw new Error(`Failed to create receipt: ${receiptError?.message || receiptError}`);
@@ -540,12 +580,17 @@ export const removeProductFromPlayer = async (
         : p
     );
 
+    // Recalculate player-level nextReceiptDate
+    const earliestReceiptDate = calculateEarliestReceiptDate(updatedAssignedProducts);
+
     await updateDoc(playerRef, {
       assignedProducts: updatedAssignedProducts,
+      nextReceiptDate: earliestReceiptDate,
       updatedAt: Timestamp.now()
     });
 
     console.log('Product assignment cancelled for player:', playerId, 'product:', productId);
+    console.log('Player nextReceiptDate updated to:', earliestReceiptDate?.toDate().toLocaleDateString() || 'null');
 
   } catch (error) {
     console.error('Error removing product from player:', error);

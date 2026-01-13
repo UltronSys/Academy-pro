@@ -273,6 +273,39 @@ async function processAssignedProduct(
 }
 
 /**
+ * Calculate the earliest nextReceiptDate from assigned products
+ * Used to update player-level nextReceiptDate after processing
+ */
+function calculateEarliestReceiptDate(assignedProducts: AssignedProduct[]): admin.firestore.Timestamp | null {
+  if (!assignedProducts || assignedProducts.length === 0) {
+    return null;
+  }
+
+  // Filter for active, scheduled products with a nextReceiptDate
+  const scheduledProducts = assignedProducts.filter(
+    ap => ap.status === 'active' &&
+          ap.receiptStatus === 'scheduled' &&
+          ap.nextReceiptDate
+  );
+
+  if (scheduledProducts.length === 0) {
+    return null;
+  }
+
+  // Find the earliest date
+  let earliest: admin.firestore.Timestamp | null = null;
+  for (const product of scheduledProducts) {
+    if (product.nextReceiptDate) {
+      if (!earliest || product.nextReceiptDate.toMillis() < earliest.toMillis()) {
+        earliest = product.nextReceiptDate;
+      }
+    }
+  }
+
+  return earliest;
+}
+
+/**
  * Main scheduled function - runs daily
  */
 export const generateScheduledReceipts = functions.pubsub
@@ -289,10 +322,12 @@ export const generateScheduledReceipts = functions.pubsub
     let errorCount = 0;
 
     try {
-      // Get all players (we'll filter in memory since Firestore can't query array elements directly)
-      const playersSnapshot = await db.collection('players').get();
+      // Query only players with nextReceiptDate <= next24Hours (efficient!)
+      const playersSnapshot = await db.collection('players')
+        .where('nextReceiptDate', '<=', admin.firestore.Timestamp.fromDate(next24Hours))
+        .get();
 
-      console.log(`📊 Found ${playersSnapshot.size} total players to check`);
+      console.log(`📊 Found ${playersSnapshot.size} players with due receipts`);
 
       for (const playerDoc of playersSnapshot.docs) {
         const player = { id: playerDoc.id, ...playerDoc.data() } as Player;
@@ -301,7 +336,7 @@ export const generateScheduledReceipts = functions.pubsub
           continue;
         }
 
-        // Filter for products that are due
+        // Filter for products that are due (still needed since player may have multiple products)
         const dueProducts = player.assignedProducts.filter(ap => {
           // Only process active, scheduled products
           if (ap.status !== 'active' || ap.receiptStatus !== 'scheduled') {
@@ -345,6 +380,18 @@ export const generateScheduledReceipts = functions.pubsub
             errorCount++;
           }
         }
+
+        // After processing, recalculate and update player-level nextReceiptDate
+        const updatedPlayerDoc = await playerRef.get();
+        const updatedAssignedProducts = updatedPlayerDoc.data()?.assignedProducts || [];
+        const newEarliestDate = calculateEarliestReceiptDate(updatedAssignedProducts);
+
+        await playerRef.update({
+          nextReceiptDate: newEarliestDate,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        console.log(`✅ Updated player ${player.userId} nextReceiptDate to:`, newEarliestDate?.toDate());
       }
 
       console.log('🎉 Scheduled receipt generation completed!');
@@ -377,9 +424,12 @@ export const triggerReceiptGeneration = functions.https.onRequest(async (req, re
   let errorCount = 0;
 
   try {
-    const playersSnapshot = await db.collection('players').get();
+    // Query only players with nextReceiptDate <= next24Hours (efficient!)
+    const playersSnapshot = await db.collection('players')
+      .where('nextReceiptDate', '<=', admin.firestore.Timestamp.fromDate(next24Hours))
+      .get();
 
-    console.log(`📊 Found ${playersSnapshot.size} total players to check`);
+    console.log(`📊 Found ${playersSnapshot.size} players with due receipts`);
 
     for (const playerDoc of playersSnapshot.docs) {
       const player = { id: playerDoc.id, ...playerDoc.data() } as Player;
@@ -427,6 +477,18 @@ export const triggerReceiptGeneration = functions.https.onRequest(async (req, re
           errorCount++;
         }
       }
+
+      // After processing, recalculate and update player-level nextReceiptDate
+      const updatedPlayerDoc = await playerRef.get();
+      const updatedAssignedProducts = updatedPlayerDoc.data()?.assignedProducts || [];
+      const newEarliestDate = calculateEarliestReceiptDate(updatedAssignedProducts);
+
+      await playerRef.update({
+        nextReceiptDate: newEarliestDate,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      console.log(`✅ Updated player ${player.userId} nextReceiptDate to:`, newEarliestDate?.toDate());
     }
 
     const summary = {

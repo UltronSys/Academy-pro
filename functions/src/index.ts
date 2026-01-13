@@ -14,4 +14,4 @@ export { sendWhatsAppMessage, markConversationRead } from './api/sendMessage';
 export { generateScheduledReceipts, triggerReceiptGeneration } from './schedulers/generateScheduledReceipts';
 
 // Migration scripts (one-time use)
-export { fixRecurringProductsDates } from './migrations/fixRecurringProducts';
+export { fixRecurringProductsDates, backfillPlayerNextReceiptDates } from './migrations/fixRecurringProducts';

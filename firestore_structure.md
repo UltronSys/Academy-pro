@@ -68,6 +68,7 @@ Collection for storing player information across all organizations.
     - `type` (string) - Discount type: 'percentage' | 'fixed'
     - `value` (number) - Discount value (percentage 0-100 or fixed amount)
     - `reason` (string, optional) - Reason for the discount
+- `nextReceiptDate` (Timestamp, optional) - Earliest due date from all assigned products (used for efficient querying by cloud functions)
 - `createdAt` (Timestamp) - Creation timestamp
 - `updatedAt` (Timestamp) - Last update timestamp
 

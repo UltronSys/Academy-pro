@@ -211,12 +211,39 @@ async function processAssignedProduct(playerRef, player, assignedProduct, deadli
     }
 }
 /**
+ * Calculate the earliest nextReceiptDate from assigned products
+ * Used to update player-level nextReceiptDate after processing
+ */
+function calculateEarliestReceiptDate(assignedProducts) {
+    if (!assignedProducts || assignedProducts.length === 0) {
+        return null;
+    }
+    // Filter for active, scheduled products with a nextReceiptDate
+    const scheduledProducts = assignedProducts.filter(ap => ap.status === 'active' &&
+        ap.receiptStatus === 'scheduled' &&
+        ap.nextReceiptDate);
+    if (scheduledProducts.length === 0) {
+        return null;
+    }
+    // Find the earliest date
+    let earliest = null;
+    for (const product of scheduledProducts) {
+        if (product.nextReceiptDate) {
+            if (!earliest || product.nextReceiptDate.toMillis() < earliest.toMillis()) {
+                earliest = product.nextReceiptDate;
+            }
+        }
+    }
+    return earliest;
+}
+/**
  * Main scheduled function - runs daily
  */
 exports.generateScheduledReceipts = functions.pubsub
     .schedule('every day 06:00')
     .timeZone('Africa/Nairobi') // Adjust timezone as needed
     .onRun(async (context) => {
+    var _a;
     console.log('🚀 Starting scheduled receipt generation...');
     const now = new Date();
     const next24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -224,15 +251,17 @@ exports.generateScheduledReceipts = functions.pubsub
     let successCount = 0;
     let errorCount = 0;
     try {
-        // Get all players (we'll filter in memory since Firestore can't query array elements directly)
-        const playersSnapshot = await firebase_1.db.collection('players').get();
-        console.log(`📊 Found ${playersSnapshot.size} total players to check`);
+        // Query only players with nextReceiptDate <= next24Hours (efficient!)
+        const playersSnapshot = await firebase_1.db.collection('players')
+            .where('nextReceiptDate', '<=', firebase_1.admin.firestore.Timestamp.fromDate(next24Hours))
+            .get();
+        console.log(`📊 Found ${playersSnapshot.size} players with due receipts`);
         for (const playerDoc of playersSnapshot.docs) {
             const player = Object.assign({ id: playerDoc.id }, playerDoc.data());
             if (!player.assignedProducts || player.assignedProducts.length === 0) {
                 continue;
             }
-            // Filter for products that are due
+            // Filter for products that are due (still needed since player may have multiple products)
             const dueProducts = player.assignedProducts.filter(ap => {
                 // Only process active, scheduled products
                 if (ap.status !== 'active' || ap.receiptStatus !== 'scheduled') {
@@ -264,6 +293,15 @@ exports.generateScheduledReceipts = functions.pubsub
                     errorCount++;
                 }
             }
+            // After processing, recalculate and update player-level nextReceiptDate
+            const updatedPlayerDoc = await playerRef.get();
+            const updatedAssignedProducts = ((_a = updatedPlayerDoc.data()) === null || _a === void 0 ? void 0 : _a.assignedProducts) || [];
+            const newEarliestDate = calculateEarliestReceiptDate(updatedAssignedProducts);
+            await playerRef.update({
+                nextReceiptDate: newEarliestDate,
+                updatedAt: firebase_1.admin.firestore.FieldValue.serverTimestamp()
+            });
+            console.log(`✅ Updated player ${player.userId} nextReceiptDate to:`, newEarliestDate === null || newEarliestDate === void 0 ? void 0 : newEarliestDate.toDate());
         }
         console.log('🎉 Scheduled receipt generation completed!');
         console.log(`📊 Summary: ${totalProcessed} processed, ${successCount} successful, ${errorCount} errors`);
@@ -278,6 +316,7 @@ exports.generateScheduledReceipts = functions.pubsub
  * HTTP endpoint to manually trigger receipt generation (for testing)
  */
 exports.triggerReceiptGeneration = functions.https.onRequest(async (req, res) => {
+    var _a;
     // Only allow POST requests
     if (req.method !== 'POST') {
         res.status(405).send('Method not allowed');
@@ -290,8 +329,11 @@ exports.triggerReceiptGeneration = functions.https.onRequest(async (req, res) =>
     let successCount = 0;
     let errorCount = 0;
     try {
-        const playersSnapshot = await firebase_1.db.collection('players').get();
-        console.log(`📊 Found ${playersSnapshot.size} total players to check`);
+        // Query only players with nextReceiptDate <= next24Hours (efficient!)
+        const playersSnapshot = await firebase_1.db.collection('players')
+            .where('nextReceiptDate', '<=', firebase_1.admin.firestore.Timestamp.fromDate(next24Hours))
+            .get();
+        console.log(`📊 Found ${playersSnapshot.size} players with due receipts`);
         for (const playerDoc of playersSnapshot.docs) {
             const player = Object.assign({ id: playerDoc.id }, playerDoc.data());
             if (!player.assignedProducts || player.assignedProducts.length === 0) {
@@ -324,6 +366,15 @@ exports.triggerReceiptGeneration = functions.https.onRequest(async (req, res) =>
                     errorCount++;
                 }
             }
+            // After processing, recalculate and update player-level nextReceiptDate
+            const updatedPlayerDoc = await playerRef.get();
+            const updatedAssignedProducts = ((_a = updatedPlayerDoc.data()) === null || _a === void 0 ? void 0 : _a.assignedProducts) || [];
+            const newEarliestDate = calculateEarliestReceiptDate(updatedAssignedProducts);
+            await playerRef.update({
+                nextReceiptDate: newEarliestDate,
+                updatedAt: firebase_1.admin.firestore.FieldValue.serverTimestamp()
+            });
+            console.log(`✅ Updated player ${player.userId} nextReceiptDate to:`, newEarliestDate === null || newEarliestDate === void 0 ? void 0 : newEarliestDate.toDate());
         }
         const summary = {
             message: 'Scheduled receipt generation completed',
