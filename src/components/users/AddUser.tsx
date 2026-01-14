@@ -226,7 +226,7 @@ const AddUser: React.FC = () => {
     setError('');
     
     if (activeStep === 0) {
-      if (!formData.name) {
+      if (!formData.name.trim()) {
         setError('Please enter the full name');
         return;
       }
@@ -319,14 +319,41 @@ const AddUser: React.FC = () => {
     try {
       setSubmitLoading(true);
       const organizationId = userData?.roles?.[0]?.organizationId || '';
+      const trimmedName = formData.name.trim();
+      const trimmedEmail = formData.email.trim();
+      const trimmedPhone = formData.phone.trim();
 
-      let newUserId: string;
-      let createdUserData: any;
+      // Validate required fields are not empty after trimming
+      if (!trimmedName) {
+        setError('Please enter a valid name');
+        setSubmitLoading(false);
+        return;
+      }
 
       // Check if user has any roles that allow login (not just player/guardian)
       const hasLoginRole = formData.roles.some(role =>
         !['player', 'guardian'].includes(role)
       );
+
+      const onlyPlayerGuardian = formData.roles.every(role =>
+        ['player', 'guardian'].includes(role)
+      );
+
+      // Validate email/phone based on role requirements
+      if (hasLoginRole && (!trimmedEmail || !trimmedPhone)) {
+        setError('Email and phone are required for users who can log in');
+        setSubmitLoading(false);
+        return;
+      }
+
+      if (onlyPlayerGuardian && !trimmedEmail && !trimmedPhone) {
+        setError('At least email or phone is required');
+        setSubmitLoading(false);
+        return;
+      }
+
+      let newUserId: string;
+      let createdUserData: any;
 
       // Build the user roles array
       const userRoles = formData.roles.map(role => ({
@@ -340,7 +367,7 @@ const AddUser: React.FC = () => {
 
         // Import and use createUserAsAdmin
         const { createUserAsAdmin } = await import('../../services/authService');
-        const { uid } = await createUserAsAdmin(formData.email, formData.password, formData.name);
+        const { uid } = await createUserAsAdmin(trimmedEmail, formData.password, trimmedName);
         newUserId = uid;
 
         // Upload profile image if selected
@@ -351,7 +378,7 @@ const AddUser: React.FC = () => {
 
         // Update user document with additional data and roles
         await updateUser(newUserId, {
-          phone: formData.phone,
+          phone: trimmedPhone,
           roles: userRoles,
           ...(profilePictureURL && { photoURL: profilePictureURL })
         });
@@ -359,9 +386,9 @@ const AddUser: React.FC = () => {
         // Build complete user data for optimistic update
         createdUserData = {
           id: newUserId,
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone,
+          name: trimmedName,
+          email: trimmedEmail,
+          phone: trimmedPhone,
           roles: userRoles,
           balance: 0,
           outstandingBalance: {},
@@ -382,9 +409,9 @@ const AddUser: React.FC = () => {
 
         createdUserData = {
           id: newUserId,
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone,
+          name: trimmedName,
+          email: trimmedEmail,
+          phone: trimmedPhone,
           roles: userRoles,
           balance: 0,
           outstandingBalance: {},
@@ -1164,10 +1191,10 @@ const AddUser: React.FC = () => {
                 </Button>
               )}
               {activeStep < effectiveSteps.length - 1 ? (
-                <Button 
+                <Button
                   onClick={handleNext}
                   disabled={
-                    activeStep === 0 ? !formData.name : 
+                    activeStep === 0 ? !formData.name.trim() :
                     activeStep === 1 ? formData.roles.length === 0 :
                     activeStep === 2 ? (() => {
                       const hasLoginRole = formData.roles.some(role => 
@@ -1194,11 +1221,11 @@ const AddUser: React.FC = () => {
                   Next
                 </Button>
               ) : (
-                <Button 
+                <Button
                   onClick={handleSubmit}
                   loading={submitLoading}
                   disabled={
-                    !formData.name || 
+                    !formData.name.trim() ||
                     formData.roles.length === 0 || 
                     (() => {
                       const hasLoginRole = formData.roles.some(role =>
