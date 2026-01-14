@@ -3412,7 +3412,7 @@ service firebase.storage {
                         >
                           <option value="">Select a role</option>
                           {[
-                            'owner', 'admin', 'coach', 'player', 'guardian',
+                            'admin', 'coach', 'player', 'guardian',
                             ...(organizationSettings?.customRoles || [])
                           ].filter(role => !formData.roles.includes(role)).map((role) => (
                             <option key={role} value={role}>

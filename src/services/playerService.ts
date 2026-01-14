@@ -19,34 +19,102 @@ import { syncPlayerToAlgolia, deletePlayerFromAlgolia, isAlgoliaConfigured } fro
 
 const COLLECTION_NAME = 'players';
 
+// Helper to get the last day of a given month
+const getLastDayOfMonth = (year: number, month: number): number => {
+  // month is 0-indexed (0 = January, 11 = December)
+  return new Date(year, month + 1, 0).getDate();
+};
+
+// Helper to calculate next invoice date based on invoiceDay (number: 1-31 or -1 for last day)
+const calculateNextInvoiceDateFromInvoiceDay = (
+  invoiceDay: number, // 1-31 for specific day, -1 for last day of month
+  recurringDuration?: { value: number; unit: 'days' | 'weeks' | 'months' | 'years' },
+  lastGeneratedDate?: Date
+): Date => {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  // For non-monthly recurring products, calculate from last generated date
+  if (recurringDuration && recurringDuration.unit !== 'months') {
+    const baseDate = lastGeneratedDate || now;
+    const nextDate = new Date(baseDate);
+
+    switch (recurringDuration.unit) {
+      case 'days':
+        nextDate.setDate(nextDate.getDate() + recurringDuration.value);
+        break;
+      case 'weeks':
+        nextDate.setDate(nextDate.getDate() + (recurringDuration.value * 7));
+        break;
+      case 'years':
+        nextDate.setFullYear(nextDate.getFullYear() + recurringDuration.value);
+        break;
+    }
+    return nextDate;
+  }
+
+  // For monthly recurring (or default), use invoiceDay to determine next date
+  const getAdjustedDay = (date: Date, requestedDay: number): number => {
+    const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
+    if (requestedDay === -1) return lastDay; // End of month
+    return Math.min(requestedDay, lastDay);
+  };
+
+  const currentDay = now.getDate();
+  let nextDate = new Date(now);
+  const adjustedDay = getAdjustedDay(nextDate, invoiceDay);
+
+  if (currentDay < adjustedDay) {
+    // Target day is still ahead this month
+    nextDate.setDate(adjustedDay);
+  } else {
+    // Target day has passed, use next month
+    nextDate.setMonth(nextDate.getMonth() + 1);
+    const nextMonthAdjustedDay = getAdjustedDay(nextDate, invoiceDay);
+    nextDate.setDate(nextMonthAdjustedDay);
+  }
+
+  return nextDate;
+};
+
 // Helper function to calculate the earliest nextReceiptDate from assigned products
 const calculateEarliestReceiptDate = (assignedProducts: Player['assignedProducts']): Timestamp | null => {
   if (!assignedProducts || assignedProducts.length === 0) {
     return null;
   }
 
-  // Filter for active, scheduled products with a nextReceiptDate
-  const scheduledProducts = assignedProducts.filter(
-    ap => ap.status === 'active' &&
-          ap.receiptStatus === 'scheduled' &&
-          ap.nextReceiptDate
+  let earliest: Date | null = null;
+
+  // Check recurring products - calculate from invoiceDay
+  const activeRecurringProducts = assignedProducts.filter(
+    ap => ap.status === 'active' && ap.productType === 'recurring' && ap.invoiceDay
   );
 
-  if (scheduledProducts.length === 0) {
-    return null;
-  }
+  for (const product of activeRecurringProducts) {
+    const nextDate = calculateNextInvoiceDateFromInvoiceDay(
+      product.invoiceDay,
+      product.recurringDuration,
+      product.lastGeneratedDate?.toDate()
+    );
 
-  // Find the earliest date
-  let earliest: Timestamp | null = null;
-  for (const product of scheduledProducts) {
-    if (product.nextReceiptDate) {
-      if (!earliest || product.nextReceiptDate.toMillis() < earliest.toMillis()) {
-        earliest = product.nextReceiptDate;
-      }
+    if (!earliest || nextDate < earliest) {
+      earliest = nextDate;
     }
   }
 
-  return earliest;
+  // Check one-time scheduled products - use invoiceDate directly
+  const activeOneTimeScheduled = assignedProducts.filter(
+    ap => ap.status === 'active' && ap.productType === 'one-time' && ap.receiptStatus === 'scheduled' && ap.invoiceDate
+  );
+
+  for (const product of activeOneTimeScheduled) {
+    const invoiceDate = product.invoiceDate.toDate();
+    if (!earliest || invoiceDate < earliest) {
+      earliest = invoiceDate;
+    }
+  }
+
+  return earliest ? Timestamp.fromDate(earliest) : null;
 };
 
 export const createPlayer = async (playerData: Omit<Player, 'createdAt' | 'updatedAt'>): Promise<Player> => {
@@ -280,7 +348,9 @@ export const assignProductToPlayer = async (
   academyId?: string,
   invoiceDate?: Date,
   deadlineDate?: Date,
-  invoiceGeneration?: 'immediate' | 'scheduled'
+  invoiceGeneration?: 'immediate' | 'scheduled',
+  invoiceDay?: number, // Day of month: 1-31, or -1 for last day of month
+  deadlineDay?: number
 ): Promise<void> => {
   try {
     console.log('🎯 assignProductToPlayer: Starting with:', {
@@ -350,6 +420,8 @@ export const assignProductToPlayer = async (
         status: 'active' as const,
         invoiceDate: Timestamp.fromDate(finalInvoiceDate),
         deadlineDate: Timestamp.fromDate(finalDeadlineDate),
+        invoiceDay: invoiceDay || 1, // Default to 1st of month
+        deadlineDay: deadlineDay || 30, // Default to 30 days after invoice
         receiptStatus: finalInvoiceGeneration === 'immediate' ? 'immediate' as const : 'scheduled' as const,
         productType: product.productType || 'one-time',
       };
@@ -395,60 +467,46 @@ export const assignProductToPlayer = async (
         console.error('⚠️ assignProductToPlayer: Failed to update product linkedPlayerIds:', productUpdateError);
       }
 
-      // Handle scheduled receipts for recurring products
+      // Handle scheduled receipts for recurring products (no immediate receipt creation)
       if (finalInvoiceGeneration === 'scheduled' && product.productType === 'recurring') {
         console.log('📅 assignProductToPlayer: Scheduling receipt for recurring product...');
 
-        let receiptDueDate: Date;
-
-        if (product.recurringDuration) {
-          switch (product.recurringDuration.unit) {
-            case 'days':
-              receiptDueDate = new Date(now.getTime() + (product.recurringDuration.value * 24 * 60 * 60 * 1000));
-              break;
-            case 'weeks':
-              receiptDueDate = new Date(now.getTime() + (product.recurringDuration.value * 7 * 24 * 60 * 60 * 1000));
-              break;
-            case 'months':
-              receiptDueDate = new Date(now);
-              receiptDueDate.setMonth(now.getMonth() + product.recurringDuration.value);
-              break;
-            case 'years':
-              receiptDueDate = new Date(now);
-              receiptDueDate.setFullYear(now.getFullYear() + product.recurringDuration.value);
-              break;
-            default:
-              receiptDueDate = new Date(now);
-              receiptDueDate.setMonth(now.getMonth() + 1);
-          }
-        } else {
-          receiptDueDate = new Date(now);
-          receiptDueDate.setMonth(now.getMonth() + 1);
-        }
-
-        console.log(`📅 Next receipt date: ${receiptDueDate.toLocaleDateString()}`);
-
-        // Update the assigned product with next receipt date
-        const currentAssignedProducts = (await getDoc(playerRef)).data()?.assignedProducts || [];
-        const updatedWithSchedule = currentAssignedProducts.map((ap: any) =>
-          ap.productId === product.id ? {
-            ...ap,
-            nextReceiptDate: Timestamp.fromDate(receiptDueDate),
-            receiptStatus: 'scheduled' as const
-          } : ap
-        );
-
-        // Calculate the earliest nextReceiptDate for player-level field
-        const earliestReceiptDate = calculateEarliestReceiptDate(updatedWithSchedule);
+        // Calculate player-level nextReceiptDate using invoiceDay
+        const earliestReceiptDate = calculateEarliestReceiptDate(updatedAssignedProducts);
 
         await updateDoc(playerRef, {
-          assignedProducts: updatedWithSchedule,
           nextReceiptDate: earliestReceiptDate,
           updatedAt: Timestamp.now()
         });
 
-        console.log('✅ assignProductToPlayer: Recurring product scheduled for:', receiptDueDate.toLocaleDateString());
         console.log('✅ assignProductToPlayer: Player nextReceiptDate set to:', earliestReceiptDate?.toDate().toLocaleDateString());
+      }
+
+      // Handle scheduled receipts for one-time products (no immediate receipt creation)
+      if (finalInvoiceGeneration === 'scheduled' && product.productType === 'one-time') {
+        console.log('📅 assignProductToPlayer: Scheduling receipt for one-time product...');
+
+        // For one-time scheduled products, use the invoiceDate directly
+        // Compare with current player nextReceiptDate and use the earliest
+        const playerDoc = await getDoc(playerRef);
+        const currentNextReceiptDate = playerDoc.data()?.nextReceiptDate;
+
+        let newNextReceiptDate: Timestamp;
+        if (currentNextReceiptDate) {
+          // Use the earlier of current nextReceiptDate or this product's invoiceDate
+          newNextReceiptDate = finalInvoiceDate < currentNextReceiptDate.toDate()
+            ? Timestamp.fromDate(finalInvoiceDate)
+            : currentNextReceiptDate;
+        } else {
+          newNextReceiptDate = Timestamp.fromDate(finalInvoiceDate);
+        }
+
+        await updateDoc(playerRef, {
+          nextReceiptDate: newNextReceiptDate,
+          updatedAt: Timestamp.now()
+        });
+
+        console.log('✅ assignProductToPlayer: Player nextReceiptDate set to:', newNextReceiptDate.toDate().toLocaleDateString());
       }
 
       // Create immediate receipt for recurring products with immediate generation
@@ -471,50 +529,35 @@ export const assignProductToPlayer = async (
 
           console.log('🎉 assignProductToPlayer: Receipt created:', receipt.id);
 
-          // Calculate and set nextReceiptDate for the cloud function to pick up
-          const duration = product.recurringDuration || { value: 1, unit: 'months' as const };
-          let nextReceiptDate: Date;
+          // Calculate next invoice date from invoiceDay
+          const nextInvoiceDate = calculateNextInvoiceDateFromInvoiceDay(
+            invoiceDay || 1, // Default to 1st of month
+            product.recurringDuration,
+            now
+          );
+          const nextDeadlineDate = new Date(nextInvoiceDate.getTime() + (deadlineDay || 30) * 24 * 60 * 60 * 1000);
 
-          switch (duration.unit) {
-            case 'days':
-              nextReceiptDate = new Date(now.getTime() + (duration.value * 24 * 60 * 60 * 1000));
-              break;
-            case 'weeks':
-              nextReceiptDate = new Date(now.getTime() + (duration.value * 7 * 24 * 60 * 60 * 1000));
-              break;
-            case 'months':
-              nextReceiptDate = new Date(now);
-              nextReceiptDate.setMonth(now.getMonth() + duration.value);
-              break;
-            case 'years':
-              nextReceiptDate = new Date(now);
-              nextReceiptDate.setFullYear(now.getFullYear() + duration.value);
-              break;
-            default:
-              nextReceiptDate = new Date(now);
-              nextReceiptDate.setMonth(now.getMonth() + 1);
-          }
-
-          // Update assignedProduct with nextReceiptDate so cloud function knows when to generate next receipt
+          // Update assignedProduct with next invoiceDate, deadlineDate, and lastGeneratedDate
           const currentAssignedProducts = (await getDoc(playerRef)).data()?.assignedProducts || [];
-          const updatedWithNextDate = currentAssignedProducts.map((ap: any) =>
+          const updatedWithNextDates = currentAssignedProducts.map((ap: any) =>
             ap.productId === product.id ? {
               ...ap,
-              nextReceiptDate: Timestamp.fromDate(nextReceiptDate),
-              receiptStatus: 'scheduled' // Change to scheduled so cloud function picks it up
+              invoiceDate: Timestamp.fromDate(nextInvoiceDate), // Update to next invoice date
+              deadlineDate: Timestamp.fromDate(nextDeadlineDate), // Update deadline accordingly
+              lastGeneratedDate: Timestamp.now() // Track when we generated the receipt
             } : ap
           );
 
-          // Calculate the earliest nextReceiptDate for player-level field
-          const earliestReceiptDate = calculateEarliestReceiptDate(updatedWithNextDate);
+          // Calculate the earliest nextReceiptDate for player-level field using invoiceDay
+          const earliestReceiptDate = calculateEarliestReceiptDate(updatedWithNextDates);
 
           await updateDoc(playerRef, {
-            assignedProducts: updatedWithNextDate,
+            assignedProducts: updatedWithNextDates,
             nextReceiptDate: earliestReceiptDate,
             updatedAt: Timestamp.now()
           });
 
-          console.log('✅ assignProductToPlayer: Next receipt scheduled for:', nextReceiptDate.toLocaleDateString());
+          console.log('✅ assignProductToPlayer: invoiceDate updated to next receipt date:', nextInvoiceDate.toLocaleDateString());
           console.log('✅ assignProductToPlayer: Player nextReceiptDate set to:', earliestReceiptDate?.toDate().toLocaleDateString());
         } catch (receiptError: any) {
           console.error('❌ assignProductToPlayer: Failed to create debit receipt:', receiptError);

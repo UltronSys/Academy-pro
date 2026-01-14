@@ -334,10 +334,17 @@ const PlayerDetails: React.FC = () => {
 
     const isRecurringProduct = selectedProduct.productType === 'recurring';
 
-    // Get actual billing day based on option
+    // Helper to get the last day of a given month
+    const getLastDayOfMonth = (year: number, month: number): number => {
+      // month is 0-indexed (0 = January, 11 = December)
+      // Setting day to 0 of next month gives us the last day of current month
+      return new Date(year, month + 1, 0).getDate();
+    };
+
+    // Get actual billing day based on option (returns -1 for end of month to handle dynamically)
     const getActualBillingDay = (): number => {
       if (linkingBillingDayOption === 'beginning') return 1;
-      if (linkingBillingDayOption === 'end') return 28;
+      if (linkingBillingDayOption === 'end') return -1; // Special value for last day of month
       return linkingBillingDay;
     };
 
@@ -348,13 +355,24 @@ const PlayerDetails: React.FC = () => {
       const currentDay = today.getDate();
 
       let firstInvoice = new Date(today);
-      if (currentDay < billingDay) {
+
+      // Handle end of month (-1) or custom day that might exceed month's days
+      const getAdjustedDay = (date: Date, requestedDay: number): number => {
+        const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
+        if (requestedDay === -1) return lastDay; // End of month
+        return Math.min(requestedDay, lastDay); // Custom day capped at last day of month
+      };
+
+      const adjustedDay = getAdjustedDay(firstInvoice, billingDay);
+
+      if (currentDay < adjustedDay) {
         // Billing day is still ahead this month
-        firstInvoice.setDate(billingDay);
+        firstInvoice.setDate(adjustedDay);
       } else {
         // Billing day has passed, use next month
         firstInvoice.setMonth(firstInvoice.getMonth() + 1);
-        firstInvoice.setDate(billingDay);
+        const nextMonthAdjustedDay = getAdjustedDay(firstInvoice, billingDay);
+        firstInvoice.setDate(nextMonthAdjustedDay);
       }
       return firstInvoice;
     };
@@ -411,6 +429,12 @@ const PlayerDetails: React.FC = () => {
     try {
       setLinkingProduct(true);
 
+      // Convert billing day option to number
+      // 1 = beginning of month, -1 = end of month (last day), 2-31 = custom day
+      const invoiceDayNumber = linkingBillingDayOption === 'beginning' ? 1
+        : linkingBillingDayOption === 'end' ? -1
+        : linkingBillingDay;
+
       // Assign product to player
       await assignProductToPlayer(
         player.id,
@@ -419,7 +443,9 @@ const PlayerDetails: React.FC = () => {
         selectedProduct.academyId,
         invoiceDateObj,
         deadlineDateObj,
-        effectiveInvoiceGeneration
+        effectiveInvoiceGeneration,
+        invoiceDayNumber,
+        linkingDeadlineDays
       );
 
       showToast('Product linked successfully!', 'success');
@@ -1358,12 +1384,12 @@ const PlayerDetails: React.FC = () => {
                               Deadline: {assignedProduct.deadlineDate?.toDate().toLocaleDateString() || 'Not set'}
                             </div>
                             {/* Upcoming Receipt Date for recurring/scheduled products */}
-                            {assignedProduct.nextReceiptDate && (
+                            {assignedProduct.productType === 'recurring' && assignedProduct.invoiceDate && (
                               <div className="text-primary-600 font-medium">
-                                Next Receipt: {assignedProduct.nextReceiptDate?.toDate().toLocaleDateString()}
+                                Next Receipt: {assignedProduct.invoiceDate?.toDate().toLocaleDateString()}
                               </div>
                             )}
-                            {assignedProduct.receiptStatus === 'scheduled' && !assignedProduct.nextReceiptDate && (
+                            {assignedProduct.receiptStatus === 'scheduled' && !assignedProduct.invoiceDate && (
                               <div className="text-warning-600 text-xs">
                                 Receipt scheduled (date pending)
                               </div>
@@ -1705,7 +1731,7 @@ const PlayerDetails: React.FC = () => {
                                     onChange={() => setLinkingBillingDayOption('end')}
                                     className="sr-only"
                                   />
-                                  <span className="text-sm font-medium">End of month (28th)</span>
+                                  <span className="text-sm font-medium">End of month (last day)</span>
                                 </label>
                                 <label className={`
                                   flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
@@ -1733,11 +1759,22 @@ const PlayerDetails: React.FC = () => {
                                     onChange={(e) => setLinkingBillingDay(Number(e.target.value))}
                                     className="w-full sm:w-48 px-3 py-2 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                                   >
-                                    {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
-                                      <option key={day} value={day}>
-                                        {day === 1 ? '1st' : day === 2 ? '2nd' : day === 3 ? '3rd' : `${day}th`} of each month
-                                      </option>
-                                    ))}
+                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
+                                      const getOrdinalSuffix = (n: number) => {
+                                        if (n >= 11 && n <= 13) return 'th';
+                                        switch (n % 10) {
+                                          case 1: return 'st';
+                                          case 2: return 'nd';
+                                          case 3: return 'rd';
+                                          default: return 'th';
+                                        }
+                                      };
+                                      return (
+                                        <option key={day} value={day}>
+                                          {day}{getOrdinalSuffix(day)} of each month
+                                        </option>
+                                      );
+                                    })}
                                   </select>
                                 </div>
                               )}
@@ -1752,12 +1789,11 @@ const PlayerDetails: React.FC = () => {
                                 onChange={(e) => setLinkingDeadlineDays(Number(e.target.value))}
                                 className="w-full sm:w-48 px-3 py-2 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent mt-2"
                               >
-                                <option value={7}>7 days</option>
-                                <option value={14}>14 days</option>
-                                <option value={21}>21 days</option>
-                                <option value={30}>30 days</option>
-                                <option value={45}>45 days</option>
-                                <option value={60}>60 days</option>
+                                {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                                  <option key={day} value={day}>
+                                    {day} {day === 1 ? 'day' : 'days'}
+                                  </option>
+                                ))}
                               </select>
                               <p className="text-xs text-secondary-500 mt-1">
                                 Payment must be made within this period after each invoice
@@ -1912,10 +1948,15 @@ const PlayerDetails: React.FC = () => {
                       const isRecurring = selectedProduct.productType === 'recurring';
                       const duration = selectedProduct.recurringDuration;
 
-                      // Get actual billing day based on option
+                      // Helper to get the last day of a given month
+                      const getLastDayOfMonth = (year: number, month: number): number => {
+                        return new Date(year, month + 1, 0).getDate();
+                      };
+
+                      // Get actual billing day based on option (returns -1 for end of month)
                       const getActualBillingDay = (): number => {
                         if (linkingBillingDayOption === 'beginning') return 1;
-                        if (linkingBillingDayOption === 'end') return 28;
+                        if (linkingBillingDayOption === 'end') return -1; // Special value for last day of month
                         return linkingBillingDay;
                       };
 
@@ -1926,11 +1967,22 @@ const PlayerDetails: React.FC = () => {
                         const currentDay = today.getDate();
 
                         let firstInvoice = new Date(today);
-                        if (currentDay < billingDay) {
-                          firstInvoice.setDate(billingDay);
+
+                        // Handle end of month (-1) or custom day that might exceed month's days
+                        const getAdjustedDay = (date: Date, requestedDay: number): number => {
+                          const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
+                          if (requestedDay === -1) return lastDay; // End of month
+                          return Math.min(requestedDay, lastDay); // Custom day capped at last day of month
+                        };
+
+                        const adjustedDay = getAdjustedDay(firstInvoice, billingDay);
+
+                        if (currentDay < adjustedDay) {
+                          firstInvoice.setDate(adjustedDay);
                         } else {
                           firstInvoice.setMonth(firstInvoice.getMonth() + 1);
-                          firstInvoice.setDate(billingDay);
+                          const nextMonthAdjustedDay = getAdjustedDay(firstInvoice, billingDay);
+                          firstInvoice.setDate(nextMonthAdjustedDay);
                         }
                         return firstInvoice;
                       };
@@ -1961,15 +2013,25 @@ const PlayerDetails: React.FC = () => {
                           today.setHours(0, 0, 0, 0);
                           const billingDay = getActualBillingDay();
 
+                          // Handle end of month (-1) or custom day that might exceed month's days
+                          const getAdjustedDayForMonth = (date: Date, requestedDay: number): number => {
+                            const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
+                            if (requestedDay === -1) return lastDay; // End of month
+                            return Math.min(requestedDay, lastDay); // Custom day capped at last day of month
+                          };
+
                           // Calculate next billing date based on the billing day
                           let nextDate = new Date(today);
-                          if (today.getDate() < billingDay) {
+                          const adjustedDay = getAdjustedDayForMonth(nextDate, billingDay);
+
+                          if (today.getDate() < adjustedDay) {
                             // Billing day is still ahead this month
-                            nextDate.setDate(billingDay);
+                            nextDate.setDate(adjustedDay);
                           } else {
                             // Billing day has passed or is today, use next month
                             nextDate.setMonth(nextDate.getMonth() + 1);
-                            nextDate.setDate(billingDay);
+                            const nextMonthAdjustedDay = getAdjustedDayForMonth(nextDate, billingDay);
+                            nextDate.setDate(nextMonthAdjustedDay);
                           }
 
                           // nextDate is now the next occurrence of the billing day

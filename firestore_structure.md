@@ -60,15 +60,21 @@ Collection for storing player information across all organizations.
   - `price` (number) - Product price at time of assignment
   - `assignedDate` (Timestamp) - Date when product was assigned
   - `status` (string) - Assignment status: 'active' | 'inactive' | 'cancelled'
-  - `invoiceDate` (Timestamp) - Date when the invoice/debit receipt will be created
-  - `deadlineDate` (Timestamp) - Payment deadline for the invoice
-  - `nextReceiptDate` (Timestamp, optional) - For recurring products - when next receipt should be generated
-  - `receiptStatus` (string, optional) - Status of receipt generation: 'immediate' | 'scheduled' | 'generated'
+  - `invoiceDate` (Timestamp) - Date when the first invoice/debit receipt was created
+  - `deadlineDate` (Timestamp) - Payment deadline for the first invoice
+  - `invoiceDay` (number) - Day of month for invoice generation: 1-31 for specific day, -1 for last day of month
+  - `deadlineDay` (number) - Number of days after invoice date for payment deadline
+  - `lastGeneratedDate` (Timestamp, optional) - Date when last receipt was generated (for tracking)
+  - `receiptStatus` (string, optional) - How the first receipt was generated: 'immediate' | 'scheduled'
+  - `productType` (string) - Type of product: 'recurring' | 'one-time'
+  - `recurringDuration` (object, optional) - Duration for recurring products
+    - `value` (number) - Duration value
+    - `unit` (string) - Duration unit: 'days' | 'weeks' | 'months' | 'years'
   - `discount` (object, optional) - Discount applied to this product assignment
     - `type` (string) - Discount type: 'percentage' | 'fixed'
     - `value` (number) - Discount value (percentage 0-100 or fixed amount)
     - `reason` (string, optional) - Reason for the discount
-- `nextReceiptDate` (Timestamp, optional) - Earliest due date from all assigned products (used for efficient querying by cloud functions)
+- `nextReceiptDate` (Timestamp, optional) - Earliest due date calculated from all active recurring products' invoiceDay settings (used for efficient querying by cloud functions)
 - `createdAt` (Timestamp) - Creation timestamp
 - `updatedAt` (Timestamp) - Last update timestamp
 
