@@ -1294,7 +1294,7 @@ service firebase.storage {
     setError('');
 
     if (activeStep === 0) {
-      if (!formData.name) {
+      if (!formData.name.trim()) {
         setError('Please enter the full name');
         return;
       }
@@ -1559,50 +1559,62 @@ service firebase.storage {
     try {
       setSubmitLoading(true);
       const organizationId = userData?.roles?.[0]?.organizationId || '';
-      
+
+      // Trim whitespace from input fields
+      const trimmedName = formData.name.trim();
+      const trimmedEmail = formData.email.trim();
+      const trimmedPhone = formData.phone.trim();
+
+      // Validate name is not empty after trimming
+      if (!trimmedName) {
+        setError('Please enter a valid name');
+        setSubmitLoading(false);
+        return;
+      }
+
       console.log(`📝 ${dialogMode === 'edit' ? 'Updating' : 'Creating'} user:`, {
         dialogMode,
         selectedUser: selectedUser?.id,
         formData: {
-          name: formData.name,
+          name: trimmedName,
           roles: formData.roles,
           guardianId: formData.guardianId
         }
       });
-      
+
       if (dialogMode === 'edit' && selectedUser) {
         // Handle user update
         await handleUserUpdate();
         return;
       }
-      
+
       let newUserId: string;
-      
+
       // Check if user has roles that require login (not just player/guardian)
-      const hasLoginRole = formData.roles.some(role => 
+      const hasLoginRole = formData.roles.some(role =>
         !['player', 'guardian'].includes(role)
       );
       
       console.log('User creation debug:', {
         roles: formData.roles,
         hasLoginRole,
-        email: formData.email,
-        name: formData.name,
+        email: trimmedEmail,
+        name: trimmedName,
         organizationId,
         isCoach: formData.roles.includes('coach')
       });
-      
+
       if (hasLoginRole) {
         console.log('Creating user with login credentials...');
         // Import createUserAsAdmin function
         const { createUserAsAdmin } = await import('../../services/authService');
-        
+
         // Create Firebase Auth account for users who can log in
         // The admin will stay logged in thanks to the secondary app instance
-        const { uid } = await createUserAsAdmin(formData.email, formData.password, formData.name);
+        const { uid } = await createUserAsAdmin(trimmedEmail, formData.password, trimmedName);
         console.log('User created with UID:', uid);
         newUserId = uid;
-        
+
         // Update user document with additional data and roles
         console.log('Updating user with roles and organization data...');
         await updateUserService(newUserId, {
@@ -1619,8 +1631,8 @@ service firebase.storage {
         newUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
         await createUser({
           id: newUserId,
-          name: formData.name,
-          email: formData.email,
+          name: trimmedName,
+          email: trimmedEmail,
           phone: getFullPhoneNumber(),
           roles: formData.roles.map(role => ({
             role: [role],
@@ -1659,8 +1671,8 @@ service firebase.storage {
       // Build complete user data for cache
       const newUserData: User = {
         id: newUserId,
-        name: formData.name,
-        email: formData.email,
+        name: trimmedName,
+        email: trimmedEmail,
         phone: getFullPhoneNumber(),
         roles: formData.roles.map(role => ({
           role: [role],
@@ -3182,7 +3194,7 @@ service firebase.storage {
                     <Button
                       onClick={handleSubmit}
                       loading={submitLoading}
-                      disabled={!formData.name || !!emailError || !!phoneError || !!(formData.email && !isValidEmail(formData.email)) || !!(formData.phone && !isValidPhone(formData.phone))}
+                      disabled={!formData.name.trim() || !!emailError || !!phoneError || !!(formData.email && !isValidEmail(formData.email)) || !!(formData.phone && !isValidPhone(formData.phone))}
                       className="bg-primary-600 hover:bg-primary-700"
                     >
                       {submitLoading ? 'Saving...' : 'Save Changes'}
@@ -4208,7 +4220,7 @@ service firebase.storage {
                     <Button
                       onClick={handleNext}
                       disabled={
-                        activeStep === 0 ? !formData.name :
+                        activeStep === 0 ? !formData.name.trim() :
                         (activeStep === 1 && !skipRoleAssignmentStep) ? formData.roles.length === 0 :
                         ((activeStep === 1 && skipRoleAssignmentStep) || (activeStep === 2 && !skipRoleAssignmentStep)) ? (
                           // Check for validation errors or invalid format
@@ -4233,7 +4245,7 @@ service firebase.storage {
                       onClick={handleSubmit}
                       loading={submitLoading}
                       disabled={
-                        !formData.name ||
+                        !formData.name.trim() ||
                         formData.roles.length === 0 ||
                         // Check for validation errors or invalid format
                         !!emailError || !!phoneError ||
