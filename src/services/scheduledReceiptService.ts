@@ -49,10 +49,10 @@ export const processScheduledReceipts = async (organizationId?: string): Promise
       }
       
       // Find products with scheduled receipts that are due
-      const dueReceiptProducts = player.assignedProducts.filter(ap => 
-        ap.receiptStatus === 'scheduled' && 
-        ap.nextReceiptDate && 
-        ap.nextReceiptDate.toMillis() <= now.toMillis()
+      const dueReceiptProducts = player.assignedProducts.filter(ap =>
+        ap.receiptStatus === 'scheduled' &&
+        ap.invoiceDate &&
+        ap.invoiceDate.toMillis() <= now.toMillis()
       );
       
       if (dueReceiptProducts.length === 0) {
@@ -209,23 +209,23 @@ export const getPlayersWithScheduledReceipts = async (organizationId: string): P
         continue;
       }
       
-      const scheduledProducts = player.assignedProducts.filter(ap => 
-        ap.receiptStatus === 'scheduled' && ap.nextReceiptDate
+      const scheduledProducts = player.assignedProducts.filter(ap =>
+        ap.receiptStatus === 'scheduled' && ap.invoiceDate
       );
-      
+
       if (scheduledProducts.length === 0) {
         continue;
       }
-      
+
       const scheduledReceipts = scheduledProducts.map(ap => {
-        const nextReceiptDate = ap.nextReceiptDate!.toDate();
-        const daysUntilDue = Math.ceil((nextReceiptDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-        
+        const invoiceDate = ap.invoiceDate!.toDate();
+        const daysUntilDue = Math.ceil((invoiceDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
         return {
           productId: ap.productId,
           productName: ap.productName,
           price: ap.price,
-          nextReceiptDate,
+          nextReceiptDate: invoiceDate,
           daysUntilDue
         };
       });
