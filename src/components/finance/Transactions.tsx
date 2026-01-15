@@ -1050,9 +1050,6 @@ const Transactions: React.FC = () => {
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-secondary-900">
           {showDeletedTransactions ? 'Deleted Transactions' : 'Transactions'}
-          <span className="ml-2 text-sm font-normal text-primary-600">
-            (Powered by Algolia)
-          </span>
         </h2>
         <div className="flex items-center space-x-3">
           <Button 
