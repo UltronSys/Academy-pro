@@ -89,6 +89,12 @@ function calculateNextInvoiceDateFromInvoiceDay(
   const now = new Date();
   now.setHours(0, 0, 0, 0);
 
+  const getAdjustedDay = (date: Date, requestedDay: number): number => {
+    const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
+    if (requestedDay === -1) return lastDay; // End of month
+    return Math.min(requestedDay, lastDay);
+  };
+
   // For non-monthly recurring products, calculate from last generated date
   if (recurringDuration && recurringDuration.unit !== 'months') {
     const baseDate = lastGeneratedDate || now;
@@ -108,13 +114,24 @@ function calculateNextInvoiceDateFromInvoiceDay(
     return nextDate;
   }
 
-  // For monthly recurring (or default), use invoiceDay to determine next date
-  const getAdjustedDay = (date: Date, requestedDay: number): number => {
-    const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
-    if (requestedDay === -1) return lastDay; // End of month
-    return Math.min(requestedDay, lastDay);
-  };
+  // For monthly recurring: if we have a lastGeneratedDate, advance from that month
+  if (lastGeneratedDate) {
+    const lastGenDate = new Date(lastGeneratedDate);
+    lastGenDate.setHours(0, 0, 0, 0);
 
+    // Add the recurring months (default 1 month)
+    const monthsToAdd = recurringDuration?.value || 1;
+    let nextDate = new Date(lastGenDate);
+    nextDate.setMonth(nextDate.getMonth() + monthsToAdd);
+
+    // Set to the invoice day (adjusted for month length)
+    const adjustedDay = getAdjustedDay(nextDate, invoiceDay);
+    nextDate.setDate(adjustedDay);
+
+    return nextDate;
+  }
+
+  // No lastGeneratedDate - calculate based on current date
   const currentDay = now.getDate();
   let nextDate = new Date(now);
   const adjustedDay = getAdjustedDay(nextDate, invoiceDay);
