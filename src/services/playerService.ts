@@ -77,6 +77,73 @@ const calculateNextInvoiceDateFromInvoiceDay = (
   return nextDate;
 };
 
+// Helper function to calculate all invoice dates from a start date up to the current date
+// Returns an array of dates for which receipts should be created
+const calculateAllInvoiceDatesFromStart = (
+  startDate: Date,
+  recurringDuration: { value: number; unit: 'days' | 'weeks' | 'months' | 'years' },
+  deadlineDays: number
+): Array<{ invoiceDate: Date; deadlineDate: Date }> => {
+  const now = new Date();
+  now.setHours(23, 59, 59, 999); // End of today to include today's date
+
+  const invoiceDates: Array<{ invoiceDate: Date; deadlineDate: Date }> = [];
+  let currentDate = new Date(startDate);
+  currentDate.setHours(0, 0, 0, 0);
+
+  // Generate all invoice dates from start until we pass today
+  while (currentDate <= now) {
+    const invoiceDate = new Date(currentDate);
+    const deadlineDate = new Date(currentDate);
+    deadlineDate.setDate(deadlineDate.getDate() + deadlineDays);
+
+    invoiceDates.push({ invoiceDate, deadlineDate });
+
+    // Calculate next date based on recurring duration
+    switch (recurringDuration.unit) {
+      case 'days':
+        currentDate.setDate(currentDate.getDate() + recurringDuration.value);
+        break;
+      case 'weeks':
+        currentDate.setDate(currentDate.getDate() + (recurringDuration.value * 7));
+        break;
+      case 'months':
+        currentDate.setMonth(currentDate.getMonth() + recurringDuration.value);
+        break;
+      case 'years':
+        currentDate.setFullYear(currentDate.getFullYear() + recurringDuration.value);
+        break;
+    }
+  }
+
+  return invoiceDates;
+};
+
+// Helper function to calculate the next future invoice date from the last generated date
+const calculateNextFutureInvoiceDate = (
+  lastInvoiceDate: Date,
+  recurringDuration: { value: number; unit: 'days' | 'weeks' | 'months' | 'years' }
+): Date => {
+  const nextDate = new Date(lastInvoiceDate);
+
+  switch (recurringDuration.unit) {
+    case 'days':
+      nextDate.setDate(nextDate.getDate() + recurringDuration.value);
+      break;
+    case 'weeks':
+      nextDate.setDate(nextDate.getDate() + (recurringDuration.value * 7));
+      break;
+    case 'months':
+      nextDate.setMonth(nextDate.getMonth() + recurringDuration.value);
+      break;
+    case 'years':
+      nextDate.setFullYear(nextDate.getFullYear() + recurringDuration.value);
+      break;
+  }
+
+  return nextDate;
+};
+
 // Helper function to calculate the earliest nextReceiptDate from assigned products
 const calculateEarliestReceiptDate = (assignedProducts: Player['assignedProducts']): Timestamp | null => {
   if (!assignedProducts || assignedProducts.length === 0) {
@@ -509,33 +576,52 @@ export const assignProductToPlayer = async (
         console.log('✅ assignProductToPlayer: Player nextReceiptDate set to:', newNextReceiptDate.toDate().toLocaleDateString());
       }
 
-      // Create immediate receipt for recurring products with immediate generation
+      // Create receipts for recurring products with immediate generation
+      // This handles both current and past dates (creating multiple receipts if start date is in the past)
       if (finalInvoiceGeneration === 'immediate' && product.productType === 'recurring') {
-        console.log('🧾 assignProductToPlayer: Creating immediate receipt for recurring product...');
+        console.log('🧾 assignProductToPlayer: Creating receipts for recurring product...');
 
         try {
-          const receipt = await createDebitReceipt(
-            userRef,
-            productRef,
-            {
-              name: product.name,
-              price: product.price,
-              invoiceDate: finalInvoiceDate,
-              deadline: finalDeadlineDate
-            },
-            organizationId,
-            academyId
+          if (!product.recurringDuration) {
+            throw new Error('Recurring product must have a recurring duration');
+          }
+
+          // Calculate all invoice dates from the start date until today
+          const allInvoiceDates = calculateAllInvoiceDatesFromStart(
+            finalInvoiceDate,
+            product.recurringDuration,
+            deadlineDay || 30
           );
 
-          console.log('🎉 assignProductToPlayer: Receipt created:', receipt.id);
+          console.log(`📅 assignProductToPlayer: Found ${allInvoiceDates.length} invoice date(s) to create receipts for`);
 
-          // Calculate next invoice date from invoiceDay
-          const nextInvoiceDate = calculateNextInvoiceDateFromInvoiceDay(
-            invoiceDay || 1, // Default to 1st of month
-            product.recurringDuration,
-            now
+          // Create a receipt for each invoice date
+          let lastCreatedInvoiceDate = finalInvoiceDate;
+          for (const { invoiceDate, deadlineDate } of allInvoiceDates) {
+            const receipt = await createDebitReceipt(
+              userRef,
+              productRef,
+              {
+                name: product.name,
+                price: product.price,
+                invoiceDate: invoiceDate,
+                deadline: deadlineDate
+              },
+              organizationId,
+              academyId
+            );
+            console.log(`🎉 assignProductToPlayer: Receipt created for ${invoiceDate.toLocaleDateString()}:`, receipt.id);
+            lastCreatedInvoiceDate = invoiceDate;
+          }
+
+          // Calculate the next future invoice date
+          const nextInvoiceDate = calculateNextFutureInvoiceDate(
+            lastCreatedInvoiceDate,
+            product.recurringDuration
           );
           const nextDeadlineDate = new Date(nextInvoiceDate.getTime() + (deadlineDay || 30) * 24 * 60 * 60 * 1000);
+
+          console.log(`📅 assignProductToPlayer: Next invoice date will be: ${nextInvoiceDate.toLocaleDateString()}`);
 
           // Update assignedProduct with next invoiceDate, deadlineDate, and lastGeneratedDate
           const currentAssignedProducts = (await getDoc(playerRef)).data()?.assignedProducts || [];
@@ -548,7 +634,7 @@ export const assignProductToPlayer = async (
             } : ap
           );
 
-          // Calculate the earliest nextReceiptDate for player-level field using invoiceDay
+          // Calculate the earliest nextReceiptDate for player-level field
           const earliestReceiptDate = calculateEarliestReceiptDate(updatedWithNextDates);
 
           await updateDoc(playerRef, {
@@ -557,7 +643,8 @@ export const assignProductToPlayer = async (
             updatedAt: Timestamp.now()
           });
 
-          console.log('✅ assignProductToPlayer: invoiceDate updated to next receipt date:', nextInvoiceDate.toLocaleDateString());
+          console.log('✅ assignProductToPlayer: Created', allInvoiceDates.length, 'receipt(s)');
+          console.log('✅ assignProductToPlayer: Next invoiceDate set to:', nextInvoiceDate.toLocaleDateString());
           console.log('✅ assignProductToPlayer: Player nextReceiptDate set to:', earliestReceiptDate?.toDate().toLocaleDateString());
         } catch (receiptError: any) {
           console.error('❌ assignProductToPlayer: Failed to create debit receipt:', receiptError);
@@ -615,13 +702,9 @@ export const removeProductFromPlayer = async (
       throw new Error('No products assigned to this player');
     }
 
-    // Mark product as cancelled instead of removing it
+    // Remove the product from the assigned products array
     // Note: Active receipts are preserved - they remain as outstanding invoices
-    const updatedAssignedProducts = player.assignedProducts.map(p =>
-      p.productId === productId
-        ? { ...p, status: 'cancelled' as const }
-        : p
-    );
+    const updatedAssignedProducts = player.assignedProducts.filter(p => p.productId !== productId);
 
     // Recalculate player-level nextReceiptDate
     const earliestReceiptDate = calculateEarliestReceiptDate(updatedAssignedProducts);
@@ -632,7 +715,7 @@ export const removeProductFromPlayer = async (
       updatedAt: Timestamp.now()
     });
 
-    console.log('Product assignment cancelled for player:', playerId, 'product:', productId);
+    console.log('Product removed from player:', playerId, 'product:', productId);
     console.log('Player nextReceiptDate updated to:', earliestReceiptDate?.toDate().toLocaleDateString() || 'null');
 
   } catch (error) {

@@ -43,10 +43,7 @@ const PlayerDetails: React.FC = () => {
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [linkingInvoiceDate, setLinkingInvoiceDate] = useState<string>('');
   const [linkingDeadlineDate, setLinkingDeadlineDate] = useState<string>('');
-  const [linkingBillingDay, setLinkingBillingDay] = useState<number>(1); // Day of month (1-28) for recurring
-  const [linkingBillingDayOption, setLinkingBillingDayOption] = useState<'beginning' | 'end' | 'custom'>('beginning');
   const [linkingDeadlineDays, setLinkingDeadlineDays] = useState<number>(30); // Days after invoice for payment
-  const [linkingCreateCurrentMonth, setLinkingCreateCurrentMonth] = useState<boolean>(true); // Create invoice for current month
   const [linkingInvoiceGeneration, setLinkingInvoiceGeneration] = useState<'immediate' | 'scheduled'>('immediate');
   const [linkingProduct, setLinkingProduct] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
@@ -294,10 +291,7 @@ const PlayerDetails: React.FC = () => {
       
       setLinkingInvoiceDate(today.toISOString().split('T')[0]);
       setLinkingDeadlineDate(defaultDeadline.toISOString().split('T')[0]);
-      setLinkingBillingDay(1);
-      setLinkingBillingDayOption('beginning');
       setLinkingDeadlineDays(30);
-      setLinkingCreateCurrentMonth(true);
       setSelectedProductId('');
       setLinkingInvoiceGeneration('immediate');
       
@@ -315,10 +309,7 @@ const PlayerDetails: React.FC = () => {
     setSelectedProductId('');
     setLinkingInvoiceDate('');
     setLinkingDeadlineDate('');
-    setLinkingBillingDay(1);
-    setLinkingBillingDayOption('beginning');
     setLinkingDeadlineDays(30);
-    setLinkingCreateCurrentMonth(true);
     setLinkingInvoiceGeneration('immediate');
     setProductSearchQuery('');
   };
@@ -333,125 +324,32 @@ const PlayerDetails: React.FC = () => {
     }
 
     const isRecurringProduct = selectedProduct.productType === 'recurring';
-    const isMonthlyRecurring = isRecurringProduct && selectedProduct.recurringDuration?.unit === 'months';
-
-    // Helper to get the last day of a given month
-    const getLastDayOfMonth = (year: number, month: number): number => {
-      // month is 0-indexed (0 = January, 11 = December)
-      // Setting day to 0 of next month gives us the last day of current month
-      return new Date(year, month + 1, 0).getDate();
-    };
-
-    // Get actual billing day based on option (returns -1 for end of month to handle dynamically)
-    const getActualBillingDay = (): number => {
-      if (linkingBillingDayOption === 'beginning') return 1;
-      if (linkingBillingDayOption === 'end') return -1; // Special value for last day of month
-      return linkingBillingDay;
-    };
-
-    // Helper to calculate first invoice date from billing day (for next occurrence)
-    const calculateNextBillingDate = (billingDay: number): Date => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const currentDay = today.getDate();
-
-      let firstInvoice = new Date(today);
-
-      // Handle end of month (-1) or custom day that might exceed month's days
-      const getAdjustedDay = (date: Date, requestedDay: number): number => {
-        const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
-        if (requestedDay === -1) return lastDay; // End of month
-        return Math.min(requestedDay, lastDay); // Custom day capped at last day of month
-      };
-
-      const adjustedDay = getAdjustedDay(firstInvoice, billingDay);
-
-      if (currentDay < adjustedDay) {
-        // Billing day is still ahead this month
-        firstInvoice.setDate(adjustedDay);
-      } else {
-        // Billing day has passed, use next month
-        firstInvoice.setMonth(firstInvoice.getMonth() + 1);
-        const nextMonthAdjustedDay = getAdjustedDay(firstInvoice, billingDay);
-        firstInvoice.setDate(nextMonthAdjustedDay);
-      }
-      return firstInvoice;
-    };
 
     // Validate inputs based on product type and generation option
     let invoiceDateObj: Date;
     let deadlineDateObj: Date;
     let effectiveInvoiceGeneration: 'immediate' | 'scheduled' = linkingInvoiceGeneration;
 
-    if (isRecurringProduct) {
-      if (isMonthlyRecurring) {
-        // For monthly recurring products, use the billing day logic
-        if (linkingCreateCurrentMonth) {
-          // Create invoice for current month (immediate)
-          invoiceDateObj = new Date();
-          invoiceDateObj.setHours(0, 0, 0, 0);
-          deadlineDateObj = new Date(invoiceDateObj);
-          deadlineDateObj.setDate(deadlineDateObj.getDate() + linkingDeadlineDays);
-          effectiveInvoiceGeneration = 'immediate';
-        } else {
-          // Start from the chosen billing day (scheduled)
-          const actualBillingDay = getActualBillingDay();
-          invoiceDateObj = calculateNextBillingDate(actualBillingDay);
-          deadlineDateObj = new Date(invoiceDateObj);
-          deadlineDateObj.setDate(deadlineDateObj.getDate() + linkingDeadlineDays);
-          effectiveInvoiceGeneration = 'scheduled';
-        }
-      } else {
-        // For non-monthly recurring (days, weeks, years), use the date picker
-        if (!linkingInvoiceDate) {
-          showToast('Please select the first invoice date', 'error');
-          return;
-        }
-        invoiceDateObj = new Date(linkingInvoiceDate);
-        invoiceDateObj.setHours(0, 0, 0, 0);
-        deadlineDateObj = new Date(invoiceDateObj);
-        deadlineDateObj.setDate(deadlineDateObj.getDate() + linkingDeadlineDays);
-
-        // If the selected date is today or in the past, treat as immediate
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        effectiveInvoiceGeneration = invoiceDateObj <= today ? 'immediate' : 'scheduled';
-      }
-    } else if (linkingInvoiceGeneration === 'immediate') {
-      // One-time immediate: only deadline required, invoice date = today
-      if (!linkingDeadlineDate) {
-        showToast('Please select a payment deadline', 'error');
-        return;
-      }
-      invoiceDateObj = new Date();
-      invoiceDateObj.setHours(0, 0, 0, 0);
-      deadlineDateObj = new Date(linkingDeadlineDate);
-      if (deadlineDateObj <= invoiceDateObj) {
-        showToast('Deadline date must be after today', 'error');
-        return;
-      }
-    } else {
-      // One-time scheduled: both dates required
-      if (!linkingInvoiceDate || !linkingDeadlineDate) {
-        showToast('Please select both invoice date and deadline date', 'error');
-        return;
-      }
-      invoiceDateObj = new Date(linkingInvoiceDate);
-      deadlineDateObj = new Date(linkingDeadlineDate);
-      if (deadlineDateObj <= invoiceDateObj) {
-        showToast('Deadline date must be after invoice date', 'error');
-        return;
-      }
+    // All products now use date picker + deadline days
+    if (!linkingInvoiceDate) {
+      showToast('Please select the invoice date', 'error');
+      return;
     }
+    invoiceDateObj = new Date(linkingInvoiceDate);
+    invoiceDateObj.setHours(0, 0, 0, 0);
+    deadlineDateObj = new Date(invoiceDateObj);
+    deadlineDateObj.setDate(deadlineDateObj.getDate() + linkingDeadlineDays);
+
+    // If the selected date is today or in the past, treat as immediate
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    effectiveInvoiceGeneration = invoiceDateObj <= today ? 'immediate' : 'scheduled';
 
     try {
       setLinkingProduct(true);
 
-      // Convert billing day option to number
-      // 1 = beginning of month, -1 = end of month (last day), 2-31 = custom day
-      const invoiceDayNumber = linkingBillingDayOption === 'beginning' ? 1
-        : linkingBillingDayOption === 'end' ? -1
-        : linkingBillingDay;
+      // Get the day of the month from the selected invoice date
+      const invoiceDayNumber = invoiceDateObj.getDate();
 
       // Assign product to player
       await assignProductToPlayer(
@@ -1710,111 +1608,25 @@ const PlayerDetails: React.FC = () => {
                     {(() => {
                       const selectedProduct = availableProducts.find(p => p.id === selectedProductId);
                       const isRecurring = selectedProduct?.productType === 'recurring';
-                      const isMonthlyRecurring = isRecurring && selectedProduct?.recurringDuration?.unit === 'months';
 
                       if (isRecurring) {
-                        // Recurring product - new simplified UI
+                        // Recurring product - simplified UI with just date picker for all recurring types
                         return (
                           <>
-                            {/* Billing Day Selection - Only for monthly recurring */}
-                            {isMonthlyRecurring ? (
-                              <div className="mb-4">
-                                <Label>When will invoices be generated each month?</Label>
-                                <div className="flex flex-wrap gap-3 mt-2">
-                                  <label className={`
-                                    flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
-                                    ${linkingBillingDayOption === 'beginning'
-                                      ? 'border-primary-500 bg-primary-50 text-primary-700'
-                                      : 'border-secondary-200 hover:border-secondary-300'
-                                    }
-                                  `}>
-                                    <input
-                                      type="radio"
-                                      value="beginning"
-                                      checked={linkingBillingDayOption === 'beginning'}
-                                      onChange={() => setLinkingBillingDayOption('beginning')}
-                                      className="sr-only"
-                                    />
-                                    <span className="text-sm font-medium">Beginning of month (1st)</span>
-                                  </label>
-                                  <label className={`
-                                    flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
-                                    ${linkingBillingDayOption === 'end'
-                                      ? 'border-primary-500 bg-primary-50 text-primary-700'
-                                      : 'border-secondary-200 hover:border-secondary-300'
-                                    }
-                                  `}>
-                                    <input
-                                      type="radio"
-                                      value="end"
-                                      checked={linkingBillingDayOption === 'end'}
-                                      onChange={() => setLinkingBillingDayOption('end')}
-                                      className="sr-only"
-                                    />
-                                    <span className="text-sm font-medium">End of month (last day)</span>
-                                  </label>
-                                  <label className={`
-                                    flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
-                                    ${linkingBillingDayOption === 'custom'
-                                      ? 'border-primary-500 bg-primary-50 text-primary-700'
-                                      : 'border-secondary-200 hover:border-secondary-300'
-                                    }
-                                  `}>
-                                    <input
-                                      type="radio"
-                                      value="custom"
-                                      checked={linkingBillingDayOption === 'custom'}
-                                      onChange={() => setLinkingBillingDayOption('custom')}
-                                      className="sr-only"
-                                    />
-                                    <span className="text-sm font-medium">Custom day</span>
-                                  </label>
-                                </div>
-
-                                {/* Custom day dropdown */}
-                                {linkingBillingDayOption === 'custom' && (
-                                  <div className="mt-3">
-                                    <select
-                                      value={linkingBillingDay}
-                                      onChange={(e) => setLinkingBillingDay(Number(e.target.value))}
-                                      className="w-full sm:w-48 px-3 py-2 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                                    >
-                                      {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
-                                        const getOrdinalSuffix = (n: number) => {
-                                          if (n >= 11 && n <= 13) return 'th';
-                                          switch (n % 10) {
-                                            case 1: return 'st';
-                                            case 2: return 'nd';
-                                            case 3: return 'rd';
-                                            default: return 'th';
-                                          }
-                                        };
-                                        return (
-                                          <option key={day} value={day}>
-                                            {day}{getOrdinalSuffix(day)} of each month
-                                          </option>
-                                        );
-                                      })}
-                                    </select>
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              /* Non-monthly recurring (days, weeks, years) - use date picker */
-                              <div className="mb-4">
-                                <Label htmlFor="linking-invoice-date">First Invoice Date</Label>
-                                <Input
-                                  id="linking-invoice-date"
-                                  type="date"
-                                  value={linkingInvoiceDate}
-                                  onChange={(e) => setLinkingInvoiceDate(e.target.value)}
-                                  className="w-full sm:w-48 mt-2"
-                                />
-                                <p className="text-xs text-secondary-500 mt-1">
-                                  Select when the first invoice should be generated
-                                </p>
-                              </div>
-                            )}
+                            {/* First Invoice Date */}
+                            <div className="mb-4">
+                              <Label htmlFor="linking-invoice-date">First Invoice Date</Label>
+                              <Input
+                                id="linking-invoice-date"
+                                type="date"
+                                value={linkingInvoiceDate}
+                                onChange={(e) => setLinkingInvoiceDate(e.target.value)}
+                                className="w-full sm:w-48 mt-2"
+                              />
+                              <p className="text-xs text-secondary-500 mt-1">
+                                Select when the first invoice should be generated. If you select a past date, invoices will be created for all periods up to the current date.
+                              </p>
+                            </div>
 
                             {/* Payment Due After */}
                             <div className="mb-4">
@@ -1830,145 +1642,42 @@ const PlayerDetails: React.FC = () => {
                                 Payment must be made within this period after each invoice
                               </p>
                             </div>
-
-                            {/* Create for current month checkbox - Only for monthly recurring */}
-                            {isMonthlyRecurring && (
-                              <div className="mb-4 p-3 bg-secondary-50 rounded-lg">
-                                <label className="flex items-start gap-3 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={linkingCreateCurrentMonth}
-                                    onChange={(e) => setLinkingCreateCurrentMonth(e.target.checked)}
-                                    className="mt-0.5 w-4 h-4 text-primary-600 border-secondary-300 rounded focus:ring-primary-500"
-                                  />
-                                  <div>
-                                    <span className="text-sm font-medium text-secondary-900">Create invoice for current month</span>
-                                    <p className="text-xs text-secondary-500 mt-0.5">
-                                      {linkingCreateCurrentMonth
-                                        ? 'An invoice will be created now, and future invoices will be generated automatically.'
-                                        : 'No invoice will be created now. Billing will start from the next scheduled date.'}
-                                    </p>
-                                  </div>
-                                </label>
-                              </div>
-                            )}
                           </>
                         );
                       } else {
-                        // One-time product - keep existing UI
+                        // One-time product - simplified UI matching recurring products
                         return (
-                          <div className="mb-4">
-                            <Label>Invoice Generation</Label>
-                            <div className="flex flex-wrap gap-3 mt-2">
-                              <label className={`
-                                flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
-                                ${linkingInvoiceGeneration === 'immediate'
-                                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                                  : 'border-secondary-200 hover:border-secondary-300'
-                                }
-                              `}>
-                                <input
-                                  type="radio"
-                                  value="immediate"
-                                  checked={linkingInvoiceGeneration === 'immediate'}
-                                  onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
-                                  className="sr-only"
-                                />
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                </svg>
-                                <span className="text-sm font-medium">Create immediately</span>
-                              </label>
-                              <label className={`
-                                flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all
-                                ${linkingInvoiceGeneration === 'scheduled'
-                                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                                  : 'border-secondary-200 hover:border-secondary-300'
-                                }
-                              `}>
-                                <input
-                                  type="radio"
-                                  value="scheduled"
-                                  checked={linkingInvoiceGeneration === 'scheduled'}
-                                  onChange={(e) => setLinkingInvoiceGeneration(e.target.value as 'immediate' | 'scheduled')}
-                                  className="sr-only"
-                                />
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                <span className="text-sm font-medium">Schedule for later</span>
-                              </label>
-                            </div>
-                            <p className="text-xs text-secondary-500 mt-2">
-                              {linkingInvoiceGeneration === 'immediate'
-                                ? 'A debit receipt will be created immediately with today\'s date.'
-                                : 'The invoice will be created on the scheduled date.'}
-                            </p>
-                          </div>
-                        );
-                      }
-                    })()}
-
-                    {/* Date fields - Only for one-time products */}
-                    {(() => {
-                      const selectedProduct = availableProducts.find(p => p.id === selectedProductId);
-                      const isOneTime = selectedProduct?.productType === 'one-time';
-
-                      if (!isOneTime) return null; // Recurring products are handled above
-
-                      if (linkingInvoiceGeneration === 'immediate') {
-                        // Only show deadline (invoice date = today)
-                        return (
-                          <div className="grid grid-cols-1 gap-4 mb-4">
-                            <div>
-                              <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
-                              <Input
-                                id="linking-deadline-date"
-                                type="date"
-                                value={linkingDeadlineDate}
-                                onChange={(e) => setLinkingDeadlineDate(e.target.value)}
-                                required
-                                min={new Date().toISOString().split('T')[0]}
-                              />
-                              <p className="text-xs text-secondary-500 mt-1">
-                                Payment must be made by this date
-                              </p>
-                            </div>
-                          </div>
-                        );
-                      } else {
-                        // Scheduled: show both invoice date and deadline
-                        return (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                            <div>
+                          <>
+                            {/* Invoice Date */}
+                            <div className="mb-4">
                               <Label htmlFor="linking-invoice-date">Invoice Date</Label>
                               <Input
                                 id="linking-invoice-date"
                                 type="date"
                                 value={linkingInvoiceDate}
                                 onChange={(e) => setLinkingInvoiceDate(e.target.value)}
-                                required
-                                min={new Date().toISOString().split('T')[0]}
+                                className="w-full sm:w-48 mt-2"
                               />
                               <p className="text-xs text-secondary-500 mt-1">
                                 When the invoice will be created
                               </p>
                             </div>
-                            <div>
-                              <Label htmlFor="linking-deadline-date">Payment Deadline</Label>
+
+                            {/* Payment Due After */}
+                            <div className="mb-4">
+                              <Label htmlFor="linking-deadline-days">Payment Due After (days)</Label>
                               <Input
-                                id="linking-deadline-date"
-                                type="date"
-                                value={linkingDeadlineDate}
-                                onChange={(e) => setLinkingDeadlineDate(e.target.value)}
-                                required
-                                min={linkingInvoiceDate || new Date().toISOString().split('T')[0]}
+                                id="linking-deadline-days"
+                                type="number"
+                                value={linkingDeadlineDays}
+                                onChange={(e) => setLinkingDeadlineDays(Number(e.target.value))}
+                                className="w-full sm:w-48 mt-2"
                               />
                               <p className="text-xs text-secondary-500 mt-1">
-                                Payment must be made by this date
+                                Payment must be made within this period after the invoice
                               </p>
                             </div>
-                          </div>
+                          </>
                         );
                       }
                     })()}
@@ -1981,116 +1690,40 @@ const PlayerDetails: React.FC = () => {
                       const isRecurring = selectedProduct.productType === 'recurring';
                       const duration = selectedProduct.recurringDuration;
 
-                      // Helper to get the last day of a given month
-                      const getLastDayOfMonth = (year: number, month: number): number => {
-                        return new Date(year, month + 1, 0).getDate();
-                      };
-
-                      // Get actual billing day based on option (returns -1 for end of month)
-                      const getActualBillingDay = (): number => {
-                        if (linkingBillingDayOption === 'beginning') return 1;
-                        if (linkingBillingDayOption === 'end') return -1; // Special value for last day of month
-                        return linkingBillingDay;
-                      };
-
-                      // Helper to calculate next billing date from billing day
-                      const calculateNextBillingDate = (billingDay: number): Date => {
-                        const today = new Date();
-                        today.setHours(0, 0, 0, 0);
-                        const currentDay = today.getDate();
-
-                        let firstInvoice = new Date(today);
-
-                        // Handle end of month (-1) or custom day that might exceed month's days
-                        const getAdjustedDay = (date: Date, requestedDay: number): number => {
-                          const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
-                          if (requestedDay === -1) return lastDay; // End of month
-                          return Math.min(requestedDay, lastDay); // Custom day capped at last day of month
-                        };
-
-                        const adjustedDay = getAdjustedDay(firstInvoice, billingDay);
-
-                        if (currentDay < adjustedDay) {
-                          firstInvoice.setDate(adjustedDay);
-                        } else {
-                          firstInvoice.setMonth(firstInvoice.getMonth() + 1);
-                          const nextMonthAdjustedDay = getAdjustedDay(firstInvoice, billingDay);
-                          firstInvoice.setDate(nextMonthAdjustedDay);
-                        }
-                        return firstInvoice;
-                      };
-
                       // Calculate first invoice date based on settings
-                      const isMonthlyRecurring = isRecurring && duration?.unit === 'months';
                       const getFirstInvoiceDate = (): Date => {
-                        if (isRecurring) {
-                          if (isMonthlyRecurring) {
-                            // Monthly recurring uses billing day options
-                            if (linkingCreateCurrentMonth) {
-                              return new Date();
-                            } else {
-                              return calculateNextBillingDate(getActualBillingDay());
-                            }
-                          } else {
-                            // Non-monthly recurring (days, weeks, years) uses date picker
-                            return linkingInvoiceDate ? new Date(linkingInvoiceDate) : new Date();
-                          }
-                        } else {
-                          // One-time products
-                          return linkingInvoiceGeneration === 'immediate'
-                            ? new Date()
-                            : linkingInvoiceDate ? new Date(linkingInvoiceDate) : new Date();
-                        }
+                        // All products now use date picker
+                        return linkingInvoiceDate ? new Date(linkingInvoiceDate) : new Date();
                       };
 
-                      // Calculate next invoice date for recurring products
+                      // Calculate next FUTURE invoice date for recurring products
+                      // This finds the first invoice date that is after today
                       const getNextInvoiceDate = () => {
                         if (!isRecurring || !duration) return null;
 
-                        // For monthly billing with a specific billing day, always use the billing day
-                        if (duration.unit === 'months') {
-                          const today = new Date();
-                          today.setHours(0, 0, 0, 0);
-                          const billingDay = getActualBillingDay();
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
 
-                          // Handle end of month (-1) or custom day that might exceed month's days
-                          const getAdjustedDayForMonth = (date: Date, requestedDay: number): number => {
-                            const lastDay = getLastDayOfMonth(date.getFullYear(), date.getMonth());
-                            if (requestedDay === -1) return lastDay; // End of month
-                            return Math.min(requestedDay, lastDay); // Custom day capped at last day of month
-                          };
+                        // Start from the first invoice date and keep advancing until we find a future date
+                        let nextDate = new Date(firstInvoiceDate);
+                        nextDate.setHours(0, 0, 0, 0);
 
-                          // Calculate next billing date based on the billing day
-                          let nextDate = new Date(today);
-                          const adjustedDay = getAdjustedDayForMonth(nextDate, billingDay);
-
-                          if (today.getDate() < adjustedDay) {
-                            // Billing day is still ahead this month
-                            nextDate.setDate(adjustedDay);
-                          } else {
-                            // Billing day has passed or is today, use next month
-                            nextDate.setMonth(nextDate.getMonth() + 1);
-                            const nextMonthAdjustedDay = getAdjustedDayForMonth(nextDate, billingDay);
-                            nextDate.setDate(nextMonthAdjustedDay);
+                        // Keep advancing until we find a date in the future
+                        while (nextDate <= today) {
+                          switch (duration.unit) {
+                            case 'days':
+                              nextDate.setDate(nextDate.getDate() + duration.value);
+                              break;
+                            case 'weeks':
+                              nextDate.setDate(nextDate.getDate() + (duration.value * 7));
+                              break;
+                            case 'months':
+                              nextDate.setMonth(nextDate.getMonth() + duration.value);
+                              break;
+                            case 'years':
+                              nextDate.setFullYear(nextDate.getFullYear() + duration.value);
+                              break;
                           }
-
-                          // nextDate is now the next occurrence of the billing day
-                          // This IS the next invoice date (no need to add more months)
-                          return nextDate;
-                        }
-
-                        // For other duration types (days, weeks, years), calculate from first invoice
-                        const nextDate = new Date(firstInvoiceDate);
-                        switch (duration.unit) {
-                          case 'days':
-                            nextDate.setDate(nextDate.getDate() + duration.value);
-                            break;
-                          case 'weeks':
-                            nextDate.setDate(nextDate.getDate() + (duration.value * 7));
-                            break;
-                          case 'years':
-                            nextDate.setFullYear(nextDate.getFullYear() + duration.value);
-                            break;
                         }
                         return nextDate;
                       };
@@ -2109,21 +1742,24 @@ const PlayerDetails: React.FC = () => {
                         if (day === 1) return '1st';
                         if (day === 2) return '2nd';
                         if (day === 3) return '3rd';
-                        return `${day}th`;
+                        if (day >= 11 && day <= 13) return `${day}th`;
+                        switch (day % 10) {
+                          case 1: return `${day}st`;
+                          case 2: return `${day}nd`;
+                          case 3: return `${day}rd`;
+                          default: return `${day}th`;
+                        }
                       };
 
                       const firstInvoiceDate = getFirstInvoiceDate();
-                      const actualBillingDay = getActualBillingDay();
+                      const billingDay = firstInvoiceDate.getDate();
 
                       // Calculate payment due date
                       const getPaymentDueDate = (): Date | null => {
-                        if (isRecurring) {
-                          const dueDate = new Date(firstInvoiceDate);
-                          dueDate.setDate(dueDate.getDate() + linkingDeadlineDays);
-                          return dueDate;
-                        } else {
-                          return linkingDeadlineDate ? new Date(linkingDeadlineDate) : null;
-                        }
+                        // All products now use deadline days
+                        const dueDate = new Date(firstInvoiceDate);
+                        dueDate.setDate(dueDate.getDate() + linkingDeadlineDays);
+                        return dueDate;
                       };
 
                       const paymentDueDate = getPaymentDueDate();
@@ -2186,7 +1822,7 @@ const PlayerDetails: React.FC = () => {
                                   <span className="text-secondary-600">Then every</span>
                                   <span className="font-medium text-secondary-800">{formatDuration()}</span>
                                   {duration?.unit === 'months' && (
-                                    <span className="text-secondary-600">on the {formatBillingDay(actualBillingDay)}</span>
+                                    <span className="text-secondary-600">on the {formatBillingDay(billingDay)}</span>
                                   )}
                                   <span className="text-secondary-500 italic">automatically</span>
                                 </div>
@@ -2194,14 +1830,42 @@ const PlayerDetails: React.FC = () => {
                             </div>
                           )}
 
-                          {/* Confirmation message for non-recurring */}
-                          {!isRecurring && linkingInvoiceGeneration === 'immediate' && (
-                            <p className="text-xs text-primary-600 mt-2 flex items-center gap-1">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              Invoice will be created once you confirm
-                            </p>
+                          {/* Billing Schedule Preview for One-time Products */}
+                          {!isRecurring && (
+                            <div className="mt-3 pt-3 border-t border-secondary-200">
+                              <p className="text-xs font-semibold text-secondary-700 mb-2 flex items-center gap-1">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                Invoice Schedule
+                              </p>
+                              <div className="space-y-1.5 text-xs">
+                                <div className="flex items-start gap-2">
+                                  <span className="text-secondary-400 mt-0.5">├─</span>
+                                  <span className="text-secondary-600">Invoice date:</span>
+                                  <span className="font-medium text-secondary-800">
+                                    {firstInvoiceDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    {(() => {
+                                      const today = new Date();
+                                      today.setHours(0, 0, 0, 0);
+                                      const invoiceDay = new Date(firstInvoiceDate);
+                                      invoiceDay.setHours(0, 0, 0, 0);
+                                      const isToday = today.getTime() === invoiceDay.getTime();
+                                      return isToday && <span className="text-primary-600 ml-1">(today)</span>;
+                                    })()}
+                                  </span>
+                                </div>
+                                {paymentDueDate && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-secondary-400 mt-0.5">└─</span>
+                                    <span className="text-secondary-600">Payment due:</span>
+                                    <span className="font-medium text-secondary-800">
+                                      {paymentDueDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           )}
                         </div>
                       );
