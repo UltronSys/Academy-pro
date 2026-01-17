@@ -11,7 +11,6 @@ import {
   findOrCreateConversation
 } from '../../services/messagingService';
 import { Conversation, MessagingSettings } from '../../types';
-import ConversationList from './ConversationList';
 import ConversationView from './ConversationView';
 import ComposeMessage from './ComposeMessage';
 import MessagingSettingsPanel from './MessagingSettings';
@@ -117,7 +116,7 @@ const Messaging: React.FC = () => {
         .catch(console.error)
         .finally(() => setGuardiansLoading(false));
     }
-  }, [sidebarView, selectedOrganization?.id]);
+  }, [sidebarView, selectedOrganization?.id, guardians.length]);
 
   const handleStartChat = async (guardian: { id: string; name: string; phone: string; type: 'player' | 'guardian' }) => {
     if (!selectedOrganization?.id) return;
