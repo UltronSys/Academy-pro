@@ -431,6 +431,20 @@ const AddUser: React.FC = () => {
         const dobValue = formData.dateOfBirth;
         const genderValue = formData.gender;
 
+        // Merge default values with form data for playerParameters
+        const playerParameters: Record<string, any> = { ...formData.dynamicFields };
+        fieldCategories.forEach(category => {
+          if (category.type === 'parameter' || category.type === 'mixed') {
+            category.fields?.forEach(field => {
+              const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+              // If field not in formData but has a default value, use the default
+              if (playerParameters[fieldKey] === undefined && field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== '') {
+                playerParameters[fieldKey] = field.defaultValue;
+              }
+            });
+          }
+        });
+
         await createPlayer({
           id: playerId,
           userId: newUserId,
@@ -439,7 +453,7 @@ const AddUser: React.FC = () => {
           dob: new Date(dobValue),
           gender: genderValue,
           guardianId: formData.guardianId,
-          playerParameters: formData.dynamicFields
+          playerParameters: playerParameters
         });
       }
 
@@ -716,29 +730,32 @@ const AddUser: React.FC = () => {
 
   const isParameterFieldsValid = () => {
     if (!isPlayerRole) return true;
-    
+
     if (!formData.dateOfBirth || !formData.gender) {
       return false;
     }
-    
+
     const allRequiredFields: ParameterField[] = [];
-    
+
     fieldCategories.forEach(category => {
       if (category.type === 'parameter' || category.type === 'mixed') {
         const requiredFields = (category.fields || []).filter(field => field.required);
         allRequiredFields.push(...requiredFields);
       }
     });
-    
+
     for (const field of allRequiredFields) {
       const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
-      const value = formData.dynamicFields[fieldKey];
-      
+      // Check both formData value and field's defaultValue
+      const value = formData.dynamicFields[fieldKey] !== undefined
+        ? formData.dynamicFields[fieldKey]
+        : field.defaultValue;
+
       if (value === undefined || value === null || value === '') {
         return false;
       }
     }
-    
+
     return true;
   };
 
