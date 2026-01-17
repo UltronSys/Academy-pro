@@ -153,7 +153,7 @@ class AlgoliaService {
     try {
       // These settings should ideally be set from Algolia dashboard or backend
       // Setting them here for reference
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
       const settings = {
         searchableAttributes: [
           'name',
@@ -303,7 +303,7 @@ class AlgoliaService {
       }
 
       // Configure sorting
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
       let indexName = ALGOLIA_CONFIG.INDICES.USERS;
       switch (sortBy) {
         case 'name_asc':
@@ -313,7 +313,7 @@ class AlgoliaService {
           indexName = `${ALGOLIA_CONFIG.INDICES.USERS}_name_desc`;
           break;
         case 'date_asc':
-          indexName = `${ALGOLIA_CONFIG.INDICES.USERS}_date_asc`; // eslint-disable-line @typescript-eslint/no-unused-vars
+          indexName = `${ALGOLIA_CONFIG.INDICES.USERS}_date_asc`; // eslint-disable-line @typescript-eslint/no-unused-vars, no-unused-vars
           break;
         case 'date_desc':
         default:

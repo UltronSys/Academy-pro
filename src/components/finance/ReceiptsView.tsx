@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, DataTable, Badge, Toast, Button, Input, ConfirmModal, Label } from '../ui';
+import { Card, DataTable, Badge, Toast, Button, Input, Label } from '../ui';
 import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
 import {

@@ -129,7 +129,7 @@ export const deleteAcademy = async (organizationId: string, academyId: string) =
   }
 };
 
-export const getAcademyStats = async (organizationId: string, academyId: string) => {
+export const getAcademyStats = async (_organizationId: string, _academyId: string) => {
   try {
     // This would need to be implemented based on your analytics requirements
     // For now, returning placeholder data

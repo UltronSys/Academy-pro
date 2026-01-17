@@ -73,7 +73,7 @@ const AddUser: React.FC = () => {
   const dropdownRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const [profileImage, setProfileImage] = useState<File | null>(null);
   const [profileImagePreview, setProfileImagePreview] = useState<string | null>(null);
-  const [imageUploading, setImageUploading] = useState(false);
+  const [_imageUploading, setImageUploading] = useState(false);
 
   const { userData } = useAuth();
   const { addUser } = useUsers();

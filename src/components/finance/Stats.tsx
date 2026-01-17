@@ -36,7 +36,7 @@ const Stats: React.FC = () => {
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [allReceipts, setAllReceipts] = useState<Receipt[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [_products, setProducts] = useState<Product[]>([]);
   const [academies, setAcademies] = useState<Academy[]>([]);
   const [userMap, setUserMap] = useState<Map<string, User>>(new Map());
 

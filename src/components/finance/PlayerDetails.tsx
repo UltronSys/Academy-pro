@@ -42,7 +42,7 @@ const PlayerDetails: React.FC = () => {
   const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [linkingInvoiceDate, setLinkingInvoiceDate] = useState<string>('');
-  const [linkingDeadlineDate, setLinkingDeadlineDate] = useState<string>('');
+  const [_linkingDeadlineDate, setLinkingDeadlineDate] = useState<string>('');
   const [linkingDeadlineDays, setLinkingDeadlineDays] = useState<number>(30); // Days after invoice for payment
   const [linkingInvoiceGeneration, setLinkingInvoiceGeneration] = useState<'immediate' | 'scheduled'>('immediate');
   const [linkingProduct, setLinkingProduct] = useState(false);
@@ -345,7 +345,7 @@ const PlayerDetails: React.FC = () => {
       return;
     }
 
-    const isRecurringProduct = selectedProduct.productType === 'recurring';
+    const _isRecurringProduct = selectedProduct.productType === 'recurring';
 
     // Validate inputs based on product type and generation option
     let invoiceDateObj: Date;
@@ -568,7 +568,7 @@ const PlayerDetails: React.FC = () => {
             };
           } else {
             // Remove discount if value is 0 - need to explicitly delete the field
-            const { discount, ...rest } = cleanedAp;
+            const { discount: _discount, ...rest } = cleanedAp;
             return rest;
           }
         }
@@ -620,7 +620,7 @@ const PlayerDetails: React.FC = () => {
         ) as typeof ap;
 
         if (cleanedAp.productId === productId) {
-          const { discount, ...rest } = cleanedAp;
+          const { discount: _discount, ...rest } = cleanedAp;
           return rest;
         }
         return cleanedAp;

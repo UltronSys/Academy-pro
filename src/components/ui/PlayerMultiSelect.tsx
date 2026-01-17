@@ -20,7 +20,7 @@ const PlayerMultiSelect: React.FC<PlayerMultiSelectProps> = ({
   selectedPlayerIds,
   onSelectionChange,
   placeholder = "Type to search and select players...",
-  onReset
+  onReset: _onReset
 }) => {
   const { userData } = useAuth();
   const [isOpen, setIsOpen] = useState(false);

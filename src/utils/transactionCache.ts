@@ -33,7 +33,7 @@ export const getCachedTransactions = (organizationId: string): { transaction: Tr
     const validTransactions: { transaction: Transaction; operation: string }[] = [];
 
     // Filter out expired or synced transactions, and only return transactions from the current organization
-    Object.entries(cache).forEach(([transactionId, cachedTransaction]) => {
+    Object.entries(cache).forEach(([_transactionId, cachedTransaction]) => {
       const isExpired = now - cachedTransaction.timestamp > CACHE_EXPIRY_MS;
       const belongsToOrg = cachedTransaction.transaction.organizationId === organizationId;
 

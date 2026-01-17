@@ -51,7 +51,7 @@ export const configureAlgoliaIndex = async () => {
     
     
     // Verify the settings were applied
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
     const currentSettings = await index.getSettings();
     
     
