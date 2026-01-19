@@ -1093,6 +1093,48 @@ service firebase.storage {
     setPhoneError('');
     setCountryCode('+966'); // Reset to default
 
+    // Get default status from organization settings or use 'active' as fallback
+    const defaultStatus = organizationSettings?.playerStatusOptions && organizationSettings.playerStatusOptions.length > 0
+      ? organizationSettings.playerStatusOptions[0].toLowerCase()
+      : 'active';
+
+    // Initialize dynamic fields with default values from field categories
+    const defaultDynamicFields: Record<string, any> = {};
+    fieldCategories.forEach(category => {
+      if (category.type === 'parameter' || category.type === 'mixed') {
+        category.fields?.forEach(field => {
+          const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+          if (field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== '') {
+            let defaultVal: any = field.defaultValue;
+
+            // Convert based on field type
+            switch (field.type) {
+              case 'number':
+                const numVal = Number(field.defaultValue);
+                defaultVal = !isNaN(numVal) ? numVal : 0;
+                break;
+              case 'boolean':
+                if (typeof field.defaultValue === 'string') {
+                  const lowerVal = field.defaultValue.toLowerCase();
+                  defaultVal = lowerVal === 'true' || lowerVal === 'yes';
+                }
+                break;
+              case 'multiselect':
+                defaultVal = Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue];
+                break;
+              default:
+                defaultVal = String(field.defaultValue);
+            }
+
+            defaultDynamicFields[fieldKey] = defaultVal;
+          }
+        });
+      }
+    });
+
+    console.log('📝 Setting default status:', defaultStatus);
+    console.log('📝 Setting default dynamic fields:', defaultDynamicFields);
+
     setFormData({
       name: '',
       email: '',
@@ -1103,8 +1145,8 @@ service firebase.storage {
       dateOfBirth: '',
       gender: '',
       guardianId: [],
-      status: '',
-      dynamicFields: {}
+      status: defaultStatus,
+      dynamicFields: defaultDynamicFields
     });
 
     setOpenDialog(true);

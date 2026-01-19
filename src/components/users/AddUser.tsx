@@ -125,74 +125,81 @@ const AddUser: React.FC = () => {
   useEffect(() => {
     if (fieldCategories.length === 0) return;
 
-    const newDynamicFields: Record<string, any> = { ...formData.dynamicFields };
-    let hasChanges = false;
+    // Use functional update to avoid stale closure issues
+    setFormData(prev => {
+      const newDynamicFields: Record<string, any> = { ...prev.dynamicFields };
+      let hasChanges = false;
 
-    fieldCategories.forEach(category => {
-      if (category.type === 'parameter' || category.type === 'mixed') {
-        category.fields?.forEach(field => {
-          const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+      fieldCategories.forEach(category => {
+        if (category.type === 'parameter' || category.type === 'mixed') {
+          category.fields?.forEach(field => {
+            const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
 
-          const hasDefaultValue = field.defaultValue !== undefined &&
-                                  field.defaultValue !== null &&
-                                  field.defaultValue !== '' &&
-                                  !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
-          const fieldNotSet = newDynamicFields[fieldKey] === undefined;
+            const hasDefaultValue = field.defaultValue !== undefined &&
+                                    field.defaultValue !== null &&
+                                    field.defaultValue !== '' &&
+                                    !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
+            const fieldNotSet = newDynamicFields[fieldKey] === undefined;
 
-          if (fieldNotSet && hasDefaultValue) {
-            let defaultVal: any = field.defaultValue;
+            if (fieldNotSet && hasDefaultValue) {
+              let defaultVal: any = field.defaultValue;
 
-            switch (field.type) {
-              case 'number':
-                defaultVal = Number(field.defaultValue) || 0;
-                break;
-              case 'boolean':
-                if (typeof field.defaultValue === 'boolean') {
-                  defaultVal = field.defaultValue;
-                } else if (typeof field.defaultValue === 'string') {
-                  const lowerVal = field.defaultValue.toLowerCase();
-                  if (lowerVal === 'true' || lowerVal === 'yes') {
-                    defaultVal = true;
-                  } else if (lowerVal === 'false' || lowerVal === 'no') {
-                    defaultVal = false;
+              switch (field.type) {
+                case 'number':
+                  // Handle number 0 correctly - only use fallback if conversion fails
+                  const numVal = Number(field.defaultValue);
+                  defaultVal = !isNaN(numVal) ? numVal : 0;
+                  break;
+                case 'boolean':
+                  if (typeof field.defaultValue === 'boolean') {
+                    defaultVal = field.defaultValue;
+                  } else if (typeof field.defaultValue === 'string') {
+                    const lowerVal = field.defaultValue.toLowerCase();
+                    if (lowerVal === 'true' || lowerVal === 'yes') {
+                      defaultVal = true;
+                    } else if (lowerVal === 'false' || lowerVal === 'no') {
+                      defaultVal = false;
+                    }
                   }
-                }
-                break;
-              case 'date':
-                if (field.defaultValue === '__CURRENT_DATE__') {
-                  const today = new Date();
-                  defaultVal = today.toISOString().split('T')[0];
-                } else {
+                  break;
+                case 'date':
+                  if (field.defaultValue === '__CURRENT_DATE__') {
+                    const today = new Date();
+                    defaultVal = today.toISOString().split('T')[0];
+                  } else {
+                    defaultVal = String(field.defaultValue);
+                  }
+                  break;
+                case 'multiselect':
+                  if (Array.isArray(field.defaultValue)) {
+                    defaultVal = field.defaultValue;
+                  } else if (typeof field.defaultValue === 'string' && field.defaultValue) {
+                    defaultVal = [field.defaultValue];
+                  } else {
+                    defaultVal = [];
+                  }
+                  break;
+                default:
                   defaultVal = String(field.defaultValue);
-                }
-                break;
-              case 'multiselect':
-                if (Array.isArray(field.defaultValue)) {
-                  defaultVal = field.defaultValue;
-                } else if (typeof field.defaultValue === 'string' && field.defaultValue) {
-                  defaultVal = [field.defaultValue];
-                } else {
-                  defaultVal = [];
-                }
-                break;
-              default:
-                defaultVal = String(field.defaultValue);
+              }
+
+              newDynamicFields[fieldKey] = defaultVal;
+              hasChanges = true;
             }
+          });
+        }
+      });
 
-            newDynamicFields[fieldKey] = defaultVal;
-            hasChanges = true;
-          }
-        });
+      // Only update if there were actual changes
+      if (hasChanges) {
+        return {
+          ...prev,
+          dynamicFields: newDynamicFields
+        };
       }
+      return prev;
     });
-
-    if (hasChanges) {
-      setFormData(prev => ({
-        ...prev,
-        dynamicFields: newDynamicFields
-      }));
-    }
-  }, [fieldCategories]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fieldCategories]);
 
   const loadInitialData = async () => {
     try {
