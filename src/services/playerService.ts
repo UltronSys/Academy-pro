@@ -356,10 +356,47 @@ export const getPlayersByAcademy = async (academyId: string): Promise<Player[]> 
 export const updatePlayer = async (playerId: string, updates: Partial<Player>): Promise<void> => {
   try {
     const docRef = doc(db, COLLECTION_NAME, playerId);
+
+    // Get current player data to check for academyId changes
+    const playerSnap = await getDoc(docRef);
+    const currentPlayer = playerSnap.exists() ? playerSnap.data() as Player : null;
+
     await updateDoc(docRef, {
       ...updates,
       updatedAt: Timestamp.now()
     });
+
+    // If academyId is being updated, also update the user's roles
+    if (updates.academyId && currentPlayer) {
+      try {
+        const userRef = doc(db, 'users', currentPlayer.userId);
+        const userSnap = await getDoc(userRef);
+
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          const roles = userData.roles || [];
+
+          // Find the player role for this organization and update its academyId
+          const updatedRoles = roles.map((role: any) => {
+            if (role.organizationId === currentPlayer.organizationId && role.role?.includes('player')) {
+              return {
+                ...role,
+                academyId: updates.academyId
+              };
+            }
+            return role;
+          });
+
+          await updateDoc(userRef, {
+            roles: updatedRoles,
+            updatedAt: Timestamp.now()
+          });
+          console.log('✅ User roles updated with new academyId');
+        }
+      } catch (userError) {
+        console.error('Warning: Failed to update user academyId:', userError);
+      }
+    }
 
     // Sync to Algolia
     if (isAlgoliaConfigured()) {

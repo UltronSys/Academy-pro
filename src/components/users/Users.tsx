@@ -207,7 +207,7 @@ const Users: React.FC = () => {
   const navigate = useNavigate();
   const { canWrite, canDelete } = usePermissions();
   const { organizationSettings } = useSettingsContext();
-  const { users, loading: usersLoading, error: usersError, searchUsers, totalPages, totalUsers, currentPage, removeUser: removeUserFromContext, addUser: addUserToContext, updateUser: updateUserInContext } = useUsers();
+  const { users, loading: _usersLoading, error: _usersError, searchUsers, totalPages, totalUsers, currentPage, removeUser: removeUserFromContext, addUser: addUserToContext, updateUser: updateUserInContext } = useUsers();
   const [academies, setAcademies] = useState<Academy[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -219,8 +219,8 @@ const Users: React.FC = () => {
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [activeStep, setActiveStep] = useState(0);
-  const [guardians, setGuardians] = useState<User[]>([]);
-  const [selectedGuardian, setSelectedGuardian] = useState<User | null>(null);
+  const [guardians, _setGuardians] = useState<User[]>([]);
+  const [selectedGuardian, _setSelectedGuardian] = useState<User | null>(null);
   const [linkedPlayers, setLinkedPlayers] = useState<User[]>([]);
   const [openGuardianDialog, setOpenGuardianDialog] = useState(false);
   const [guardianPhone, setGuardianPhone] = useState('');
@@ -244,7 +244,7 @@ const Users: React.FC = () => {
     phone: ''
   });
   const [fieldCategories, setFieldCategories] = useState<FieldCategory[]>([]);
-  const [tableRenderKey, setTableRenderKey] = useState(Date.now());
+  const [tableRenderKey, _setTableRenderKey] = useState(Date.now());
   const [sortBy, setSortBy] = useState<string>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [formData, setFormData] = useState({
@@ -268,7 +268,7 @@ const Users: React.FC = () => {
   const dropdownRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const [profileImage, setProfileImage] = useState<File | null>(null);
   const [profileImagePreview, setProfileImagePreview] = useState<string | null>(null);
-  const [imageUploading, setImageUploading] = useState(false);
+  const [_imageUploading, setImageUploading] = useState(false);
   const [emailError, setEmailError] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [countryCode, setCountryCode] = useState('+966'); // Default to Saudi Arabia
@@ -1093,6 +1093,48 @@ service firebase.storage {
     setPhoneError('');
     setCountryCode('+966'); // Reset to default
 
+    // Get default status from organization settings or use 'active' as fallback
+    const defaultStatus = organizationSettings?.playerStatusOptions && organizationSettings.playerStatusOptions.length > 0
+      ? organizationSettings.playerStatusOptions[0].toLowerCase()
+      : 'active';
+
+    // Initialize dynamic fields with default values from field categories
+    const defaultDynamicFields: Record<string, any> = {};
+    fieldCategories.forEach(category => {
+      if (category.type === 'parameter' || category.type === 'mixed') {
+        category.fields?.forEach(field => {
+          const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+          if (field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== '') {
+            let defaultVal: any = field.defaultValue;
+
+            // Convert based on field type
+            switch (field.type) {
+              case 'number':
+                const numVal = Number(field.defaultValue);
+                defaultVal = !isNaN(numVal) ? numVal : 0;
+                break;
+              case 'boolean':
+                if (typeof field.defaultValue === 'string') {
+                  const lowerVal = field.defaultValue.toLowerCase();
+                  defaultVal = lowerVal === 'true' || lowerVal === 'yes';
+                }
+                break;
+              case 'multiselect':
+                defaultVal = Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue];
+                break;
+              default:
+                defaultVal = String(field.defaultValue);
+            }
+
+            defaultDynamicFields[fieldKey] = defaultVal;
+          }
+        });
+      }
+    });
+
+    console.log('📝 Setting default status:', defaultStatus);
+    console.log('📝 Setting default dynamic fields:', defaultDynamicFields);
+
     setFormData({
       name: '',
       email: '',
@@ -1103,8 +1145,8 @@ service firebase.storage {
       dateOfBirth: '',
       gender: '',
       guardianId: [],
-      status: '',
-      dynamicFields: {}
+      status: defaultStatus,
+      dynamicFields: defaultDynamicFields
     });
 
     setOpenDialog(true);
@@ -1563,7 +1605,7 @@ service firebase.storage {
       // Trim whitespace from input fields
       const trimmedName = formData.name.trim();
       const trimmedEmail = formData.email.trim();
-      const trimmedPhone = formData.phone.trim();
+      const _trimmedPhone = formData.phone.trim();
 
       // Validate name is not empty after trimming
       if (!trimmedName) {
@@ -1773,7 +1815,7 @@ service firebase.storage {
     }
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
   const getFilteredUsers = () => {
     let filteredByTab = users;
     

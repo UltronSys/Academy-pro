@@ -73,7 +73,7 @@ const AddUser: React.FC = () => {
   const dropdownRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const [profileImage, setProfileImage] = useState<File | null>(null);
   const [profileImagePreview, setProfileImagePreview] = useState<string | null>(null);
-  const [imageUploading, setImageUploading] = useState(false);
+  const [_imageUploading, setImageUploading] = useState(false);
 
   const { userData } = useAuth();
   const { addUser } = useUsers();
@@ -125,74 +125,81 @@ const AddUser: React.FC = () => {
   useEffect(() => {
     if (fieldCategories.length === 0) return;
 
-    const newDynamicFields: Record<string, any> = { ...formData.dynamicFields };
-    let hasChanges = false;
+    // Use functional update to avoid stale closure issues
+    setFormData(prev => {
+      const newDynamicFields: Record<string, any> = { ...prev.dynamicFields };
+      let hasChanges = false;
 
-    fieldCategories.forEach(category => {
-      if (category.type === 'parameter' || category.type === 'mixed') {
-        category.fields?.forEach(field => {
-          const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+      fieldCategories.forEach(category => {
+        if (category.type === 'parameter' || category.type === 'mixed') {
+          category.fields?.forEach(field => {
+            const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
 
-          const hasDefaultValue = field.defaultValue !== undefined &&
-                                  field.defaultValue !== null &&
-                                  field.defaultValue !== '' &&
-                                  !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
-          const fieldNotSet = newDynamicFields[fieldKey] === undefined;
+            const hasDefaultValue = field.defaultValue !== undefined &&
+                                    field.defaultValue !== null &&
+                                    field.defaultValue !== '' &&
+                                    !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
+            const fieldNotSet = newDynamicFields[fieldKey] === undefined;
 
-          if (fieldNotSet && hasDefaultValue) {
-            let defaultVal: any = field.defaultValue;
+            if (fieldNotSet && hasDefaultValue) {
+              let defaultVal: any = field.defaultValue;
 
-            switch (field.type) {
-              case 'number':
-                defaultVal = Number(field.defaultValue) || 0;
-                break;
-              case 'boolean':
-                if (typeof field.defaultValue === 'boolean') {
-                  defaultVal = field.defaultValue;
-                } else if (typeof field.defaultValue === 'string') {
-                  const lowerVal = field.defaultValue.toLowerCase();
-                  if (lowerVal === 'true' || lowerVal === 'yes') {
-                    defaultVal = true;
-                  } else if (lowerVal === 'false' || lowerVal === 'no') {
-                    defaultVal = false;
+              switch (field.type) {
+                case 'number':
+                  // Handle number 0 correctly - only use fallback if conversion fails
+                  const numVal = Number(field.defaultValue);
+                  defaultVal = !isNaN(numVal) ? numVal : 0;
+                  break;
+                case 'boolean':
+                  if (typeof field.defaultValue === 'boolean') {
+                    defaultVal = field.defaultValue;
+                  } else if (typeof field.defaultValue === 'string') {
+                    const lowerVal = field.defaultValue.toLowerCase();
+                    if (lowerVal === 'true' || lowerVal === 'yes') {
+                      defaultVal = true;
+                    } else if (lowerVal === 'false' || lowerVal === 'no') {
+                      defaultVal = false;
+                    }
                   }
-                }
-                break;
-              case 'date':
-                if (field.defaultValue === '__CURRENT_DATE__') {
-                  const today = new Date();
-                  defaultVal = today.toISOString().split('T')[0];
-                } else {
+                  break;
+                case 'date':
+                  if (field.defaultValue === '__CURRENT_DATE__') {
+                    const today = new Date();
+                    defaultVal = today.toISOString().split('T')[0];
+                  } else {
+                    defaultVal = String(field.defaultValue);
+                  }
+                  break;
+                case 'multiselect':
+                  if (Array.isArray(field.defaultValue)) {
+                    defaultVal = field.defaultValue;
+                  } else if (typeof field.defaultValue === 'string' && field.defaultValue) {
+                    defaultVal = [field.defaultValue];
+                  } else {
+                    defaultVal = [];
+                  }
+                  break;
+                default:
                   defaultVal = String(field.defaultValue);
-                }
-                break;
-              case 'multiselect':
-                if (Array.isArray(field.defaultValue)) {
-                  defaultVal = field.defaultValue;
-                } else if (typeof field.defaultValue === 'string' && field.defaultValue) {
-                  defaultVal = [field.defaultValue];
-                } else {
-                  defaultVal = [];
-                }
-                break;
-              default:
-                defaultVal = String(field.defaultValue);
+              }
+
+              newDynamicFields[fieldKey] = defaultVal;
+              hasChanges = true;
             }
+          });
+        }
+      });
 
-            newDynamicFields[fieldKey] = defaultVal;
-            hasChanges = true;
-          }
-        });
+      // Only update if there were actual changes
+      if (hasChanges) {
+        return {
+          ...prev,
+          dynamicFields: newDynamicFields
+        };
       }
+      return prev;
     });
-
-    if (hasChanges) {
-      setFormData(prev => ({
-        ...prev,
-        dynamicFields: newDynamicFields
-      }));
-    }
-  }, [fieldCategories]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fieldCategories]);
 
   const loadInitialData = async () => {
     try {
@@ -431,6 +438,20 @@ const AddUser: React.FC = () => {
         const dobValue = formData.dateOfBirth;
         const genderValue = formData.gender;
 
+        // Merge default values with form data for playerParameters
+        const playerParameters: Record<string, any> = { ...formData.dynamicFields };
+        fieldCategories.forEach(category => {
+          if (category.type === 'parameter' || category.type === 'mixed') {
+            category.fields?.forEach(field => {
+              const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
+              // If field not in formData but has a default value, use the default
+              if (playerParameters[fieldKey] === undefined && field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== '') {
+                playerParameters[fieldKey] = field.defaultValue;
+              }
+            });
+          }
+        });
+
         await createPlayer({
           id: playerId,
           userId: newUserId,
@@ -439,7 +460,7 @@ const AddUser: React.FC = () => {
           dob: new Date(dobValue),
           gender: genderValue,
           guardianId: formData.guardianId,
-          playerParameters: formData.dynamicFields
+          playerParameters: playerParameters
         });
       }
 
@@ -716,29 +737,32 @@ const AddUser: React.FC = () => {
 
   const isParameterFieldsValid = () => {
     if (!isPlayerRole) return true;
-    
+
     if (!formData.dateOfBirth || !formData.gender) {
       return false;
     }
-    
+
     const allRequiredFields: ParameterField[] = [];
-    
+
     fieldCategories.forEach(category => {
       if (category.type === 'parameter' || category.type === 'mixed') {
         const requiredFields = (category.fields || []).filter(field => field.required);
         allRequiredFields.push(...requiredFields);
       }
     });
-    
+
     for (const field of allRequiredFields) {
       const fieldKey = field.name.toLowerCase().replace(/\s+/g, '_');
-      const value = formData.dynamicFields[fieldKey];
-      
+      // Check both formData value and field's defaultValue
+      const value = formData.dynamicFields[fieldKey] !== undefined
+        ? formData.dynamicFields[fieldKey]
+        : field.defaultValue;
+
       if (value === undefined || value === null || value === '') {
         return false;
       }
     }
-    
+
     return true;
   };
 

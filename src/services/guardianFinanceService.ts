@@ -83,7 +83,7 @@ export const createGuardianCreditReceiptWithDistribution = async (
   organizationId: string,
   amount: number,
   description: string,
-  paymentMethod: string = 'Cash'
+  _paymentMethod: string = 'Cash'
 ): Promise<GuardianPaymentResult> => {
   try {
     console.log('💰 Creating guardian credit receipt with distribution');

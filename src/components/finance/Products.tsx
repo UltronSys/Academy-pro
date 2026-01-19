@@ -46,7 +46,7 @@ const Products: React.FC = () => {
   const [linkingPlayerNames, setLinkingPlayerNames] = useState<string[]>([]);
   const [linkingSubmitting, setLinkingSubmitting] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState<string>('');
-  const [deadlineDate, setDeadlineDate] = useState<string>('');
+  const [_deadlineDate, setDeadlineDate] = useState<string>('');
   const [invoiceGeneration, setInvoiceGeneration] = useState<'immediate' | 'scheduled'>('immediate');
   const [allPlayers, setAllPlayers] = useState<PlayerWithUserInfo[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
@@ -380,7 +380,7 @@ const Products: React.FC = () => {
       return;
     }
 
-    const isRecurringProduct = selectedProductForLinking.productType === 'recurring';
+    const _isRecurringProduct = selectedProductForLinking.productType === 'recurring';
 
     // Validate and calculate dates based on product type
     let invoiceDateObj: Date;

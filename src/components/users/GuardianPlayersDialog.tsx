@@ -124,7 +124,7 @@ const GuardianPlayersDialog: React.FC<GuardianPlayersDialogProps> = ({ guardian,
     };
 
     loadPlayers();
-  }, [guardian.id, users, userData]);
+  }, [guardian.id, guardian.name, users, userData]);
 
   const getInitials = (name: string) => {
     return name

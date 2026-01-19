@@ -44,7 +44,7 @@ export const getCachedUsers = (organizationId: string): User[] => {
     const validUsers: User[] = [];
 
     // Filter out expired or synced users, and only return users from the current organization
-    Object.entries(cache).forEach(([userId, cachedUser]) => {
+    Object.entries(cache).forEach(([_userId, cachedUser]) => {
       const isExpired = now - cachedUser.timestamp > CACHE_EXPIRY_MS;
       const belongsToOrg = cachedUser.user.roles.some(
         role => role.organizationId === organizationId

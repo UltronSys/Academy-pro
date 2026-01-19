@@ -71,7 +71,7 @@ const EditUser: React.FC = () => {
   const dropdownRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const [profileImage, setProfileImage] = useState<File | null>(null);
   const [profileImagePreview, setProfileImagePreview] = useState<string>('');
-  const [imageUploading, setImageUploading] = useState(false);
+  const [_imageUploading, setImageUploading] = useState(false);
 
   const { userData } = useAuth();
   const { updateUser: updateUserInContext } = useUsers();

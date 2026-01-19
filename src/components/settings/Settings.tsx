@@ -213,7 +213,7 @@ const Settings: React.FC = () => {
     }
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
   const handleSaveSettings = async () => {
     try {
       setLoading(true);

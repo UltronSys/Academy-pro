@@ -5,7 +5,7 @@ import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { getPlayerById, updatePlayer, assignProductToPlayer, removeProductFromPlayer } from '../../services/playerService';
-import { getUserById } from '../../services/userService';
+import { getUserById, recalculateAndUpdateUserOutstandingAndCredits } from '../../services/userService';
 import { getReceiptsByUser, updateReceipt, updateDebitReceipt, deleteDebitReceiptWithCreditConversion } from '../../services/receiptService';
 import { getProductsByOrganization } from '../../services/productService';
 import { getSettingsByOrganization } from '../../services/settingsService';
@@ -42,7 +42,7 @@ const PlayerDetails: React.FC = () => {
   const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [linkingInvoiceDate, setLinkingInvoiceDate] = useState<string>('');
-  const [linkingDeadlineDate, setLinkingDeadlineDate] = useState<string>('');
+  const [_linkingDeadlineDate, setLinkingDeadlineDate] = useState<string>('');
   const [linkingDeadlineDays, setLinkingDeadlineDays] = useState<number>(30); // Days after invoice for payment
   const [linkingInvoiceGeneration, setLinkingInvoiceGeneration] = useState<'immediate' | 'scheduled'>('immediate');
   const [linkingProduct, setLinkingProduct] = useState(false);
@@ -152,6 +152,18 @@ const PlayerDetails: React.FC = () => {
         setCurrency(settingsData.generalSettings.currency);
       }
 
+      // Recalculate and sync user balance to ensure it's up-to-date
+      try {
+        await recalculateAndUpdateUserOutstandingAndCredits(playerData.userId, selectedOrganization.id);
+        // Reload user to get updated balance
+        const updatedUser = await getUserById(playerData.userId);
+        if (updatedUser) {
+          setUser(updatedUser);
+        }
+      } catch (balanceError) {
+        console.error('Error recalculating user balance:', balanceError);
+      }
+
     } catch (error) {
       console.error('Error loading player details:', error);
       showToast('Failed to load player details', 'error');
@@ -162,22 +174,32 @@ const PlayerDetails: React.FC = () => {
 
   const groupReceiptsByMonth = (receipts: Receipt[]): GroupedReceipts => {
     const grouped: GroupedReceipts = {};
-    
+
+    // Helper to get the relevant date for a receipt
+    const getReceiptDate = (receipt: Receipt): Date => {
+      if (receipt.type === 'debit' && receipt.product?.invoiceDate) {
+        return receipt.product.invoiceDate.toDate();
+      } else if (receipt.type === 'credit' && receipt.paymentDate) {
+        return receipt.paymentDate.toDate();
+      }
+      return receipt.createdAt?.toDate() || new Date();
+    };
+
     receipts.forEach(receipt => {
-      const date = receipt.createdAt?.toDate() || new Date();
+      const date = getReceiptDate(receipt);
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      
+
       if (!grouped[monthKey]) {
         grouped[monthKey] = [];
       }
       grouped[monthKey].push(receipt);
     });
-    
+
     // Sort receipts within each month by date (newest first)
     Object.keys(grouped).forEach(month => {
       grouped[month].sort((a, b) => {
-        const dateA = a.createdAt?.toMillis() || 0;
-        const dateB = b.createdAt?.toMillis() || 0;
+        const dateA = getReceiptDate(a).getTime();
+        const dateB = getReceiptDate(b).getTime();
         return dateB - dateA;
       });
     });
@@ -323,7 +345,7 @@ const PlayerDetails: React.FC = () => {
       return;
     }
 
-    const isRecurringProduct = selectedProduct.productType === 'recurring';
+    const _isRecurringProduct = selectedProduct.productType === 'recurring';
 
     // Validate inputs based on product type and generation option
     let invoiceDateObj: Date;
@@ -546,7 +568,7 @@ const PlayerDetails: React.FC = () => {
             };
           } else {
             // Remove discount if value is 0 - need to explicitly delete the field
-            const { discount, ...rest } = cleanedAp;
+            const { discount: _discount, ...rest } = cleanedAp;
             return rest;
           }
         }
@@ -598,7 +620,7 @@ const PlayerDetails: React.FC = () => {
         ) as typeof ap;
 
         if (cleanedAp.productId === productId) {
-          const { discount, ...rest } = cleanedAp;
+          const { discount: _discount, ...rest } = cleanedAp;
           return rest;
         }
         return cleanedAp;
@@ -891,7 +913,7 @@ const PlayerDetails: React.FC = () => {
       header: 'Invoice Date',
       render: (receipt: Receipt) => (
         <div className={`text-sm ${receipt.status === 'deleted' ? 'line-through text-secondary-400' : ''}`}>
-          {receipt.createdAt?.toDate().toLocaleDateString() || 'N/A'}
+          {receipt.product?.invoiceDate?.toDate().toLocaleDateString() || receipt.createdAt?.toDate().toLocaleDateString() || 'N/A'}
         </div>
       )
     },
@@ -1294,17 +1316,11 @@ const PlayerDetails: React.FC = () => {
                         ) : (
                           <div className="mt-2 text-sm space-y-1">
                             <div className="text-secondary-600">
-                              Invoice Date: {assignedProduct.invoiceDate?.toDate().toLocaleDateString() || 'Not set'}
+                              Next Invoice Date: {assignedProduct.invoiceDate?.toDate().toLocaleDateString() || 'Not set'}
                             </div>
                             <div className="text-secondary-600">
-                              Deadline: {assignedProduct.deadlineDate?.toDate().toLocaleDateString() || 'Not set'}
+                              Next Due Date: {assignedProduct.deadlineDate?.toDate().toLocaleDateString() || 'Not set'}
                             </div>
-                            {/* Upcoming Receipt Date for recurring/scheduled products */}
-                            {assignedProduct.productType === 'recurring' && assignedProduct.invoiceDate && (
-                              <div className="text-primary-600 font-medium">
-                                Next Invoice Date: {assignedProduct.invoiceDate?.toDate().toLocaleDateString()}
-                              </div>
-                            )}
                             {assignedProduct.receiptStatus === 'scheduled' && !assignedProduct.invoiceDate && (
                               <div className="text-warning-600 text-xs">
                                 Receipt scheduled (date pending)
@@ -1428,6 +1444,69 @@ const PlayerDetails: React.FC = () => {
           </div>
         </Card>
       )}
+
+      {/* Financial Summary */}
+      {(() => {
+        // Use pre-calculated balance from user document (synced on page load)
+        const outstandingBalance = user.outstandingBalance?.[selectedOrganization?.id || ''] || 0;
+        const availableCredits = user.availableCredits?.[selectedOrganization?.id || ''] || 0;
+        const hasDebt = outstandingBalance > 0;
+        const hasCredit = availableCredits > 0 && outstandingBalance === 0;
+
+        const label = hasDebt ? 'Total Amount Owed' : hasCredit ? 'Total Credit Available' : 'All Settled';
+        const displayAmount = hasDebt ? outstandingBalance : hasCredit ? availableCredits : 0;
+
+        // Current month stats (from already-loaded receipts)
+        const monthDebits = selectedMonth && groupedDebitReceipts[selectedMonth]
+          ? groupedDebitReceipts[selectedMonth].filter(r => r.status !== 'deleted')
+          : [];
+        const monthCredits = selectedMonth && groupedCreditReceipts[selectedMonth]
+          ? groupedCreditReceipts[selectedMonth].filter(r => r.status !== 'deleted')
+          : [];
+
+        const monthInvoiced = monthDebits.reduce((sum, r) => sum + r.amount, 0);
+        const monthPaid = monthCredits.reduce((sum, r) => sum + r.amount, 0);
+
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Total Balance Box */}
+            <Card>
+              <div className={`p-6 ${hasDebt ? 'bg-error-50' : hasCredit ? 'bg-success-50' : 'bg-secondary-50'} rounded-lg`}>
+                <div className={`text-sm mb-1 ${hasDebt ? 'text-error-600' : hasCredit ? 'text-success-600' : 'text-secondary-600'}`}>
+                  {label}
+                </div>
+                <div className={`text-2xl font-bold ${hasDebt ? 'text-error-700' : hasCredit ? 'text-success-700' : 'text-secondary-700'}`}>
+                  {currency} {displayAmount.toFixed(2)}
+                </div>
+              </div>
+            </Card>
+
+            {/* Monthly Invoiced Box */}
+            <Card>
+              <div className="p-6 bg-secondary-50 rounded-lg">
+                <div className="text-sm text-secondary-600 mb-1">
+                  Invoiced {selectedMonth ? `(${formatMonthDisplay(selectedMonth)})` : ''}
+                </div>
+                <div className="text-2xl font-bold text-secondary-900">
+                  {currency} {monthInvoiced.toFixed(2)}
+                </div>
+              </div>
+            </Card>
+
+            {/* Monthly Paid Box */}
+            <Card>
+              <div className="p-6 bg-success-50 rounded-lg">
+                <div className="text-sm text-success-600 mb-1">
+                  Paid {selectedMonth ? `(${formatMonthDisplay(selectedMonth)})` : ''}
+                </div>
+                <div className="text-2xl font-bold text-success-700">
+                  {currency} {monthPaid.toFixed(2)}
+                </div>
+              </div>
+            </Card>
+          </div>
+        );
+      })()}
 
       {/* Invoices and Payments Side by Side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

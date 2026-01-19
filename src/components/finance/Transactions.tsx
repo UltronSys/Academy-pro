@@ -78,10 +78,10 @@ const Transactions: React.FC = () => {
   const [selectedTransactionType, setSelectedTransactionType] = useState<'income' | 'expense' | 'internal'>('income');
   
   // PaymentMaker component state
-  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
-  const [selectedPlayerNames, setSelectedPlayerNames] = useState<string[]>([]);
-  const [pendingReceipts, setPendingReceipts] = useState<any[]>([]);
-  const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
+  const [_selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+  const [_selectedPlayerNames, setSelectedPlayerNames] = useState<string[]>([]);
+  const [_pendingReceipts, setPendingReceipts] = useState<any[]>([]);
+  const [_selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   const [selectedPaymentMaker, setSelectedPaymentMaker] = useState<{
     name: string;
     userRef: any;
@@ -249,7 +249,7 @@ const Transactions: React.FC = () => {
       console.log('📦 Retrieved cached transactions:', cachedItems.length);
 
       // Mark cached transactions as synced if they appear in Algolia results
-      cachedItems.forEach(({ transaction, operation }) => {
+      cachedItems.forEach(({ transaction, operation: _operation }) => {
         const foundInAlgolia = algoliaTransactions.some(t => t.id === transaction.id);
         if (foundInAlgolia) {
           console.log('✅ Transaction found in Algolia, marking as synced:', transaction.id);

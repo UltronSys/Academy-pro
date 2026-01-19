@@ -99,7 +99,7 @@ export const debugAcademyFilter = async (organizationId: string, academyId?: str
       hitsPerPage: 100
     });
     
-    algoliaResults.users.forEach(user => {
+    algoliaResults.users.forEach(_user => {
     });
     
     
